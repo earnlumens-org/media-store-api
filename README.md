@@ -63,5 +63,10 @@ The server will start at `http://localhost:8080`.
 ## API Documentation
 (TODO: Add Swagger/OpenAPI link once integrated)
 
+### Security Architecture
+See full system architecture here:  
+[docs/security-architecture.md](./docs/security-architecture.md)
+[docs/backend-security.md](./docs/backend-security.md)
+
 ## 🔐 License
 MIT – use it freely and responsibly.
