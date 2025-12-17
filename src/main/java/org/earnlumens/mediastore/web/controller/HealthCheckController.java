@@ -19,7 +19,7 @@ public class HealthCheckController {
     public String getPublicContent() {
         try {
             long count = mongoTemplate.getCollection("founders").countDocuments();
-            return "public content | profile=" + activeProfile + " | founders=" + count;
+            return "public content | profile=" + activeProfile + " | founders in db=" + count;
         } catch (Exception e) {
             return "public content | profile=" + activeProfile + " | db error: " + e.getMessage();
         }
