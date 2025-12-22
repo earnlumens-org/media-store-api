@@ -1,4 +1,4 @@
-package org.earnlumens.mediastore.web.controller;
+package org.earnlumens.mediastore.web.health;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
