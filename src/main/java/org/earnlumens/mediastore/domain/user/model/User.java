@@ -1,5 +1,6 @@
 package org.earnlumens.mediastore.domain.user.model;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 
 public class User {
@@ -18,6 +19,7 @@ public class User {
     private LocalDateTime blockedAt;
     private String blockedByRequestId;
     private String tempUUID;
+    private Instant tempUUIDCreatedAt;
 
     public User() {
         this.blocked = false;
@@ -133,5 +135,13 @@ public class User {
 
     public void setTempUUID(String tempUUID) {
         this.tempUUID = tempUUID;
+    }
+
+    public Instant getTempUUIDCreatedAt() {
+        return tempUUIDCreatedAt;
+    }
+
+    public void setTempUUIDCreatedAt(Instant tempUUIDCreatedAt) {
+        this.tempUUIDCreatedAt = tempUUIDCreatedAt;
     }
 }

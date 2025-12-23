@@ -6,6 +6,7 @@ import org.springframework.data.annotation.CreatedDate;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 
 @Document(collection = "users")
@@ -51,6 +52,8 @@ public class UserEntity {
 
     @Size(max = 50)
     private String tempUUID;
+
+    private Instant tempUUIDCreatedAt;
 
     public UserEntity() {}
 
@@ -164,5 +167,13 @@ public class UserEntity {
 
     public void setTempUUID(String tempUUID) {
         this.tempUUID = tempUUID;
+    }
+
+    public Instant getTempUUIDCreatedAt() {
+        return tempUUIDCreatedAt;
+    }
+
+    public void setTempUUIDCreatedAt(Instant tempUUIDCreatedAt) {
+        this.tempUUIDCreatedAt = tempUUIDCreatedAt;
     }
 }

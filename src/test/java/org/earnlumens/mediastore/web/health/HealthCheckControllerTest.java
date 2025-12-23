@@ -13,12 +13,12 @@ class HealthCheckControllerTest {
     private HealthCheckController healthCheckController;
 
     @Test
-    void getPublicContent_ShouldReturnPublicContentWithProfile() {
+    void getPublicContent_ShouldReturnGenericMessage() {
         // When
         String result = healthCheckController.getPublicContent();
 
         // Then
         assertNotNull(result);
-        assertTrue(result.startsWith("public content | profile="));
+        assertEquals("XX days for reset", result);
     }
 }
