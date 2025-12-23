@@ -30,7 +30,7 @@ import java.util.Map;
 @EnableMethodSecurity
 public class WebSecurityConfig {
 
-    @Value("${store.frontend.uri}")
+    @Value("${mediastore.frontend.uri}")
     private String mainDomain;
 
     private final AuthEntryPointJwt authEntryPointJwt;

@@ -21,13 +21,13 @@ import java.util.Date;
 public class JwtUtils {
     private static final Logger logger = LoggerFactory.getLogger(JwtUtils.class);
 
-    @Value("${store.app.jwtSecret}")
+    @Value("${mediastore.app.jwtSecret}")
     private String jwtSecret;
 
-    @Value("${store.app.jwtExpirationMs}")
+    @Value("${mediastore.app.jwtExpirationMs}")
     private int jwtExpirationMs;
 
-    @Value("${store.app.jwtRefreshExpirationMs}")
+    @Value("${mediastore.app.jwtRefreshExpirationMs}")
     private int jwtRefreshExpirationMs;
 
     public String generateJwtToken(User user) {

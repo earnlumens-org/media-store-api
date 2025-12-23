@@ -95,7 +95,17 @@ class JwtUtilsTest {
         String token = jwtUtils.generateJwtToken(user);
         assertTrue(jwtUtils.validateJwtToken(token));
 
-        String tampered = token.substring(0, token.length() - 1) + (token.endsWith("a") ? "b" : "a");
+        String[] parts = token.split("\\.");
+        assertEquals(3, parts.length);
+
+        String signature = parts[2];
+        int indexToFlip = signature.length() / 2;
+        char original = signature.charAt(indexToFlip);
+        char replacement = (original == 'a') ? 'b' : 'a';
+
+        String tamperedSignature = signature.substring(0, indexToFlip) + replacement + signature.substring(indexToFlip + 1);
+        String tampered = parts[0] + "." + parts[1] + "." + tamperedSignature;
+
         assertFalse(jwtUtils.validateJwtToken(tampered));
     }
 

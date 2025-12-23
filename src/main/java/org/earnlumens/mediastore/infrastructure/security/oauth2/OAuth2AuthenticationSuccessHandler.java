@@ -13,7 +13,7 @@ import java.io.IOException;
 @Component
 public class OAuth2AuthenticationSuccessHandler implements AuthenticationSuccessHandler {
 
-    @Value("${store.frontend.uri}")
+    @Value("${mediastore.frontend.uri}")
     private String frontendBaseUri;
 
     private final AuthService authService;

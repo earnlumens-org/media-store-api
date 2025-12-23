@@ -27,13 +27,13 @@ public class AuthController {
     private final JwtUtils jwtUtils;
     private final AuthService authService;
 
-    @Value("${store.sec.cookieDomain}")
+    @Value("${mediastore.sec.cookieDomain}")
     private String cookieDomain;
 
-    @Value("${store.sec.cookieSecure}")
+    @Value("${mediastore.sec.cookieSecure}")
     private boolean cookieSecure;
 
-    @Value("${store.app.jwtRefreshExpirationMs}")
+    @Value("${mediastore.app.jwtRefreshExpirationMs}")
     private int cookieExpirationMs;
 
     public AuthController(JwtUtils jwtUtils, AuthService authService) {
