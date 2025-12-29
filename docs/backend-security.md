@@ -11,35 +11,35 @@ The backend implements a **dual-token security model**:
 ### Access Token
 - Short-lived JWT (recommended: 5–15 minutes).
 - Contains minimal identity (e.g., user ID, roles).
-- Returned to the frontend on `/auth/login` and `/auth/refresh`.
+- Returned to the frontend on `/api/auth/session` and `/api/auth/refresh`.
 - Used in every authorized API request via `Authorization: Bearer <token>`.
 
 ### Refresh Token
 - Long-lived.
-- Issued **only once** during login.
+- Issued during session creation.
 - Delivered exclusively through an **HTTP-only, Secure, SameSite cookie**.
 - Never returned in a JSON body.
-- Automatically included by the browser when calling `/auth/refresh`.
+- Automatically included by the browser when calling `/api/auth/refresh`.
 - Never accessible to JavaScript.
 
 ---
 
-## 2. Login Endpoint (`POST /auth/login`)
+## 2. Session Endpoint (`POST /api/auth/session`)
 
-### Steps on successful login:
+### Steps on successful session creation:
 
-1. Backend authenticates user credentials or OAuth identity.
+1. Backend validates the session bootstrap input (currently: `UUID` header).
 2. Backend generates:
    - **Access Token (JWT)**
-   - **Refresh Token** (opaque or JWT, stored server-side)
+   - **Refresh Token (JWT)**
 3. Response format:
    ```json
    { "accessToken": "<jwt>" }
 4. Refresh token is sent as:
 
    ```
-   Set-Cookie: refresh_token=<value>;
-               HttpOnly; Secure; SameSite=Strict; Path=/auth/refresh
+   Set-Cookie: _rFTo=<value>;
+               HttpOnly; Secure; SameSite=Strict; Path=/
    ```
 
 ### Notes
@@ -49,19 +49,19 @@ The backend implements a **dual-token security model**:
 
 ---
 
-## 3. Refresh Endpoint (`POST /auth/refresh`)
+## 3. Refresh Endpoint (`POST /api/auth/refresh`)
 
 This endpoint renews the Access Token based on the refresh token cookie.
 
 ### Request Behavior
 
-* Browser automatically attaches `refresh_token` cookie.
+* Browser automatically attaches `_rFTo` cookie.
 * No request body is needed.
 
 ### Server Behavior
 
 1. Validate refresh token existence.
-2. Validate token validity (DB lookup, signature, expiration).
+2. Validate token validity (signature + expiration).
 3. Issue a **new Access Token**.
 4. Return new access token in JSON:
 
@@ -84,14 +84,14 @@ This endpoint renews the Access Token based on the refresh token cookie.
 
 ---
 
-## 4. Logout Endpoint (`POST /auth/logout`)
+## 4. Logout Endpoint (`POST /api/auth/logout`)
 
 On logout:
 
 1. Backend clears refresh cookie:
 
    ```
-   Set-Cookie: refresh_token=; Max-Age=0; Path=/auth/refresh;
+   Set-Cookie: _rFTo=; Max-Age=0; Path=/;
                HttpOnly; Secure; SameSite=Strict
    ```
 2. Access token expires naturally on client.
@@ -121,7 +121,7 @@ Spring Security enforces all authentication and authorization rules.
 #### CORS Configuration
 
 * Restrict allowed origins to production/frontend domains.
-* Allow credentials for `/auth/refresh`.
+* Allow credentials for `/api/auth/refresh`.
 * Allow necessary headers:
 
   * `Authorization`
@@ -138,7 +138,7 @@ Spring Security enforces all authentication and authorization rules.
   * `HttpOnly`
   * `Secure`
   * `SameSite=Strict`
-  * `Path=/auth/refresh`
+   * `Path=/`
 
 ---
 
@@ -153,24 +153,13 @@ Spring Security enforces all authentication and authorization rules.
 
 ### Refresh Token Validation
 
-* Usually stored in DB or cache.
+* Current implementation uses a signed JWT as refresh token.
 * Confirm:
 
   * Not expired
-  * Not revoked
-  * Matches user session
-  * Originates from valid login
+   * Signature is valid
 
-### Recommended Storage
-
-* Database table: `refresh_tokens`
-* Fields:
-
-  * `userId`
-  * `tokenHash`
-  * `expiresAt`
-  * `createdAt`
-  * `revoked`
+If refresh-token revocation is needed in the future, add server-side storage (e.g. hashed token allowlist/denylist) and update this section accordingly.
 
 ---
 

@@ -24,14 +24,14 @@ EarnLumens uses a **dual-token model**:
 - Short-lived (minutes).
 - Stored **only in Web Worker memory**.
 - Used in every authorized API request.
-- Rotated automatically via `/auth/refresh`.
+- Rotated automatically via `/api/auth/refresh`.
 
 ### Refresh Token
 - Long-lived (days/weeks).
 - Issued **once** during login.
 - Stored as **HTTP-only, Secure, SameSite cookie**.
 - Never revealed to JavaScript.
-- Used implicitly by the `/auth/refresh` endpoint.
+- Used implicitly by the `/api/auth/refresh` endpoint.
 
 ---
 
@@ -71,7 +71,7 @@ The Web Worker is a dedicated security boundary responsible for the entire lifec
 
 ### Not Responsible For
 
-- Performing fetch requests (except `/auth/refresh`).
+- Performing fetch requests (except `/api/auth/refresh`).
 - Managing UI state.
 - Managing refresh tokens directly.
 - Storing anything persistently.
@@ -89,7 +89,7 @@ The refresh mechanism is triggered **only when needed**, not via timers.
    - If the token is expired → trigger refresh.
    - If the token will expire soon (recommended <30s) → trigger early refresh.
 3. If refresh is needed, the Worker performs:
-   - **Single** `/auth/refresh` request. 
+   - **Single** `/api/auth/refresh` request. 
    The HTTP-only cookie containing the refresh token is automatically included by the browser.
 4. Backend validates the cookie and responds with a **new Access Token only**.
 5. Worker updates:
@@ -106,7 +106,7 @@ The refresh token **never leaves the cookie** and is **never rotated** unless ex
 - Issue tokens with proper TTL and claims.
 - Deliver the refresh token via HTTPS-only cookie.
 - Validate refresh tokens server-side.
-- Provide `/auth/login`, `/auth/refresh`, and `/auth/logout`.
+- Provide `/api/auth/session`, `/api/auth/refresh`, and `/api/auth/logout`.
 - Reject invalid or expired tokens with correct HTTP status codes.
 - Enforce CORS and domain restrictions.
 - Invalidate refresh token cookies during logout.

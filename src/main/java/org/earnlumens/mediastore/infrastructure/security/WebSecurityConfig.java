@@ -70,6 +70,7 @@ public class WebSecurityConfig {
                                 "/api/waitlist/**",
                                 "/api/auth/session",
                                 "/api/auth/refresh",
+                                "/api/auth/logout",
                                 "/api/user/by-username/**",
                                 "/api/user/exists/**",
                                 "/oauth2/authorization/**",

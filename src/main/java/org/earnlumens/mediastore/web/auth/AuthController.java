@@ -105,6 +105,22 @@ public class AuthController {
         }
     }
 
+    @PostMapping("/logout")
+    public ResponseEntity<?> logout(HttpServletResponse response) {
+        // Limpiar cookie refresh token
+        ResponseCookie cookie = ResponseCookie.from("_rFTo", "")
+                .httpOnly(true)
+                .secure(cookieSecure)
+                .path("/")
+                .domain(cookieDomain)
+                .maxAge(0) // Expira inmediatamente
+                .sameSite("Strict")
+                .build();
+
+        response.addHeader("Set-Cookie", cookie.toString());
+        return ResponseEntity.ok(Map.of("message", "Logged out successfully"));
+    }
+
     private ResponseEntity<?> unauthorizedResponse() {
         return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
     }

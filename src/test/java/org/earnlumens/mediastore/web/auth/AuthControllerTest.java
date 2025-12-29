@@ -155,4 +155,18 @@ class AuthControllerTest {
         verify(jwtUtils).getAllClaimsFromToken("refresh.jwt");
         verify(jwtUtils).generateAccessTokenFromClaims(claims);
     }
+
+    @Test
+    void logout_clearsCookieAndReturnsSuccess() throws Exception {
+        mockMvc.perform(post("/api/auth/logout"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.message").value("Logged out successfully"))
+                .andExpect(header().string("Set-Cookie", org.hamcrest.Matchers.containsString("_rFTo=")))
+                .andExpect(header().string("Set-Cookie", org.hamcrest.Matchers.containsString("Max-Age=0")))
+                .andExpect(header().string("Set-Cookie", org.hamcrest.Matchers.containsString("HttpOnly")))
+                .andExpect(header().string("Set-Cookie", org.hamcrest.Matchers.containsString("SameSite=Strict")));
+
+        verifyNoInteractions(jwtUtils);
+        verifyNoInteractions(authService);
+    }
 }
