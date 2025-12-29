@@ -3,6 +3,9 @@ package org.earnlumens.mediastore.web.user;
 import org.earnlumens.mediastore.application.user.UserService;
 import org.earnlumens.mediastore.domain.user.model.User;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.util.StringUtils;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -20,6 +23,16 @@ public class UserController {
 
     public UserController(UserService userService) {
         this.userService = userService;
+    }
+
+    @GetMapping("/me")
+    public ResponseEntity<?> me() {
+        Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
+        if (authentication == null || !(authentication.getPrincipal() instanceof OAuth2User oauth2User)) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+
+        return ResponseEntity.ok(toResponse(oauth2User));
     }
 
     @GetMapping("/by-username/{username}")
@@ -50,6 +63,19 @@ public class UserController {
         response.put("displayName", user.getDisplayName());
         response.put("profileImageUrl", user.getProfileImageUrl());
         response.put("followersCount", user.getFollowersCount());
+        return response;
+    }
+
+    private Map<String, Object> toResponse(OAuth2User oauth2User) {
+        Map<String, Object> attributes = oauth2User.getAttributes();
+
+        Map<String, Object> response = new LinkedHashMap<>();
+        response.put("id", attributes.get("id"));
+        response.put("username", attributes.get("username"));
+        response.put("displayName", attributes.get("name"));
+        response.put("profileImageUrl", attributes.get("profile_image_url"));
+        response.put("followersCount", attributes.get("followers_count"));
+        response.put("oauthProvider", attributes.get("oauth_provider"));
         return response;
     }
 }
