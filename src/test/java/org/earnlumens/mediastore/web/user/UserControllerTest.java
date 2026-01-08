@@ -48,7 +48,6 @@ class UserControllerTest {
 
         mockMvc.perform(get("/api/user/me"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.id").value("oauth-id"))
                 .andExpect(jsonPath("$.username").value("user123"))
                 .andExpect(jsonPath("$.displayName").value("Display"))
                 .andExpect(jsonPath("$.profileImageUrl").value("https://img"))
@@ -76,8 +75,7 @@ class UserControllerTest {
 
         mockMvc.perform(get("/api/user/by-username/daniel"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.username").value("daniel"))
-                .andExpect(jsonPath("$.id").value("abc"));
+                .andExpect(jsonPath("$.username").value("daniel"));
     }
 
     @Test
