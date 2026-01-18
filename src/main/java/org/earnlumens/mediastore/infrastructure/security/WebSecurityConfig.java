@@ -68,6 +68,7 @@ public class WebSecurityConfig {
                         .requestMatchers(
                                 "/public/**",
                                 "/api/waitlist/**",
+                                "/api/mock/**",
                                 "/api/auth/session",
                                 "/api/auth/refresh",
                                 "/api/auth/logout",
