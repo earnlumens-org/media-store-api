@@ -129,14 +129,28 @@ public class EntryMockController {
 
     /**
      * Get a single entry by ID (mock).
+     * Optionally force a specific type for testing.
      */
     @GetMapping("/entry/{id}")
-    public Map<String, Object> getEntryById(@PathVariable("id") String id) {
+    public Map<String, Object> getEntryById(
+            @PathVariable("id") String id,
+            @RequestParam(name = "type", required = false) String type
+    ) {
         simulateLatency(250, 350);
         
         Random random = new Random(id.hashCode()); // Deterministic based on ID
         Map<String, Object> entry = generateRandomEntry(random);
         entry.put("id", id);
+        
+        // Allow forcing type for testing purposes
+        if (type != null && !type.isEmpty()) {
+            entry.put("type", type);
+            // Add duration for video/audio if forced
+            if (("video".equals(type) || "audio".equals(type)) && !entry.containsKey("durationSec")) {
+                entry.put("durationSec", random.nextInt(7200) + 30);
+            }
+        }
+        
         return entry;
     }
 
