@@ -33,6 +33,9 @@ public class AuthController {
     @Value("${mediastore.sec.cookieSecure}")
     private boolean cookieSecure;
 
+    @Value("${mediastore.sec.cookieName}")
+    private String cookieName;
+
     @Value("${mediastore.app.jwtRefreshExpirationMs}")
     private int cookieExpirationMs;
 
@@ -66,7 +69,7 @@ public class AuthController {
         String accessToken = jwtUtils.generateJwtToken(user);
         String refreshToken = jwtUtils.generateRefreshToken(user);
 
-        ResponseCookie cookie = ResponseCookie.from("_rFTo", refreshToken)
+        ResponseCookie cookie = ResponseCookie.from(cookieName, refreshToken)
                 .httpOnly(true)
                 .secure(cookieSecure)
                 .path("/")
@@ -88,7 +91,7 @@ public class AuthController {
             }
 
             String refreshToken = Arrays.stream(cookies)
-                    .filter(cookie -> "_rFTo".equals(cookie.getName()))
+                    .filter(c -> cookieName.equals(c.getName()))
                     .map(Cookie::getValue)
                     .findFirst()
                     .orElse(null);
@@ -108,7 +111,7 @@ public class AuthController {
     @PostMapping("/logout")
     public ResponseEntity<?> logout(HttpServletResponse response) {
         // Limpiar cookie refresh token
-        ResponseCookie cookie = ResponseCookie.from("_rFTo", "")
+        ResponseCookie cookie = ResponseCookie.from(cookieName, "")
                 .httpOnly(true)
                 .secure(cookieSecure)
                 .path("/")
