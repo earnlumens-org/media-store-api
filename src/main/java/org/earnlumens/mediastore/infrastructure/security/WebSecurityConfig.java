@@ -133,7 +133,11 @@ public class WebSecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(Arrays.asList(mainDomain, "http://localhost:3000"));
+        configuration.setAllowedOrigins(Arrays.asList(
+            mainDomain,
+            "http://localhost:3000",
+            "https://app-dev.earnlumens.org"
+        ));
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("*"));
         configuration.setAllowCredentials(true);
