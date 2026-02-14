@@ -1,7 +1,8 @@
 package org.earnlumens.mediastore.infrastructure.persistence.media.mapper;
 
 import org.earnlumens.mediastore.domain.media.model.Entry;
-import org.earnlumens.mediastore.domain.media.model.MediaKind;
+import org.earnlumens.mediastore.domain.media.model.EntryStatus;
+import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.EntryEntity;
 import org.mapstruct.Mapper;
@@ -11,21 +12,33 @@ import org.mapstruct.Named;
 @Mapper(componentModel = "spring")
 public interface EntryMapper {
 
-    @Mapping(target = "kind", source = "kind", qualifiedByName = "stringToMediaKind")
+    @Mapping(target = "type", source = "type", qualifiedByName = "stringToEntryType")
+    @Mapping(target = "status", source = "status", qualifiedByName = "stringToEntryStatus")
     @Mapping(target = "visibility", source = "visibility", qualifiedByName = "stringToMediaVisibility")
     Entry toModel(EntryEntity entity);
 
-    @Mapping(target = "kind", source = "kind", qualifiedByName = "mediaKindToString")
+    @Mapping(target = "type", source = "type", qualifiedByName = "entryTypeToString")
+    @Mapping(target = "status", source = "status", qualifiedByName = "entryStatusToString")
     @Mapping(target = "visibility", source = "visibility", qualifiedByName = "mediaVisibilityToString")
     EntryEntity toEntity(Entry model);
 
-    @Named("stringToMediaKind")
-    default MediaKind stringToMediaKind(String value) {
-        return value == null ? null : MediaKind.valueOf(value);
+    @Named("stringToEntryType")
+    default EntryType stringToEntryType(String value) {
+        return value == null ? null : EntryType.valueOf(value);
     }
 
-    @Named("mediaKindToString")
-    default String mediaKindToString(MediaKind value) {
+    @Named("entryTypeToString")
+    default String entryTypeToString(EntryType value) {
+        return value == null ? null : value.name();
+    }
+
+    @Named("stringToEntryStatus")
+    default EntryStatus stringToEntryStatus(String value) {
+        return value == null ? null : EntryStatus.valueOf(value);
+    }
+
+    @Named("entryStatusToString")
+    default String entryStatusToString(EntryStatus value) {
         return value == null ? null : value.name();
     }
 

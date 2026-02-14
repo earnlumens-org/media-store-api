@@ -1,99 +1,80 @@
 package org.earnlumens.mediastore.domain.media.model;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 public class Entry {
 
     private String id;
     private String tenantId;
     private String userId;
-    private String r2Key;
-    private String contentType;
-    private String fileName;
-    private MediaKind kind;
+    private String title;
+    private String description;
+    private EntryType type;
+    private EntryStatus status;
     private MediaVisibility visibility;
-    private Long fileSizeBytes;
+    private boolean isPaid;
+    private BigDecimal priceXlm;
+    private List<String> tags = new ArrayList<>();
+    private String thumbnailR2Key;
+    private String previewR2Key;
+    private Integer durationSec;
     private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
+    private LocalDateTime publishedAt;
 
     public Entry() {}
 
-    public String getId() {
-        return id;
-    }
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
 
-    public void setId(String id) {
-        this.id = id;
-    }
+    public String getTenantId() { return tenantId; }
+    public void setTenantId(String tenantId) { this.tenantId = tenantId; }
 
-    public String getTenantId() {
-        return tenantId;
-    }
+    public String getUserId() { return userId; }
+    public void setUserId(String userId) { this.userId = userId; }
 
-    public void setTenantId(String tenantId) {
-        this.tenantId = tenantId;
-    }
+    public String getTitle() { return title; }
+    public void setTitle(String title) { this.title = title; }
 
-    public String getUserId() {
-        return userId;
-    }
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
 
-    public void setUserId(String userId) {
-        this.userId = userId;
-    }
+    public EntryType getType() { return type; }
+    public void setType(EntryType type) { this.type = type; }
 
-    public String getR2Key() {
-        return r2Key;
-    }
+    public EntryStatus getStatus() { return status; }
+    public void setStatus(EntryStatus status) { this.status = status; }
 
-    public void setR2Key(String r2Key) {
-        this.r2Key = r2Key;
-    }
+    public MediaVisibility getVisibility() { return visibility; }
+    public void setVisibility(MediaVisibility visibility) { this.visibility = visibility; }
 
-    public String getContentType() {
-        return contentType;
-    }
+    public boolean isPaid() { return isPaid; }
+    public void setPaid(boolean paid) { isPaid = paid; }
 
-    public void setContentType(String contentType) {
-        this.contentType = contentType;
-    }
+    public BigDecimal getPriceXlm() { return priceXlm; }
+    public void setPriceXlm(BigDecimal priceXlm) { this.priceXlm = priceXlm; }
 
-    public String getFileName() {
-        return fileName;
-    }
+    public List<String> getTags() { return tags; }
+    public void setTags(List<String> tags) { this.tags = tags; }
 
-    public void setFileName(String fileName) {
-        this.fileName = fileName;
-    }
+    public String getThumbnailR2Key() { return thumbnailR2Key; }
+    public void setThumbnailR2Key(String thumbnailR2Key) { this.thumbnailR2Key = thumbnailR2Key; }
 
-    public MediaKind getKind() {
-        return kind;
-    }
+    public String getPreviewR2Key() { return previewR2Key; }
+    public void setPreviewR2Key(String previewR2Key) { this.previewR2Key = previewR2Key; }
 
-    public void setKind(MediaKind kind) {
-        this.kind = kind;
-    }
+    public Integer getDurationSec() { return durationSec; }
+    public void setDurationSec(Integer durationSec) { this.durationSec = durationSec; }
 
-    public MediaVisibility getVisibility() {
-        return visibility;
-    }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 
-    public void setVisibility(MediaVisibility visibility) {
-        this.visibility = visibility;
-    }
+    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
 
-    public Long getFileSizeBytes() {
-        return fileSizeBytes;
-    }
-
-    public void setFileSizeBytes(Long fileSizeBytes) {
-        this.fileSizeBytes = fileSizeBytes;
-    }
-
-    public LocalDateTime getCreatedAt() {
-        return createdAt;
-    }
-
-    public void setCreatedAt(LocalDateTime createdAt) {
-        this.createdAt = createdAt;
-    }
+    public LocalDateTime getPublishedAt() { return publishedAt; }
+    public void setPublishedAt(LocalDateTime publishedAt) { this.publishedAt = publishedAt; }
 }

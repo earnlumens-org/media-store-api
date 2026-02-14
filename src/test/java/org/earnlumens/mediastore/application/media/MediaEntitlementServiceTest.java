@@ -1,10 +1,8 @@
 package org.earnlumens.mediastore.application.media;
 
 import org.earnlumens.mediastore.domain.media.dto.response.MediaEntitlementResponse;
-import org.earnlumens.mediastore.domain.media.model.Entry;
-import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
-import org.earnlumens.mediastore.domain.media.model.MediaKind;
-import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
+import org.earnlumens.mediastore.domain.media.model.*;
+import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -21,6 +19,8 @@ import static org.mockito.Mockito.*;
  * Verifies the authorization rule:
  *   allowed = (entry.tenantId == resolvedTenantId)
  *             AND (entry.userId == requestUserId OR Entitlement(t,u,e) == ACTIVE)
+ *
+ * After Step 2: r2Key is resolved from the assets collection (kind=FULL, status=READY).
  */
 class MediaEntitlementServiceTest {
 
@@ -32,13 +32,15 @@ class MediaEntitlementServiceTest {
 
     private EntryRepository entryRepository;
     private EntitlementRepository entitlementRepository;
+    private AssetRepository assetRepository;
     private MediaEntitlementService service;
 
     @BeforeEach
     void setUp() {
         entryRepository = mock(EntryRepository.class);
         entitlementRepository = mock(EntitlementRepository.class);
-        service = new MediaEntitlementService(entryRepository, entitlementRepository);
+        assetRepository = mock(AssetRepository.class);
+        service = new MediaEntitlementService(entryRepository, entitlementRepository, assetRepository);
     }
 
     private Entry privateEntry() {
@@ -46,12 +48,30 @@ class MediaEntitlementServiceTest {
         e.setId(ENTRY_ID);
         e.setTenantId(TENANT);
         e.setUserId(OWNER_ID);
-        e.setR2Key("private/media/entry-abc/video.mp4");
-        e.setContentType("video/mp4");
-        e.setFileName("video.mp4");
-        e.setKind(MediaKind.FULL);
+        e.setTitle("Test Video");
+        e.setType(EntryType.VIDEO);
+        e.setStatus(EntryStatus.PUBLISHED);
         e.setVisibility(MediaVisibility.PRIVATE);
         return e;
+    }
+
+    private Asset fullAsset() {
+        Asset a = new Asset();
+        a.setId("asset-001");
+        a.setTenantId(TENANT);
+        a.setEntryId(ENTRY_ID);
+        a.setR2Key("private/media/entry-abc/video.mp4");
+        a.setContentType("video/mp4");
+        a.setFileName("video.mp4");
+        a.setKind(MediaKind.FULL);
+        a.setStatus(AssetStatus.READY);
+        return a;
+    }
+
+    private void configureFullAsset() {
+        when(assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
+                TENANT, ENTRY_ID, MediaKind.FULL, AssetStatus.READY))
+                .thenReturn(Optional.of(fullAsset()));
     }
 
     // ─── Owner always has access ──────────────────────────────
@@ -60,6 +80,7 @@ class MediaEntitlementServiceTest {
     void owner_isAlwaysAllowed_withoutEntitlement() {
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
                 .thenReturn(Optional.of(privateEntry()));
+        configureFullAsset();
 
         Optional<MediaEntitlementResponse> result =
                 service.checkEntitlement(TENANT, OWNER_ID, ENTRY_ID);
@@ -81,6 +102,7 @@ class MediaEntitlementServiceTest {
         when(entitlementRepository.existsByTenantIdAndUserIdAndEntryIdAndStatus(
                 TENANT, BUYER_ID, ENTRY_ID, EntitlementStatus.ACTIVE))
                 .thenReturn(true);
+        configureFullAsset();
 
         Optional<MediaEntitlementResponse> result =
                 service.checkEntitlement(TENANT, BUYER_ID, ENTRY_ID);
@@ -99,8 +121,6 @@ class MediaEntitlementServiceTest {
     void buyer_withNonActiveEntitlement_isDenied() {
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
                 .thenReturn(Optional.of(privateEntry()));
-        // Repository only checks ACTIVE status; mock returns false
-        // (represents REVOKED, EXPIRED, or no record at all)
         when(entitlementRepository.existsByTenantIdAndUserIdAndEntryIdAndStatus(
                 TENANT, BUYER_ID, ENTRY_ID, EntitlementStatus.ACTIVE))
                 .thenReturn(false);
@@ -130,8 +150,6 @@ class MediaEntitlementServiceTest {
         Optional<MediaEntitlementResponse> result =
                 service.checkEntitlement(TENANT, STRANGER_ID, ENTRY_ID);
 
-        // /media/<entryId> is always protected regardless of visibility;
-        // public assets must be served via /public/<r2Key> only.
         assertTrue(result.isEmpty());
     }
 
@@ -183,12 +201,13 @@ class MediaEntitlementServiceTest {
         verifyNoInteractions(entitlementRepository);
     }
 
-    // ─── Content-Disposition logic ────────────────────────────
+    // ─── Content-Disposition logic (now via Asset) ─────────────
 
     @Test
-    void videoEntry_hasInlineDisposition() {
+    void videoAsset_hasInlineDisposition() {
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
                 .thenReturn(Optional.of(privateEntry()));
+        configureFullAsset();
 
         MediaEntitlementResponse resp = service.checkEntitlement(TENANT, OWNER_ID, ENTRY_ID).orElseThrow();
 
@@ -197,16 +216,36 @@ class MediaEntitlementServiceTest {
     }
 
     @Test
-    void zipEntry_hasAttachmentDisposition() {
-        Entry entry = privateEntry();
-        entry.setContentType("application/zip");
-        entry.setFileName("archive.zip");
+    void zipAsset_hasAttachmentDisposition() {
+        Asset zipAsset = fullAsset();
+        zipAsset.setContentType("application/zip");
+        zipAsset.setFileName("archive.zip");
+
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
-                .thenReturn(Optional.of(entry));
+                .thenReturn(Optional.of(privateEntry()));
+        when(assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
+                TENANT, ENTRY_ID, MediaKind.FULL, AssetStatus.READY))
+                .thenReturn(Optional.of(zipAsset));
 
         MediaEntitlementResponse resp = service.checkEntitlement(TENANT, OWNER_ID, ENTRY_ID).orElseThrow();
 
         assertTrue(resp.contentDisposition().startsWith("attachment"));
         assertTrue(resp.contentDisposition().contains("archive.zip"));
+    }
+
+    // ─── Owner allowed but no READY FULL asset → empty ────────
+
+    @Test
+    void owner_allowed_butNoReadyAsset_returnsEmpty() {
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
+                .thenReturn(Optional.of(privateEntry()));
+        when(assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
+                TENANT, ENTRY_ID, MediaKind.FULL, AssetStatus.READY))
+                .thenReturn(Optional.empty());
+
+        Optional<MediaEntitlementResponse> result =
+                service.checkEntitlement(TENANT, OWNER_ID, ENTRY_ID);
+
+        assertTrue(result.isEmpty());
     }
 }
