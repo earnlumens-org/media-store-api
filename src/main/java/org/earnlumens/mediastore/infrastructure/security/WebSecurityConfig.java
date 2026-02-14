@@ -2,6 +2,7 @@ package org.earnlumens.mediastore.infrastructure.security;
 
 import org.earnlumens.mediastore.infrastructure.security.jwt.AuthEntryPointJwt;
 import org.earnlumens.mediastore.infrastructure.security.jwt.AuthTokenFilter;
+import org.earnlumens.mediastore.infrastructure.security.jwt.RefreshCookieAuthFilter;
 import org.earnlumens.mediastore.infrastructure.security.oauth2.OAuth2AuthenticationFailureHandler;
 import org.earnlumens.mediastore.infrastructure.security.oauth2.OAuth2AuthenticationSuccessHandler;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -53,6 +54,11 @@ public class WebSecurityConfig {
     }
 
     @Bean
+    public RefreshCookieAuthFilter refreshCookieAuthFilter() {
+        return new RefreshCookieAuthFilter();
+    }
+
+    @Bean
     SecurityFilterChain springSecurity(
             HttpSecurity http,
             OAuth2AuthorizationRequestResolver resolver,
@@ -86,6 +92,7 @@ public class WebSecurityConfig {
                         .successHandler(oAuth2AuthenticationSuccessHandler)
                         .failureHandler(oAuth2AuthenticationFailureHandler)
                 )
+                .addFilterBefore(refreshCookieAuthFilter(), UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(authenticationJwtTokenFilter(), UsernamePasswordAuthenticationFilter.class);
 
         return http.build();

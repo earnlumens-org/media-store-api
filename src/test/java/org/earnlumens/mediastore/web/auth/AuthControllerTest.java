@@ -34,6 +34,7 @@ class AuthControllerTest {
         // Simular @Value para tests standalone
         ReflectionTestUtils.setField(controller, "cookieDomain", "localhost");
         ReflectionTestUtils.setField(controller, "cookieSecure", false);
+        ReflectionTestUtils.setField(controller, "cookieName", "_rFTo");
         ReflectionTestUtils.setField(controller, "cookieExpirationMs", 1814400000); // 21d
 
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
