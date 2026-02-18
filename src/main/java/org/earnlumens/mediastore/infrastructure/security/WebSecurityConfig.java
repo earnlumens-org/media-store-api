@@ -145,7 +145,7 @@ public class WebSecurityConfig {
             "http://localhost:3000",
             "https://app-dev.earnlumens.org"
         ));
-        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "OPTIONS"));
+        configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PATCH", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("*"));
         configuration.setAllowCredentials(true);
 
