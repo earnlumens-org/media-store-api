@@ -73,6 +73,7 @@ public class WebSecurityConfig {
                 .authorizeHttpRequests(r -> r
                         .requestMatchers(
                                 "/public/**",
+                                "/api/internal/**",
                                 "/api/waitlist/**",
                                 "/api/mock/**",
                                 "/api/auth/session",
