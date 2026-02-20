@@ -34,7 +34,32 @@ public class PublicEntryService {
     public PublicEntryPageResponse getPublishedEntries(String tenantId, int page, int size) {
         Page<Entry> entryPage = entryRepository.findByTenantIdAndStatus(
                 tenantId, EntryStatus.PUBLISHED, PageRequest.of(page, size));
+        return toPageResponse(entryPage);
+    }
 
+    /**
+     * Returns a paginated list of PUBLISHED entries for a specific author (by username),
+     * optionally filtered by entry type.
+     */
+    public PublicEntryPageResponse getPublishedEntriesByUser(String tenantId, String username, String type, int page, int size) {
+        Page<Entry> entryPage;
+
+        if (type != null && !type.isBlank()) {
+            EntryType entryType = parseEntryType(type);
+            if (entryType == null) {
+                return new PublicEntryPageResponse(List.of(), page, size, 0, 0);
+            }
+            entryPage = entryRepository.findByTenantIdAndAuthorUsernameAndStatusAndType(
+                    tenantId, username, EntryStatus.PUBLISHED, entryType, PageRequest.of(page, size));
+        } else {
+            entryPage = entryRepository.findByTenantIdAndAuthorUsernameAndStatus(
+                    tenantId, username, EntryStatus.PUBLISHED, PageRequest.of(page, size));
+        }
+
+        return toPageResponse(entryPage);
+    }
+
+    private PublicEntryPageResponse toPageResponse(Page<Entry> entryPage) {
         List<PublicEntryResponse> content = entryPage.getContent().stream()
                 .map(this::toPublicResponse)
                 .toList();
@@ -82,6 +107,21 @@ public class PublicEntryService {
             case IMAGE -> "image";
             case ARTICLE -> "entry";
             case FILE -> "file";
+        };
+    }
+
+    /**
+     * Parses a UI type string back to EntryType.
+     * Returns null if the type is unknown.
+     */
+    private EntryType parseEntryType(String type) {
+        return switch (type.toLowerCase()) {
+            case "video" -> EntryType.VIDEO;
+            case "audio" -> EntryType.AUDIO;
+            case "image" -> EntryType.IMAGE;
+            case "entry", "article" -> EntryType.ARTICLE;
+            case "file" -> EntryType.FILE;
+            default -> null;
         };
     }
 }

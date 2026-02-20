@@ -2,6 +2,7 @@ package org.earnlumens.mediastore.infrastructure.persistence.media.adapter;
 
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
+import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.EntryEntity;
 import org.earnlumens.mediastore.infrastructure.persistence.media.mapper.EntryMapper;
@@ -34,6 +35,18 @@ public class EntryRepositoryImpl implements EntryRepository {
     @Override
     public Page<Entry> findByTenantIdAndStatus(String tenantId, EntryStatus status, Pageable pageable) {
         return entryMongoRepository.findByTenantIdAndStatusOrderByPublishedAtDesc(tenantId, status.name(), pageable)
+                .map(entryMapper::toModel);
+    }
+
+    @Override
+    public Page<Entry> findByTenantIdAndAuthorUsernameAndStatus(String tenantId, String authorUsername, EntryStatus status, Pageable pageable) {
+        return entryMongoRepository.findByTenantIdAndAuthorUsernameAndStatusOrderByPublishedAtDesc(tenantId, authorUsername, status.name(), pageable)
+                .map(entryMapper::toModel);
+    }
+
+    @Override
+    public Page<Entry> findByTenantIdAndAuthorUsernameAndStatusAndType(String tenantId, String authorUsername, EntryStatus status, EntryType type, Pageable pageable) {
+        return entryMongoRepository.findByTenantIdAndAuthorUsernameAndStatusAndTypeOrderByPublishedAtDesc(tenantId, authorUsername, status.name(), type.name(), pageable)
                 .map(entryMapper::toModel);
     }
 
