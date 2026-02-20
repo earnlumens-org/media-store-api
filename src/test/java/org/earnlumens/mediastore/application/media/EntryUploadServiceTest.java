@@ -15,6 +15,7 @@ import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
+import org.earnlumens.mediastore.domain.user.repository.UserRepository;
 import org.earnlumens.mediastore.infrastructure.r2.R2PresignedUrlService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,6 +40,7 @@ class EntryUploadServiceTest {
 
     private EntryRepository entryRepository;
     private AssetRepository assetRepository;
+    private UserRepository userRepository;
     private R2PresignedUrlService r2PresignedUrlService;
     private EntryUploadService service;
 
@@ -46,8 +48,10 @@ class EntryUploadServiceTest {
     void setUp() {
         entryRepository = mock(EntryRepository.class);
         assetRepository = mock(AssetRepository.class);
+        userRepository = mock(UserRepository.class);
         r2PresignedUrlService = mock(R2PresignedUrlService.class);
-        service = new EntryUploadService(entryRepository, assetRepository, r2PresignedUrlService);
+        service = new EntryUploadService(entryRepository, assetRepository, userRepository, r2PresignedUrlService);
+        when(userRepository.findAllById(any())).thenReturn(java.util.List.of());
     }
 
     private Entry draftEntry() {
@@ -224,8 +228,10 @@ class EntryUploadServiceTest {
 
     @Test
     void finalizeUpload_setsCorrectAssetFields() {
+        Entry entry = draftEntry();
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
-                .thenReturn(Optional.of(draftEntry()));
+                .thenReturn(Optional.of(entry));
+        when(entryRepository.save(any(Entry.class))).thenAnswer(invocation -> invocation.getArgument(0));
         when(assetRepository.save(any(Asset.class))).thenAnswer(invocation -> {
             Asset a = invocation.getArgument(0);
             a.setId("asset-002");

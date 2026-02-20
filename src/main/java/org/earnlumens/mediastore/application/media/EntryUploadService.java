@@ -16,6 +16,8 @@ import org.earnlumens.mediastore.domain.media.model.MediaKind;
 import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
+import org.earnlumens.mediastore.domain.user.model.User;
+import org.earnlumens.mediastore.domain.user.repository.UserRepository;
 import org.earnlumens.mediastore.infrastructure.r2.R2PresignedUrlService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -40,15 +42,18 @@ public class EntryUploadService {
 
     private final EntryRepository entryRepository;
     private final AssetRepository assetRepository;
+    private final UserRepository userRepository;
     private final R2PresignedUrlService r2PresignedUrlService;
 
     public EntryUploadService(
             EntryRepository entryRepository,
             AssetRepository assetRepository,
+            UserRepository userRepository,
             R2PresignedUrlService r2PresignedUrlService
     ) {
         this.entryRepository = entryRepository;
         this.assetRepository = assetRepository;
+        this.userRepository = userRepository;
         this.r2PresignedUrlService = r2PresignedUrlService;
     }
 
@@ -68,6 +73,13 @@ public class EntryUploadService {
         entry.setVisibility(MediaVisibility.PRIVATE);
         entry.setPaid(Boolean.TRUE.equals(request.isPaid()));
         entry.setPriceXlm(request.priceXlm());
+
+        // Denormalize author info for fast reads (no user join at query time)
+        // userId is the OAuth provider ID (e.g. Google ID), not MongoDB _id
+        userRepository.findByOauthUserId(userId).ifPresent(user -> {
+            entry.setAuthorUsername(user.getUsername());
+            entry.setAuthorAvatarUrl(user.getProfileImageUrl());
+        });
 
         Entry saved = entryRepository.save(entry);
 
@@ -102,7 +114,12 @@ public class EntryUploadService {
 
         MediaKind kind = MediaKind.valueOf(request.kind());
         String sanitizedFileName = sanitizeFileName(request.fileName());
-        String r2Key = String.format("private/media/%s/%s/%s-%s",
+
+        // THUMBNAIL and PREVIEW go under public/ prefix so CDN Worker serves them without auth.
+        // FULL (paid content) stays under private/ — served via /media/<entryId> with entitlement check.
+        String prefix = (kind == MediaKind.THUMBNAIL || kind == MediaKind.PREVIEW) ? "public" : "private";
+        String r2Key = String.format("%s/media/%s/%s/%s-%s",
+                prefix,
                 request.entryId(),
                 kind.name().toLowerCase(),
                 UUID.randomUUID(),
@@ -149,6 +166,19 @@ public class EntryUploadService {
         asset.setStatus(AssetStatus.UPLOADED);
 
         Asset saved = assetRepository.save(asset);
+
+        // If a THUMBNAIL was finalized, denormalize its R2 key onto the entry for fast reads
+        if (kind == MediaKind.THUMBNAIL) {
+            entry.setThumbnailR2Key(request.r2Key());
+            entryRepository.save(entry);
+            logger.info("finalizeUpload: set thumbnailR2Key on entry {}: {}", request.entryId(), request.r2Key());
+        }
+        // If a PREVIEW was finalized, denormalize its R2 key onto the entry
+        if (kind == MediaKind.PREVIEW) {
+            entry.setPreviewR2Key(request.r2Key());
+            entryRepository.save(entry);
+            logger.info("finalizeUpload: set previewR2Key on entry {}: {}", request.entryId(), request.r2Key());
+        }
 
         logger.info("finalizeUpload: assetId={}, entryId={}, kind={}, r2Key={}",
                 saved.getId(), request.entryId(), kind, request.r2Key());

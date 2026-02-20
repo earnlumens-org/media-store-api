@@ -10,6 +10,8 @@ public class Entry {
     private String id;
     private String tenantId;
     private String userId;
+    private String authorUsername;
+    private String authorAvatarUrl;
     private String title;
     private String description;
     private EntryType type;
@@ -35,6 +37,12 @@ public class Entry {
 
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }
+
+    public String getAuthorUsername() { return authorUsername; }
+    public void setAuthorUsername(String authorUsername) { this.authorUsername = authorUsername; }
+
+    public String getAuthorAvatarUrl() { return authorAvatarUrl; }
+    public void setAuthorAvatarUrl(String authorAvatarUrl) { this.authorAvatarUrl = authorAvatarUrl; }
 
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }

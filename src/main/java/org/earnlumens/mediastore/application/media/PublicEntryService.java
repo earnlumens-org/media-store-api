@@ -6,52 +6,37 @@ import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
-import org.earnlumens.mediastore.domain.user.model.User;
-import org.earnlumens.mediastore.domain.user.repository.UserRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import java.time.format.DateTimeFormatter;
 import java.util.List;
-import java.util.Map;
-import java.util.function.Function;
-import java.util.stream.Collectors;
 
 /**
  * Service for public (unauthenticated) entry queries.
- * Returns PUBLISHED entries enriched with author info.
+ * Returns PUBLISHED entries with denormalized author info — no user join needed.
  */
 @Service
 public class PublicEntryService {
 
     private final EntryRepository entryRepository;
-    private final UserRepository userRepository;
 
-    public PublicEntryService(EntryRepository entryRepository, UserRepository userRepository) {
+    public PublicEntryService(EntryRepository entryRepository) {
         this.entryRepository = entryRepository;
-        this.userRepository = userRepository;
     }
 
     /**
      * Returns a paginated list of PUBLISHED entries for the given tenant,
      * ordered by publishedAt descending (most recent first).
+     * All author info is denormalized on the entry, so this is a single-query operation.
      */
     public PublicEntryPageResponse getPublishedEntries(String tenantId, int page, int size) {
         Page<Entry> entryPage = entryRepository.findByTenantIdAndStatus(
                 tenantId, EntryStatus.PUBLISHED, PageRequest.of(page, size));
 
-        // Batch-fetch users for all entries in the page
-        List<String> userIds = entryPage.getContent().stream()
-                .map(Entry::getUserId)
-                .distinct()
-                .toList();
-
-        Map<String, User> usersById = userRepository.findAllById(userIds).stream()
-                .collect(Collectors.toMap(User::getId, Function.identity(), (a, b) -> a));
-
         List<PublicEntryResponse> content = entryPage.getContent().stream()
-                .map(entry -> toPublicResponse(entry, usersById))
+                .map(this::toPublicResponse)
                 .toList();
 
         return new PublicEntryPageResponse(
@@ -63,10 +48,7 @@ public class PublicEntryService {
         );
     }
 
-    private PublicEntryResponse toPublicResponse(Entry entry, Map<String, User> usersById) {
-        User author = usersById.get(entry.getUserId());
-        String authorName = author != null ? author.getUsername() : entry.getUserId();
-        String authorAvatarUrl = author != null ? author.getProfileImageUrl() : null;
+    private PublicEntryResponse toPublicResponse(Entry entry) {
         String publishedAt = entry.getPublishedAt() != null
                 ? entry.getPublishedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
                 : null;
@@ -76,8 +58,8 @@ public class PublicEntryService {
                 mapType(entry.getType()),
                 entry.getTitle(),
                 entry.getDescription(),
-                authorName,
-                authorAvatarUrl,
+                entry.getAuthorUsername() != null ? entry.getAuthorUsername() : entry.getUserId(),
+                entry.getAuthorAvatarUrl(),
                 publishedAt,
                 entry.getThumbnailR2Key(),
                 entry.getPreviewR2Key(),

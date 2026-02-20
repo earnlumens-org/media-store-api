@@ -29,6 +29,10 @@ public class EntryEntity {
     @NotBlank
     private String userId;
 
+    private String authorUsername;
+
+    private String authorAvatarUrl;
+
     @NotBlank
     @Size(max = 200)
     private String title;
@@ -75,6 +79,12 @@ public class EntryEntity {
 
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }
+
+    public String getAuthorUsername() { return authorUsername; }
+    public void setAuthorUsername(String authorUsername) { this.authorUsername = authorUsername; }
+
+    public String getAuthorAvatarUrl() { return authorAvatarUrl; }
+    public void setAuthorAvatarUrl(String authorAvatarUrl) { this.authorAvatarUrl = authorAvatarUrl; }
 
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
