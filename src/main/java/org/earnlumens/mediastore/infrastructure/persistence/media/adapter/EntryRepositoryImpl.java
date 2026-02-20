@@ -6,6 +6,8 @@ import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.EntryEntity;
 import org.earnlumens.mediastore.infrastructure.persistence.media.mapper.EntryMapper;
 import org.earnlumens.mediastore.infrastructure.persistence.media.repository.EntryMongoRepository;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
@@ -27,6 +29,20 @@ public class EntryRepositoryImpl implements EntryRepository {
     public Optional<Entry> findByTenantIdAndId(String tenantId, String id) {
         return entryMongoRepository.findByTenantIdAndId(tenantId, id)
                 .map(entryMapper::toModel);
+    }
+
+    @Override
+    public Page<Entry> findByTenantIdAndStatus(String tenantId, EntryStatus status, Pageable pageable) {
+        return entryMongoRepository.findByTenantIdAndStatusOrderByPublishedAtDesc(tenantId, status.name(), pageable)
+                .map(entryMapper::toModel);
+    }
+
+    @Override
+    public List<Entry> findByStatus(EntryStatus status) {
+        return entryMongoRepository.findByStatus(status.name())
+                .stream()
+                .map(entryMapper::toModel)
+                .toList();
     }
 
     @Override

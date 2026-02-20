@@ -7,6 +7,7 @@ import org.earnlumens.mediastore.infrastructure.persistence.user.mapper.UserMapp
 import org.earnlumens.mediastore.infrastructure.persistence.user.repository.UserMongoRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -18,6 +19,14 @@ public class UserRepositoryImpl implements UserRepository {
     public UserRepositoryImpl(UserMongoRepository userMongoRepository, UserMapper userMapper) {
         this.userMongoRepository = userMongoRepository;
         this.userMapper = userMapper;
+    }
+
+    @Override
+    public List<User> findAllById(List<String> ids) {
+        return userMongoRepository.findAllById(ids)
+                .stream()
+                .map(userMapper::toModel)
+                .toList();
     }
 
     @Override
