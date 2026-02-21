@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.format.DateTimeFormatter;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Service for public (unauthenticated) entry queries.
@@ -24,6 +25,16 @@ public class PublicEntryService {
 
     public PublicEntryService(EntryRepository entryRepository) {
         this.entryRepository = entryRepository;
+    }
+
+    /**
+     * Returns a single PUBLISHED entry by ID for the given tenant.
+     * Returns empty if the entry doesn't exist or is not published.
+     */
+    public Optional<PublicEntryResponse> getPublishedEntryById(String tenantId, String entryId) {
+        return entryRepository.findByTenantIdAndId(tenantId, entryId)
+                .filter(entry -> entry.getStatus() == EntryStatus.PUBLISHED)
+                .map(this::toPublicResponse);
     }
 
     /**
