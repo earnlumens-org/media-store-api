@@ -8,6 +8,8 @@ import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Document(collection = "orders")
 @CompoundIndex(name = "idx_order_tenant_user_entry", def = "{'tenantId': 1, 'userId': 1, 'entryId': 1}", unique = true)
@@ -15,6 +17,7 @@ import java.time.LocalDateTime;
 @CompoundIndex(name = "idx_order_tenant_user_status_created", def = "{'tenantId': 1, 'userId': 1, 'status': 1, 'createdAt': -1}")
 @CompoundIndex(name = "idx_order_tenant_seller_status_created", def = "{'tenantId': 1, 'sellerId': 1, 'status': 1, 'createdAt': -1}")
 @CompoundIndex(name = "idx_order_stellar_tx", def = "{'stellarTxHash': 1}")
+@CompoundIndex(name = "idx_order_status_expires", def = "{'status': 1, 'expiresAt': 1}")
 public class OrderEntity {
 
     @Id
@@ -43,6 +46,15 @@ public class OrderEntity {
     private LocalDateTime createdAt;
 
     private LocalDateTime completedAt;
+
+    // ── Payment flow fields ──
+    private String buyerWallet;
+    private String memo;
+    private String unsignedXdr;
+    private String signedXdr;
+    private String integrityHash;
+    private LocalDateTime expiresAt;
+    private List<PaymentSplitEntity> paymentSplits = new ArrayList<>();
 
     public OrderEntity() {}
 
@@ -75,4 +87,25 @@ public class OrderEntity {
 
     public LocalDateTime getCompletedAt() { return completedAt; }
     public void setCompletedAt(LocalDateTime completedAt) { this.completedAt = completedAt; }
+
+    public String getBuyerWallet() { return buyerWallet; }
+    public void setBuyerWallet(String buyerWallet) { this.buyerWallet = buyerWallet; }
+
+    public String getMemo() { return memo; }
+    public void setMemo(String memo) { this.memo = memo; }
+
+    public String getUnsignedXdr() { return unsignedXdr; }
+    public void setUnsignedXdr(String unsignedXdr) { this.unsignedXdr = unsignedXdr; }
+
+    public String getSignedXdr() { return signedXdr; }
+    public void setSignedXdr(String signedXdr) { this.signedXdr = signedXdr; }
+
+    public String getIntegrityHash() { return integrityHash; }
+    public void setIntegrityHash(String integrityHash) { this.integrityHash = integrityHash; }
+
+    public LocalDateTime getExpiresAt() { return expiresAt; }
+    public void setExpiresAt(LocalDateTime expiresAt) { this.expiresAt = expiresAt; }
+
+    public List<PaymentSplitEntity> getPaymentSplits() { return paymentSplits; }
+    public void setPaymentSplits(List<PaymentSplitEntity> paymentSplits) { this.paymentSplits = paymentSplits; }
 }

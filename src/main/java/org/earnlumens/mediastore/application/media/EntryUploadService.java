@@ -14,17 +14,23 @@ import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.model.MediaKind;
 import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
+import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
+import org.earnlumens.mediastore.domain.media.model.SplitRole;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
-import org.earnlumens.mediastore.domain.user.model.User;
 import org.earnlumens.mediastore.domain.user.repository.UserRepository;
+import org.earnlumens.mediastore.infrastructure.config.PlatformConfig;
 import org.earnlumens.mediastore.infrastructure.r2.R2PresignedUrlService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
  * Application service orchestrating the creator upload flow:
@@ -39,29 +45,58 @@ import java.util.UUID;
 public class EntryUploadService {
 
     private static final Logger logger = LoggerFactory.getLogger(EntryUploadService.class);
+    private static final BigDecimal ONE_HUNDRED = new BigDecimal("100.00");
+    private static final Pattern STELLAR_PUBLIC_KEY = Pattern.compile("^G[A-Z2-7]{55}$");
 
     private final EntryRepository entryRepository;
     private final AssetRepository assetRepository;
     private final UserRepository userRepository;
     private final R2PresignedUrlService r2PresignedUrlService;
+    private final PlatformConfig platformConfig;
 
     public EntryUploadService(
             EntryRepository entryRepository,
             AssetRepository assetRepository,
             UserRepository userRepository,
-            R2PresignedUrlService r2PresignedUrlService
+            R2PresignedUrlService r2PresignedUrlService,
+            PlatformConfig platformConfig
     ) {
         this.entryRepository = entryRepository;
         this.assetRepository = assetRepository;
         this.userRepository = userRepository;
         this.r2PresignedUrlService = r2PresignedUrlService;
+        this.platformConfig = platformConfig;
     }
 
     /**
      * Creates a new DRAFT entry owned by the given user.
+     * <p>
+     * For paid content, a valid Stellar wallet (sellerWallet) is required.
+     * The backend auto-generates the default payment splits:
+     *   - PLATFORM: platform.fee-percent (from config)
+     *   - SELLER: 100 - platform.fee-percent
+     * <p>
+     * Future: sellers will be able to add COLLABORATOR splits manually.
      */
     public CreateEntryResponse createEntry(String tenantId, String userId, CreateEntryRequest request) {
         EntryType entryType = EntryType.valueOf(request.type());
+        boolean isPaid = Boolean.TRUE.equals(request.isPaid());
+
+        // Validate wallet requirement for paid content
+        if (isPaid) {
+            if (request.sellerWallet() == null || request.sellerWallet().isBlank()) {
+                throw new IllegalArgumentException("A connected wallet is required for paid content");
+            }
+            if (!STELLAR_PUBLIC_KEY.matcher(request.sellerWallet()).matches()) {
+                throw new IllegalArgumentException("Invalid Stellar public key");
+            }
+            if (request.priceXlm() == null || request.priceXlm().compareTo(BigDecimal.ZERO) <= 0) {
+                throw new IllegalArgumentException("Price must be greater than 0 for paid content");
+            }
+            if (request.sellerWallet().equals(platformConfig.getWallet())) {
+                throw new IllegalArgumentException("Seller wallet cannot be the platform wallet");
+            }
+        }
 
         Entry entry = new Entry();
         entry.setTenantId(tenantId);
@@ -71,8 +106,16 @@ public class EntryUploadService {
         entry.setType(entryType);
         entry.setStatus(EntryStatus.DRAFT);
         entry.setVisibility(MediaVisibility.PRIVATE);
-        entry.setPaid(Boolean.TRUE.equals(request.isPaid()));
+        entry.setPaid(isPaid);
         entry.setPriceXlm(request.priceXlm());
+
+        // Set seller wallet and generate payment splits for paid content
+        if (isPaid) {
+            entry.setSellerWallet(request.sellerWallet());
+            entry.setPaymentSplits(buildDefaultSplits(request.sellerWallet()));
+            logger.info("Paid entry: sellerWallet={}, splits={}", request.sellerWallet(),
+                    entry.getPaymentSplits().size());
+        }
 
         // Denormalize author info for fast reads (no user join at query time)
         // userId is the OAuth provider ID (e.g. Google ID), not MongoDB _id
@@ -83,7 +126,8 @@ public class EntryUploadService {
 
         Entry saved = entryRepository.save(entry);
 
-        logger.info("Created DRAFT entry: id={}, tenantId={}, userId={}", saved.getId(), tenantId, userId);
+        logger.info("Created DRAFT entry: id={}, tenantId={}, userId={}, isPaid={}",
+                saved.getId(), tenantId, userId, isPaid);
 
         return new CreateEntryResponse(
                 saved.getId(),
@@ -91,6 +135,23 @@ public class EntryUploadService {
                 saved.getType().name(),
                 saved.getStatus().name()
         );
+    }
+
+    /**
+     * Builds the default payment splits: PLATFORM + SELLER.
+     * Uses BigDecimal to guarantee exact decimal arithmetic.
+     *
+     * @param sellerWallet the seller's Stellar public key
+     * @return list with exactly 2 splits summing to 100.00%
+     */
+    private List<PaymentSplit> buildDefaultSplits(String sellerWallet) {
+        BigDecimal platformPercent = platformConfig.getFeePercent();
+        BigDecimal sellerPercent = ONE_HUNDRED.subtract(platformPercent);
+
+        List<PaymentSplit> splits = new ArrayList<>();
+        splits.add(new PaymentSplit(platformConfig.getWallet(), SplitRole.PLATFORM, platformPercent));
+        splits.add(new PaymentSplit(sellerWallet, SplitRole.SELLER, sellerPercent));
+        return splits;
     }
 
     /**

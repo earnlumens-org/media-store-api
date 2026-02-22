@@ -1,0 +1,152 @@
+package org.earnlumens.mediastore.application.payment;
+
+import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
+import org.earnlumens.mediastore.infrastructure.config.StellarConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Service;
+import org.stellar.sdk.*;
+import org.stellar.sdk.operations.PaymentOperation;
+import org.stellar.sdk.responses.TransactionResponse;
+
+import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.List;
+
+/**
+ * Builds, hashes and submits Stellar XLM payment transactions.
+ *
+ * Design invariants:
+ *   - All amounts use 7 decimal places (Stellar's max precision for XLM).
+ *   - Transactions contain one payment operation per split recipient.
+ *   - MEMO_TEXT carries "TOTAL: X.XX XLM" for UX clarity.
+ *   - TimeBounds enforce expiration; backend never submits an expired tx.
+ */
+@Service
+public class StellarTransactionService {
+
+    private static final Logger logger = LoggerFactory.getLogger(StellarTransactionService.class);
+    private static final BigDecimal ONE_HUNDRED = new BigDecimal("100");
+
+    private final StellarConfig stellarConfig;
+    private final Server server;
+    private final Network network;
+
+    public StellarTransactionService(StellarConfig stellarConfig) {
+        this.stellarConfig = stellarConfig;
+        this.server = new Server(stellarConfig.getHorizonUrl());
+        this.network = new Network(stellarConfig.getNetworkPassphrase());
+    }
+
+    /**
+     * Builds an unsigned multi-operation XLM payment transaction.
+     *
+     * @param buyerWallet  the buyer's Stellar public key (source account)
+     * @param totalXlm     the total price in XLM
+     * @param splits       payment split list with wallet + percent
+     * @param memo         MEMO text (e.g. "TOTAL: 5.00 XLM")
+     * @return BuildResult containing the unsigned XDR, integrityHash, and txHash
+     */
+    public BuildResult buildTransaction(String buyerWallet, BigDecimal totalXlm,
+                                        List<PaymentSplit> splits, String memo) {
+        try {
+            // SDK 2.x: Server.loadAccount returns TransactionBuilderAccount
+            TransactionBuilderAccount sourceAccount = server.loadAccount(buyerWallet);
+
+            TransactionBuilder txBuilder = new TransactionBuilder(sourceAccount, network)
+                    .setBaseFee(AbstractTransaction.MIN_BASE_FEE)
+                    .setTimeout(stellarConfig.getTxTimeoutSeconds())
+                    .addMemo(Memo.text(memo));
+
+            // Add one payment operation per split recipient
+            for (PaymentSplit split : splits) {
+                BigDecimal amount = totalXlm.multiply(split.getPercent())
+                        .divide(ONE_HUNDRED, 7, RoundingMode.DOWN);
+
+                // Skip zero amounts (shouldn't happen but safety net)
+                if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+                    continue;
+                }
+
+                txBuilder.addOperation(
+                        PaymentOperation.builder()
+                                .destination(split.getWallet())
+                                .asset(Asset.createNativeAsset())
+                                .amount(amount)
+                                .build()
+                );
+            }
+
+            Transaction transaction = txBuilder.build();
+
+            // AbstractTransaction provides toEnvelopeXdrBase64() and hash()
+            String unsignedXdr = transaction.toEnvelopeXdrBase64();
+            String integrityHash = sha256Hex(unsignedXdr);
+            String txHash = HexFormat.of().formatHex(transaction.hash());
+
+            logger.info("Built Stellar tx: txHash={}, buyer={}, total={} XLM, ops={}",
+                    txHash, buyerWallet, totalXlm.toPlainString(), splits.size());
+
+            return new BuildResult(unsignedXdr, integrityHash, txHash);
+
+        } catch (Exception e) {
+            logger.error("Failed to build Stellar transaction: buyer={}, total={}", buyerWallet, totalXlm, e);
+            throw new RuntimeException("Failed to build payment transaction", e);
+        }
+    }
+
+    /**
+     * Submits a signed transaction to the Stellar network via Horizon.
+     *
+     * @param signedXdr the signed transaction envelope XDR (base-64)
+     * @return the transaction hash on success
+     * @throws RuntimeException if the submission fails
+     */
+    public String submitTransaction(String signedXdr) {
+        try {
+            // AbstractTransaction.fromEnvelopeXdr(String, Network) returns AbstractTransaction
+            Transaction transaction = (Transaction) AbstractTransaction.fromEnvelopeXdr(signedXdr, network);
+
+            // SDK 2.x: submitTransaction returns TransactionResponse, throws on network error
+            TransactionResponse response = server.submitTransaction(transaction);
+
+            if (Boolean.TRUE.equals(response.getSuccessful())) {
+                logger.info("Stellar tx submitted successfully: hash={}", response.getHash());
+                return response.getHash();
+            } else {
+                String resultXdr = response.getResultXdr() != null
+                        ? response.getResultXdr()
+                        : "unknown";
+                logger.error("Stellar tx submission failed: resultXdr={}", resultXdr);
+                throw new RuntimeException("Stellar transaction failed: " + resultXdr);
+            }
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            logger.error("Failed to submit Stellar transaction", e);
+            throw new RuntimeException("Failed to submit transaction to Stellar network", e);
+        }
+    }
+
+    /**
+     * Computes SHA-256 hex digest of the given input string.
+     */
+    public static String sha256Hex(String input) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("SHA-256 not available", e);
+        }
+    }
+
+    /**
+     * Result of building a transaction.
+     */
+    public record BuildResult(String unsignedXdr, String integrityHash, String txHash) {}
+}

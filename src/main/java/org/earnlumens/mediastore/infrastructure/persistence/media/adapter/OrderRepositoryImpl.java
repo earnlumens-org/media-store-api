@@ -1,12 +1,15 @@
 package org.earnlumens.mediastore.infrastructure.persistence.media.adapter;
 
 import org.earnlumens.mediastore.domain.media.model.Order;
+import org.earnlumens.mediastore.domain.media.model.OrderStatus;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.OrderEntity;
 import org.earnlumens.mediastore.infrastructure.persistence.media.mapper.OrderMapper;
 import org.earnlumens.mediastore.infrastructure.persistence.media.repository.OrderMongoRepository;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -24,6 +27,20 @@ public class OrderRepositoryImpl implements OrderRepository {
     public Optional<Order> findByTenantIdAndUserIdAndEntryId(String tenantId, String userId, String entryId) {
         return orderMongoRepository.findByTenantIdAndUserIdAndEntryId(tenantId, userId, entryId)
                 .map(orderMapper::toModel);
+    }
+
+    @Override
+    public Optional<Order> findById(String id) {
+        return orderMongoRepository.findById(id)
+                .map(orderMapper::toModel);
+    }
+
+    @Override
+    public List<Order> findByStatusAndExpiresAtBefore(OrderStatus status, LocalDateTime cutoff) {
+        return orderMongoRepository.findByStatusAndExpiresAtBefore(status.name(), cutoff)
+                .stream()
+                .map(orderMapper::toModel)
+                .toList();
     }
 
     @Override

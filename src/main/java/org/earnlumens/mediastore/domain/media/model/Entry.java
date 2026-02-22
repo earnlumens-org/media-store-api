@@ -19,6 +19,15 @@ public class Entry {
     private MediaVisibility visibility;
     private boolean isPaid;
     private BigDecimal priceXlm;
+    /** Stellar public key of the seller at the time of publishing. Required for paid content. */
+    private String sellerWallet;
+    /**
+     * Payment distribution splits for this entry.
+     * Currently: PLATFORM (10%) + SELLER (90%).
+     * Future: up to 100 recipients (collaborators).
+     * Stored as embedded sub-documents in MongoDB.
+     */
+    private List<PaymentSplit> paymentSplits = new ArrayList<>();
     private List<String> tags = new ArrayList<>();
     private String thumbnailR2Key;
     private String previewR2Key;
@@ -64,6 +73,12 @@ public class Entry {
 
     public BigDecimal getPriceXlm() { return priceXlm; }
     public void setPriceXlm(BigDecimal priceXlm) { this.priceXlm = priceXlm; }
+
+    public String getSellerWallet() { return sellerWallet; }
+    public void setSellerWallet(String sellerWallet) { this.sellerWallet = sellerWallet; }
+
+    public List<PaymentSplit> getPaymentSplits() { return paymentSplits; }
+    public void setPaymentSplits(List<PaymentSplit> paymentSplits) { this.paymentSplits = paymentSplits; }
 
     public List<String> getTags() { return tags; }
     public void setTags(List<String> tags) { this.tags = tags; }

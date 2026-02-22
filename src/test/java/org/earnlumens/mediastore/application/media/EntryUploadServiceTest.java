@@ -16,6 +16,7 @@ import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.user.repository.UserRepository;
+import org.earnlumens.mediastore.infrastructure.config.PlatformConfig;
 import org.earnlumens.mediastore.infrastructure.r2.R2PresignedUrlService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,11 +38,14 @@ class EntryUploadServiceTest {
     private static final String USER_ID = "user-123";
     private static final String OTHER_USER = "user-other";
     private static final String ENTRY_ID = "entry-abc";
+    private static final String SELLER_WALLET = "GBCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTUVWX";
+    private static final String PLATFORM_WALLET = "GPLATFORMWALLET234567ABCDEFGHIJKLMNOPQRSTUVWXYZ2345672";
 
     private EntryRepository entryRepository;
     private AssetRepository assetRepository;
     private UserRepository userRepository;
     private R2PresignedUrlService r2PresignedUrlService;
+    private PlatformConfig platformConfig;
     private EntryUploadService service;
 
     @BeforeEach
@@ -50,7 +54,10 @@ class EntryUploadServiceTest {
         assetRepository = mock(AssetRepository.class);
         userRepository = mock(UserRepository.class);
         r2PresignedUrlService = mock(R2PresignedUrlService.class);
-        service = new EntryUploadService(entryRepository, assetRepository, userRepository, r2PresignedUrlService);
+        platformConfig = new PlatformConfig();
+        platformConfig.setWallet(PLATFORM_WALLET);
+        platformConfig.setFeePercent(new BigDecimal("10.00"));
+        service = new EntryUploadService(entryRepository, assetRepository, userRepository, r2PresignedUrlService, platformConfig);
         when(userRepository.findAllById(any())).thenReturn(java.util.List.of());
     }
 
@@ -77,7 +84,7 @@ class EntryUploadServiceTest {
         });
 
         CreateEntryRequest request = new CreateEntryRequest(
-                "My Video", "A description", "VIDEO", true, new BigDecimal("10.5"));
+                "My Video", "A description", "VIDEO", true, new BigDecimal("10.5"), SELLER_WALLET);
 
         CreateEntryResponse response = service.createEntry(TENANT, USER_ID, request);
 
@@ -104,7 +111,7 @@ class EntryUploadServiceTest {
         });
 
         CreateEntryRequest request = new CreateEntryRequest(
-                "Track", null, "AUDIO", false, null);
+                "Track", null, "AUDIO", false, null, null);
 
         service.createEntry(TENANT, USER_ID, request);
 
@@ -114,7 +121,7 @@ class EntryUploadServiceTest {
     @Test
     void createEntry_invalidType_throwsException() {
         CreateEntryRequest request = new CreateEntryRequest(
-                "Bad", null, "INVALID_TYPE", false, null);
+                "Bad", null, "INVALID_TYPE", false, null, null);
 
         assertThrows(IllegalArgumentException.class,
                 () -> service.createEntry(TENANT, USER_ID, request));

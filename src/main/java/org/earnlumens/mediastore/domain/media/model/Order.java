@@ -2,6 +2,8 @@ package org.earnlumens.mediastore.domain.media.model;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 public class Order {
 
@@ -15,6 +17,22 @@ public class Order {
     private String stellarTxHash;
     private LocalDateTime createdAt;
     private LocalDateTime completedAt;
+
+    // ── Payment flow fields ──
+    /** Buyer's Stellar public key (G...) */
+    private String buyerWallet;
+    /** MEMO text attached to the Stellar tx (e.g. "TOTAL: 5.00 XLM") */
+    private String memo;
+    /** Base-64 XDR of the unsigned transaction envelope, built by the backend */
+    private String unsignedXdr;
+    /** Base-64 XDR of the signed transaction envelope, returned after user signs */
+    private String signedXdr;
+    /** SHA-256 hex of the unsigned XDR — used to verify the user didn't tamper with the tx */
+    private String integrityHash;
+    /** When this order expires (timeBounds maxTime) */
+    private LocalDateTime expiresAt;
+    /** Snapshot of the payment splits at order-creation time (amounts, not just percents) */
+    private List<PaymentSplit> paymentSplits = new ArrayList<>();
 
     public Order() {}
 
@@ -38,4 +56,19 @@ public class Order {
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getCompletedAt() { return completedAt; }
     public void setCompletedAt(LocalDateTime completedAt) { this.completedAt = completedAt; }
+
+    public String getBuyerWallet() { return buyerWallet; }
+    public void setBuyerWallet(String buyerWallet) { this.buyerWallet = buyerWallet; }
+    public String getMemo() { return memo; }
+    public void setMemo(String memo) { this.memo = memo; }
+    public String getUnsignedXdr() { return unsignedXdr; }
+    public void setUnsignedXdr(String unsignedXdr) { this.unsignedXdr = unsignedXdr; }
+    public String getSignedXdr() { return signedXdr; }
+    public void setSignedXdr(String signedXdr) { this.signedXdr = signedXdr; }
+    public String getIntegrityHash() { return integrityHash; }
+    public void setIntegrityHash(String integrityHash) { this.integrityHash = integrityHash; }
+    public LocalDateTime getExpiresAt() { return expiresAt; }
+    public void setExpiresAt(LocalDateTime expiresAt) { this.expiresAt = expiresAt; }
+    public List<PaymentSplit> getPaymentSplits() { return paymentSplits; }
+    public void setPaymentSplits(List<PaymentSplit> paymentSplits) { this.paymentSplits = paymentSplits; }
 }

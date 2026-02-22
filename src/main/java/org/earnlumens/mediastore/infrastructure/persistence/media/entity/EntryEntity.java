@@ -53,6 +53,16 @@ public class EntryEntity {
 
     private BigDecimal priceXlm;
 
+    /** Stellar public key (G...) of the seller. Required for paid content. */
+    private String sellerWallet;
+
+    /**
+     * Payment distribution splits. Embedded sub-documents.
+     * Currently: PLATFORM (10%) + SELLER (90%).
+     * Future: up to 100 recipients.
+     */
+    private List<PaymentSplitEntity> paymentSplits = new ArrayList<>();
+
     private List<String> tags = new ArrayList<>();
 
     private String thumbnailR2Key;
@@ -106,6 +116,12 @@ public class EntryEntity {
 
     public BigDecimal getPriceXlm() { return priceXlm; }
     public void setPriceXlm(BigDecimal priceXlm) { this.priceXlm = priceXlm; }
+
+    public String getSellerWallet() { return sellerWallet; }
+    public void setSellerWallet(String sellerWallet) { this.sellerWallet = sellerWallet; }
+
+    public List<PaymentSplitEntity> getPaymentSplits() { return paymentSplits; }
+    public void setPaymentSplits(List<PaymentSplitEntity> paymentSplits) { this.paymentSplits = paymentSplits; }
 
     public List<String> getTags() { return tags; }
     public void setTags(List<String> tags) { this.tags = tags; }

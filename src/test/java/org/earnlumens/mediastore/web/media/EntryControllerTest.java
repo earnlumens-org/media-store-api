@@ -83,7 +83,7 @@ class EntryControllerTest {
     @Test
     void createEntry_noAuth_returns401() throws Exception {
         CreateEntryRequest request = new CreateEntryRequest(
-                "Test", null, "VIDEO", true, null);
+                "Test", null, "VIDEO", true, null, null);
 
         mockMvc.perform(post("/api/entries")
                         .contentType(MediaType.APPLICATION_JSON)

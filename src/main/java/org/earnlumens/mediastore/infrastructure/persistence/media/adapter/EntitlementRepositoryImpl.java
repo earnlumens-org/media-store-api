@@ -1,7 +1,10 @@
 package org.earnlumens.mediastore.infrastructure.persistence.media.adapter;
 
+import org.earnlumens.mediastore.domain.media.model.Entitlement;
 import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
 import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
+import org.earnlumens.mediastore.infrastructure.persistence.media.entity.EntitlementEntity;
+import org.earnlumens.mediastore.infrastructure.persistence.media.mapper.EntitlementMapper;
 import org.earnlumens.mediastore.infrastructure.persistence.media.repository.EntitlementMongoRepository;
 import org.springframework.stereotype.Repository;
 
@@ -9,9 +12,12 @@ import org.springframework.stereotype.Repository;
 public class EntitlementRepositoryImpl implements EntitlementRepository {
 
     private final EntitlementMongoRepository entitlementMongoRepository;
+    private final EntitlementMapper entitlementMapper;
 
-    public EntitlementRepositoryImpl(EntitlementMongoRepository entitlementMongoRepository) {
+    public EntitlementRepositoryImpl(EntitlementMongoRepository entitlementMongoRepository,
+                                     EntitlementMapper entitlementMapper) {
         this.entitlementMongoRepository = entitlementMongoRepository;
+        this.entitlementMapper = entitlementMapper;
     }
 
     @Override
@@ -19,5 +25,12 @@ public class EntitlementRepositoryImpl implements EntitlementRepository {
             String tenantId, String userId, String entryId, EntitlementStatus status) {
         return entitlementMongoRepository.existsByTenantIdAndUserIdAndEntryIdAndStatus(
                 tenantId, userId, entryId, status.name());
+    }
+
+    @Override
+    public Entitlement save(Entitlement entitlement) {
+        EntitlementEntity entity = entitlementMapper.toEntity(entitlement);
+        EntitlementEntity saved = entitlementMongoRepository.save(entity);
+        return entitlementMapper.toModel(saved);
     }
 }
