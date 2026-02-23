@@ -20,6 +20,8 @@ public interface EntryRepository {
 
     Page<Entry> findByTenantIdAndAuthorUsernameAndStatusAndType(String tenantId, String authorUsername, EntryStatus status, EntryType type, Pageable pageable);
 
+    List<Entry> findByTenantIdAndIdIn(String tenantId, List<String> ids);
+
     List<Entry> findByStatus(EntryStatus status);
 
     List<Entry> findByStatusAndCreatedAtBefore(EntryStatus status, LocalDateTime cutoff);

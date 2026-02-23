@@ -51,6 +51,14 @@ public class EntryRepositoryImpl implements EntryRepository {
     }
 
     @Override
+    public List<Entry> findByTenantIdAndIdIn(String tenantId, List<String> ids) {
+        return entryMongoRepository.findByTenantIdAndIdIn(tenantId, ids)
+                .stream()
+                .map(entryMapper::toModel)
+                .toList();
+    }
+
+    @Override
     public List<Entry> findByStatus(EntryStatus status) {
         return entryMongoRepository.findByStatus(status.name())
                 .stream()
