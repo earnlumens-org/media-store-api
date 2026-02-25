@@ -4,11 +4,10 @@ import org.springframework.web.bind.annotation.*;
 import java.util.*;
 
 /**
- * Mock controller for generating random entries and collections
- * for the media-store-ui frontend.
- * 
- * Note: showAuthor is NOT included in the response as it is a UI design decision,
- * not server data.
+ * Mock controller for the main Home feed — a realistic mix of:
+ *   • Regular users WITHOUT badge  (~50 %)
+ *   • Community creators WITH blue badge u1  (~30 %)
+ *   • Ecosystem members WITH gold badge u2  (~20 %)
  */
 @RestController
 @RequestMapping("/api/mock/entries")
@@ -17,10 +16,63 @@ public class EntryMockController {
     private static final int MAX_PAGE_SIZE = 48;
     private static final String[] ENTRY_TYPES = {"video", "audio", "entry", "image"};
     private static final String[] COLLECTION_TYPES = {
-        "series", "course", "library", "list", "album", 
+        "series", "course", "library", "list", "album",
         "bundle", "catalog", "volume", "archive"
     };
-    private static final String[] PROFILE_BADGES = {"u1", "u2"};
+
+    // ── Tier 1: Plain users (no badge) ────────────────────────────────
+    private static final String[] PLAIN_USERNAMES = {
+        "lightning", "cinder", "wave_crash", "codeflicker", "solar_loop",
+        "phantom", "glitchy", "stormpulse", "riser", "echovibe",
+        "blip", "fusion", "skydive", "boltflash", "hazedream",
+        "sarah", "alicia", "nadia", "mateo", "nicogon", "jordan",
+    };
+
+    // ── Tier 2: Community creators (blue badge u1) ────────────────────
+    // { username, gender, portraitIndex }
+    private static final String[][] COMMUNITY_USERS = {
+        {"cloudvibe",   "men",   "12"},
+        {"pixeldust",   "women", "44"},
+        {"starbyte",    "men",   "67"},
+        {"neonwave",    "women", "22"},
+        {"frostbit",    "men",   "33"},
+        {"lunar_echo",  "women", "58"},
+        {"blazepath",   "men",   "41"},
+        {"cosmodrift",  "women", "15"},
+        {"sky_bolt",    "men",   "78"},
+        {"novaspark",   "women", "31"},
+        {"techhaze",    "men",   "55"},
+        {"glimmer",     "women", "7"},
+        {"voidwisp",    "men",   "92"},
+        {"rocketglow",  "women", "63"},
+        {"duskreader",  "men",   "19"},
+        {"quantum",     "women", "48"},
+        {"twist",       "men",   "45"},
+        {"radiant",     "women", "36"},
+        {"nebulax",     "men",   "51"},
+        {"bytestorm",   "women", "66"},
+    };
+
+    // ── Tier 3: Ecosystem members (gold badge u2) ─────────────────────
+    private static final String GH    = "https://github.com/";
+    private static final String GH_SZ = ".png?size=200";
+    private static final String[][] ECOSYSTEM_USERS = {
+        {"stellarorg",       GH + "stellar" + GH_SZ},
+        {"lobstr",           GH + "Lobstrco" + GH_SZ},
+        {"circle",           GH + "circlefin" + GH_SZ},
+        {"moneygram",        GH + "moneygram" + GH_SZ},
+        {"franklintempleton","https://pbs.twimg.com/profile_images/1817831714527334400/zpEkqYrh_400x400.jpg"},
+        {"ultrastellar",     "https://pbs.twimg.com/profile_images/1357309147470041090/UeZllGx9_400x400.png"},
+        {"aqua",             GH + "AquaToken" + GH_SZ},
+        {"stellarx",         "https://pbs.twimg.com/profile_images/1014666925329342465/RN8goCHy_400x400.jpg"},
+        {"vesseo",           "https://pbs.twimg.com/profile_images/1914727632547016705/GwEDbRFw_400x400.png"},
+        {"soroswap",         GH + "soroswap" + GH_SZ},
+        {"script3",          GH + "script3" + GH_SZ},
+        {"bitso",            "https://pbs.twimg.com/profile_images/1981835148455723008/Kfo4IqcN_400x400.jpg"},
+        {"ledger",           "https://pbs.twimg.com/profile_images/1522608646043181060/QQRjVYhi_400x400.jpg"},
+        {"allbridge",        "https://pbs.twimg.com/profile_images/1667191904545505281/bbm43TM7_400x400.jpg"},
+        {"airtm",            "https://pbs.twimg.com/profile_images/1911878834493808640/T5v1FSgm_400x400.jpg"},
+    };
 
     /**
      * Get a paginated feed of mixed entries and collections.
@@ -169,43 +221,70 @@ public class EntryMockController {
 
     // ========== Private Helper Methods ==========
 
+    /**
+     * Pick a random author tier:
+     *   ~50 % plain user (no badge)
+     *   ~30 % community (u1 blue)
+     *   ~20 % ecosystem (u2 gold)
+     * Returns: { username, avatarUrl|null, badge|null }
+     */
+    private String[] pickAuthor(Random random) {
+        double roll = random.nextDouble();
+
+        if (roll < 0.50) {
+            // ── Plain user (no badge) ──
+            String username = PLAIN_USERNAMES[random.nextInt(PLAIN_USERNAMES.length)];
+            int avatarNum = random.nextInt(99) + 1;
+            String gender = random.nextBoolean() ? "men" : "women";
+            boolean hasAvatar = random.nextDouble() < 0.75;
+            String avatar = hasAvatar
+                ? "https://randomuser.me/api/portraits/" + gender + "/" + avatarNum + ".jpg"
+                : null;
+            return new String[]{username, avatar, null};
+
+        } else if (roll < 0.80) {
+            // ── Community creator (blue badge u1) ──
+            String[] cu = COMMUNITY_USERS[random.nextInt(COMMUNITY_USERS.length)];
+            String avatar = "https://randomuser.me/api/portraits/" + cu[1] + "/" + cu[2] + ".jpg";
+            return new String[]{cu[0], avatar, "u1"};
+
+        } else {
+            // ── Ecosystem member (gold badge u2) ──
+            String[] eu = ECOSYSTEM_USERS[random.nextInt(ECOSYSTEM_USERS.length)];
+            return new String[]{eu[0], eu[1], "u2"};
+        }
+    }
+
     private Map<String, Object> generateRandomEntry(Random random) {
         Map<String, Object> entry = new LinkedHashMap<>();
-        
+
+        String[] author = pickAuthor(random);
         String entryType = ENTRY_TYPES[random.nextInt(ENTRY_TYPES.length)];
-        String username = getRandomUsername(random);
-        int avatarNum = random.nextInt(99) + 1;
-        String gender = random.nextBoolean() ? "men" : "women";
         int imageNum = getValidImageNumber(random);
-        boolean locked = random.nextDouble() < 0.15; // 15% locked
-        boolean hasAvatar = random.nextDouble() < 0.8; // 80% have avatar
-        boolean hasBadge = random.nextDouble() < 0.4; // 40% have badge
-        boolean hasThumbnail = random.nextDouble() < 0.85; // 85% have thumbnail
+        boolean locked = random.nextDouble() < 0.15;
+        boolean hasThumbnail = random.nextDouble() < 0.85;
 
         entry.put("kind", "entry");
         entry.put("id", UUID.randomUUID().toString());
         entry.put("type", entryType);
         entry.put("title", getRandomTitle(random, entryType));
-        entry.put("authorName", username);
+        entry.put("authorName", author[0]);
         entry.put("publishedAt", getRandomDate(random));
         entry.put("locked", locked);
 
-        if (hasAvatar) {
-            entry.put("authorAvatarUrl", "https://randomuser.me/api/portraits/" + gender + "/" + avatarNum + ".jpg");
+        if (author[1] != null) {
+            entry.put("authorAvatarUrl", author[1]);
         }
-
-        if (hasBadge) {
-            entry.put("profileBadge", PROFILE_BADGES[random.nextInt(PROFILE_BADGES.length)]);
+        if (author[2] != null) {
+            entry.put("profileBadge", author[2]);
         }
 
         if (hasThumbnail) {
             entry.put("thumbnailUrl", "https://picsum.photos/500/300?image=" + imageNum);
         }
 
-        // Duration for video and audio
         if ("video".equals(entryType) || "audio".equals(entryType)) {
-            int durationSec = random.nextInt(7200) + 30; // 30 seconds to 2 hours
-            entry.put("durationSec", durationSec);
+            entry.put("durationSec", random.nextInt(7200) + 30);
         }
 
         return entry;
@@ -213,45 +292,37 @@ public class EntryMockController {
 
     private Map<String, Object> generateRandomCollection(Random random) {
         Map<String, Object> collection = new LinkedHashMap<>();
-        
+
+        String[] author = pickAuthor(random);
         String collectionType = COLLECTION_TYPES[random.nextInt(COLLECTION_TYPES.length)];
-        String username = getRandomUsername(random);
-        int avatarNum = random.nextInt(99) + 1;
-        String gender = random.nextBoolean() ? "men" : "women";
         int imageNum = getValidImageNumber(random);
-        boolean locked = random.nextDouble() < 0.2; // 20% locked
-        boolean hasAvatar = random.nextDouble() < 0.75; // 75% have avatar
-        boolean hasBadge = random.nextDouble() < 0.35; // 35% have badge
-        boolean hasCover = random.nextDouble() < 0.9; // 90% have cover
+        boolean locked = random.nextDouble() < 0.20;
+        boolean hasCover = random.nextDouble() < 0.90;
 
         collection.put("kind", "collection");
         collection.put("id", UUID.randomUUID().toString());
         collection.put("collectionType", collectionType);
         collection.put("title", getRandomCollectionTitle(random, collectionType));
-        collection.put("authorName", username);
+        collection.put("authorName", author[0]);
         collection.put("publishedAt", getRandomDate(random));
         collection.put("locked", locked);
 
-        if (hasAvatar) {
-            collection.put("authorAvatarUrl", "https://randomuser.me/api/portraits/" + gender + "/" + avatarNum + ".jpg");
+        if (author[1] != null) {
+            collection.put("authorAvatarUrl", author[1]);
         }
-
-        if (hasBadge) {
-            collection.put("profileBadge", PROFILE_BADGES[random.nextInt(PROFILE_BADGES.length)]);
+        if (author[2] != null) {
+            collection.put("profileBadge", author[2]);
         }
 
         if (hasCover) {
             collection.put("coverUrl", "https://picsum.photos/500/300?image=" + imageNum);
         }
 
-        // Items count (2-100)
         int itemsCount = random.nextInt(99) + 2;
         collection.put("itemsCount", itemsCount);
 
-        // Optional total duration for series/course types
         if ("series".equals(collectionType) || "course".equals(collectionType)) {
-            int totalDurationSec = random.nextInt(36000) + 1800; // 30 min to 10 hours
-            collection.put("totalDurationSec", totalDurationSec);
+            collection.put("totalDurationSec", random.nextInt(36000) + 1800);
         }
 
         return collection;
@@ -406,20 +477,4 @@ public class EntryMockController {
         return str.substring(0, 1).toUpperCase() + str.substring(1);
     }
 
-    private String getRandomUsername(Random random) {
-        String[] usernames = {
-            "cloudvibe", "pixeldust", "starbyte", "neonwave", "frostbit", 
-            "lunar_echo", "blazepath", "cosmodrift", "sky_bolt", "novaspark",
-            "techhaze", "glimmer", "voidwisp", "rocketglow", "duskreader", 
-            "quantum", "shadowbit", "orbitz", "ember_flow", "zipstream",
-            "galaxydrop", "holo", "surge", "vapor_trail", "comet_x", 
-            "dashcore", "twist", "radiant", "flux_zone", "sparkvoyage",
-            "nebulax", "bytestorm", "chillpixel", "driftspace", "zest", 
-            "cinder", "wave_crash", "lightning", "codeflicker", "solar_loop",
-            "phantom", "glitchy", "stormpulse", "riser", "echovibe", 
-            "blip", "fusion", "skydive", "boltflash", "hazedream",
-            "sarah", "alicia", "nadia", "mateo", "nicogon", "jordan", "interstellar"
-        };
-        return usernames[random.nextInt(usernames.length)];
-    }
 }
