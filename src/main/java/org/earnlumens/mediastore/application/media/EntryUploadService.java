@@ -224,7 +224,10 @@ public class EntryUploadService {
         asset.setFileName(request.fileName());
         asset.setFileSizeBytes(request.fileSizeBytes());
         asset.setKind(kind);
-        asset.setStatus(AssetStatus.UPLOADED);
+        // No transcoding pipeline yet — files are uploaded directly to R2 and ready to serve.
+        // When HLS transcoding is added, FULL assets should start as UPLOADED and transition
+        // to READY via a webhook/callback after processing completes.
+        asset.setStatus(AssetStatus.READY);
 
         Asset saved = assetRepository.save(asset);
 

@@ -38,8 +38,8 @@ public class PurchaseController {
      */
     @GetMapping
     public ResponseEntity<?> listPurchases(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "24") int size,
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "24") int size,
             HttpServletRequest request) {
 
         String userId = extractUserId();

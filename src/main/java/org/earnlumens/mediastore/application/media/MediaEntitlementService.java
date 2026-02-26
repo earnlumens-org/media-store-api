@@ -33,9 +33,14 @@ public class MediaEntitlementService {
     }
 
     /**
-     * Checks whether a user is entitled to access a private media entry.
-     * Access is granted if the user is the content owner OR has an ACTIVE entitlement.
-     * The FULL asset's r2Key is resolved from the assets collection.
+     * Checks whether a user is entitled to access a media entry's full asset.
+     * <p>
+     * Access rules (evaluated in order):
+     * <ol>
+     *   <li>Owner always has access</li>
+     *   <li>Free content ({@code isPaid = false}) is accessible to any authenticated user</li>
+     *   <li>Paid content requires an ACTIVE entitlement (purchase)</li>
+     * </ol>
      *
      * @param tenantId the tenant identifier
      * @param userId   the requesting user's OAuth user ID (JWT subject)
@@ -57,12 +62,18 @@ public class MediaEntitlementService {
             return buildAssetResponse(tenantId, entryId);
         }
 
-        // Check active entitlement
+        // Free content is accessible to any authenticated user
+        if (!entry.isPaid()) {
+            logger.debug("Access granted (free content): userId={}, entryId={}", userId, entryId);
+            return buildAssetResponse(tenantId, entryId);
+        }
+
+        // Paid content requires an active entitlement (purchase)
         boolean entitled = entitlementRepository
                 .existsByTenantIdAndUserIdAndEntryIdAndStatus(tenantId, userId, entryId, EntitlementStatus.ACTIVE);
 
         if (!entitled) {
-            logger.debug("Access denied: tenantId={}, userId={}, entryId={}", tenantId, userId, entryId);
+            logger.debug("Access denied (no entitlement): tenantId={}, userId={}, entryId={}", tenantId, userId, entryId);
             return Optional.empty();
         }
 

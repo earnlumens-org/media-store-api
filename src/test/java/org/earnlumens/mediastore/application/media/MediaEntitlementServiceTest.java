@@ -43,7 +43,7 @@ class MediaEntitlementServiceTest {
         service = new MediaEntitlementService(entryRepository, entitlementRepository, assetRepository);
     }
 
-    private Entry privateEntry() {
+    private Entry paidEntry() {
         Entry e = new Entry();
         e.setId(ENTRY_ID);
         e.setTenantId(TENANT);
@@ -52,6 +52,13 @@ class MediaEntitlementServiceTest {
         e.setType(EntryType.VIDEO);
         e.setStatus(EntryStatus.PUBLISHED);
         e.setVisibility(MediaVisibility.PRIVATE);
+        e.setPaid(true);
+        return e;
+    }
+
+    private Entry freeEntry() {
+        Entry e = paidEntry();
+        e.setPaid(false);
         return e;
     }
 
@@ -79,7 +86,7 @@ class MediaEntitlementServiceTest {
     @Test
     void owner_isAlwaysAllowed_withoutEntitlement() {
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
-                .thenReturn(Optional.of(privateEntry()));
+                .thenReturn(Optional.of(paidEntry()));
         configureFullAsset();
 
         Optional<MediaEntitlementResponse> result =
@@ -98,7 +105,7 @@ class MediaEntitlementServiceTest {
     @Test
     void buyer_withActiveEntitlement_isAllowed() {
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
-                .thenReturn(Optional.of(privateEntry()));
+                .thenReturn(Optional.of(paidEntry()));
         when(entitlementRepository.existsByTenantIdAndUserIdAndEntryIdAndStatus(
                 TENANT, BUYER_ID, ENTRY_ID, EntitlementStatus.ACTIVE))
                 .thenReturn(true);
@@ -120,7 +127,7 @@ class MediaEntitlementServiceTest {
     @Test
     void buyer_withNonActiveEntitlement_isDenied() {
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
-                .thenReturn(Optional.of(privateEntry()));
+                .thenReturn(Optional.of(paidEntry()));
         when(entitlementRepository.existsByTenantIdAndUserIdAndEntryIdAndStatus(
                 TENANT, BUYER_ID, ENTRY_ID, EntitlementStatus.ACTIVE))
                 .thenReturn(false);
@@ -137,8 +144,8 @@ class MediaEntitlementServiceTest {
     // ─── PUBLIC entry via /media is still protected ───────────
 
     @Test
-    void publicEntry_requestedViaMedia_isDenied_forNonOwnerWithoutEntitlement() {
-        Entry publicEntry = privateEntry();
+    void paidPublicEntry_requestedViaMedia_isDenied_forNonOwnerWithoutEntitlement() {
+        Entry publicEntry = paidEntry();
         publicEntry.setVisibility(MediaVisibility.PUBLIC);
 
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
@@ -158,7 +165,7 @@ class MediaEntitlementServiceTest {
     @Test
     void stranger_withoutEntitlement_isDenied() {
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
-                .thenReturn(Optional.of(privateEntry()));
+                .thenReturn(Optional.of(paidEntry()));
         when(entitlementRepository.existsByTenantIdAndUserIdAndEntryIdAndStatus(
                 TENANT, STRANGER_ID, ENTRY_ID, EntitlementStatus.ACTIVE))
                 .thenReturn(false);
@@ -206,7 +213,7 @@ class MediaEntitlementServiceTest {
     @Test
     void videoAsset_hasInlineDisposition() {
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
-                .thenReturn(Optional.of(privateEntry()));
+                .thenReturn(Optional.of(paidEntry()));
         configureFullAsset();
 
         MediaEntitlementResponse resp = service.checkEntitlement(TENANT, OWNER_ID, ENTRY_ID).orElseThrow();
@@ -222,7 +229,7 @@ class MediaEntitlementServiceTest {
         zipAsset.setFileName("archive.zip");
 
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
-                .thenReturn(Optional.of(privateEntry()));
+                .thenReturn(Optional.of(paidEntry()));
         when(assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
                 TENANT, ENTRY_ID, MediaKind.FULL, AssetStatus.READY))
                 .thenReturn(Optional.of(zipAsset));
@@ -238,7 +245,7 @@ class MediaEntitlementServiceTest {
     @Test
     void owner_allowed_butNoReadyAsset_returnsEmpty() {
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
-                .thenReturn(Optional.of(privateEntry()));
+                .thenReturn(Optional.of(paidEntry()));
         when(assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
                 TENANT, ENTRY_ID, MediaKind.FULL, AssetStatus.READY))
                 .thenReturn(Optional.empty());
@@ -247,5 +254,36 @@ class MediaEntitlementServiceTest {
                 service.checkEntitlement(TENANT, OWNER_ID, ENTRY_ID);
 
         assertTrue(result.isEmpty());
+    }
+
+    // ─── Free content (isPaid=false) accessible to anyone ─────
+
+    @Test
+    void freeContent_isAccessibleToStranger_withoutEntitlement() {
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
+                .thenReturn(Optional.of(freeEntry()));
+        configureFullAsset();
+
+        Optional<MediaEntitlementResponse> result =
+                service.checkEntitlement(TENANT, STRANGER_ID, ENTRY_ID);
+
+        assertTrue(result.isPresent());
+        assertTrue(result.get().allowed());
+        // No entitlement lookup necessary for free content
+        verifyNoInteractions(entitlementRepository);
+    }
+
+    @Test
+    void freeContent_isAccessibleToOwner() {
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
+                .thenReturn(Optional.of(freeEntry()));
+        configureFullAsset();
+
+        Optional<MediaEntitlementResponse> result =
+                service.checkEntitlement(TENANT, OWNER_ID, ENTRY_ID);
+
+        assertTrue(result.isPresent());
+        assertTrue(result.get().allowed());
+        verifyNoInteractions(entitlementRepository);
     }
 }

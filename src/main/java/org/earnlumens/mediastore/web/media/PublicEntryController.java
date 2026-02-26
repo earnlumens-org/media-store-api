@@ -35,8 +35,8 @@ public class PublicEntryController {
      */
     @GetMapping
     public ResponseEntity<PublicEntryPageResponse> getPublishedEntries(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "48") int size,
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "48") int size,
             HttpServletRequest request
     ) {
         String tenantId = tenantResolver.resolve(request);
@@ -51,7 +51,7 @@ public class PublicEntryController {
      */
     @GetMapping("/{id}")
     public ResponseEntity<PublicEntryResponse> getPublishedEntryById(
-            @PathVariable String id,
+            @PathVariable("id") String id,
             HttpServletRequest request
     ) {
         String tenantId = tenantResolver.resolve(request);
@@ -67,10 +67,10 @@ public class PublicEntryController {
      */
     @GetMapping("/by-user/{username}")
     public ResponseEntity<PublicEntryPageResponse> getPublishedEntriesByUser(
-            @PathVariable String username,
-            @RequestParam(required = false) String type,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "48") int size,
+            @PathVariable("username") String username,
+            @RequestParam(value = "type", required = false) String type,
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "48") int size,
             HttpServletRequest request
     ) {
         String tenantId = tenantResolver.resolve(request);

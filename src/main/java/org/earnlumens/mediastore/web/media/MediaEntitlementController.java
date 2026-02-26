@@ -47,7 +47,7 @@ public class MediaEntitlementController {
 
     @GetMapping("/entitlements/{entryId}")
     public ResponseEntity<?> checkEntitlement(
-            @PathVariable String entryId,
+            @PathVariable("entryId") String entryId,
             HttpServletRequest request
     ) {
         // 1. Extract userId from SecurityContext (set by RefreshCookieAuthFilter)
@@ -67,7 +67,8 @@ public class MediaEntitlementController {
         String tenantId = tenantResolver.resolve(request);
 
         // 3. Check entitlement (source of truth)
-        //    allowed = (entry.tenantId == tenantId) AND (entry.ownerId == userId OR Entitlement ACTIVE)
+        //    allowed = (entry.tenantId == tenantId)
+        //              AND (entry.ownerId == userId OR !entry.isPaid OR Entitlement ACTIVE)
         Optional<MediaEntitlementResponse> result =
                 mediaEntitlementService.checkEntitlement(tenantId, userId, entryId);
 

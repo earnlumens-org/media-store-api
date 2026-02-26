@@ -70,7 +70,7 @@ public class EntryController {
      */
     @PatchMapping("/{id}/status")
     public ResponseEntity<?> updateEntryStatus(
-            @PathVariable String id,
+            @PathVariable("id") String id,
             @Valid @RequestBody UpdateEntryStatusRequest request,
             HttpServletRequest httpRequest
     ) {
