@@ -1,10 +1,14 @@
 package org.earnlumens.mediastore.application.media;
 
+import org.earnlumens.mediastore.domain.media.dto.response.AssetInfo;
 import org.earnlumens.mediastore.domain.media.dto.response.PublicEntryPageResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PublicEntryResponse;
+import org.earnlumens.mediastore.domain.media.model.AssetStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
+import org.earnlumens.mediastore.domain.media.model.MediaKind;
+import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -22,9 +26,11 @@ import java.util.Optional;
 public class PublicEntryService {
 
     private final EntryRepository entryRepository;
+    private final AssetRepository assetRepository;
 
-    public PublicEntryService(EntryRepository entryRepository) {
+    public PublicEntryService(EntryRepository entryRepository, AssetRepository assetRepository) {
         this.entryRepository = entryRepository;
+        this.assetRepository = assetRepository;
     }
 
     /**
@@ -34,7 +40,14 @@ public class PublicEntryService {
     public Optional<PublicEntryResponse> getPublishedEntryById(String tenantId, String entryId) {
         return entryRepository.findByTenantIdAndId(tenantId, entryId)
                 .filter(entry -> entry.getStatus() == EntryStatus.PUBLISHED)
-                .map(this::toPublicResponse);
+                .map(entry -> {
+                    // For detail view: include FULL asset metadata if available
+                    AssetInfo assetInfo = assetRepository
+                            .findByTenantIdAndEntryIdAndKindAndStatus(tenantId, entryId, MediaKind.FULL, AssetStatus.READY)
+                            .map(asset -> new AssetInfo(asset.getFileName(), asset.getFileSizeBytes(), asset.getContentType()))
+                            .orElse(null);
+                    return toPublicResponse(entry, assetInfo);
+                });
     }
 
     /**
@@ -72,7 +85,7 @@ public class PublicEntryService {
 
     private PublicEntryPageResponse toPageResponse(Page<Entry> entryPage) {
         List<PublicEntryResponse> content = entryPage.getContent().stream()
-                .map(this::toPublicResponse)
+                .map(entry -> toPublicResponse(entry, null))
                 .toList();
 
         return new PublicEntryPageResponse(
@@ -84,7 +97,7 @@ public class PublicEntryService {
         );
     }
 
-    private PublicEntryResponse toPublicResponse(Entry entry) {
+    private PublicEntryResponse toPublicResponse(Entry entry, AssetInfo assetInfo) {
         String publishedAt = entry.getPublishedAt() != null
                 ? entry.getPublishedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
                 : null;
@@ -94,6 +107,7 @@ public class PublicEntryService {
                 mapType(entry.getType()),
                 entry.getTitle(),
                 entry.getDescription(),
+                entry.getResourceContent(),
                 entry.getAuthorUsername() != null ? entry.getAuthorUsername() : entry.getUserId(),
                 entry.getAuthorAvatarUrl(),
                 publishedAt,
@@ -102,7 +116,8 @@ public class PublicEntryService {
                 entry.getDurationSec(),
                 entry.isPaid(),
                 entry.getPriceXlm(),
-                entry.getTags()
+                entry.getTags(),
+                assetInfo
         );
     }
 

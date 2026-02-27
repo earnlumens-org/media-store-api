@@ -14,6 +14,8 @@ public class Entry {
     private String authorAvatarUrl;
     private String title;
     private String description;
+    /** Rich text body for RESOURCE entries (articles, notes). Optional. */
+    private String resourceContent;
     private EntryType type;
     private EntryStatus status;
     private MediaVisibility visibility;
@@ -58,6 +60,9 @@ public class Entry {
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
+
+    public String getResourceContent() { return resourceContent; }
+    public void setResourceContent(String resourceContent) { this.resourceContent = resourceContent; }
 
     public EntryType getType() { return type; }
     public void setType(EntryType type) { this.type = type; }

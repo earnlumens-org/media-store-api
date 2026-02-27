@@ -40,6 +40,10 @@ public class EntryEntity {
     @Size(max = 2000)
     private String description;
 
+    /** Rich text body for RESOURCE entries (articles, notes). Optional. */
+    @Size(max = 50000)
+    private String resourceContent;
+
     @NotBlank
     private String type;
 
@@ -101,6 +105,9 @@ public class EntryEntity {
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
+
+    public String getResourceContent() { return resourceContent; }
+    public void setResourceContent(String resourceContent) { this.resourceContent = resourceContent; }
 
     public String getType() { return type; }
     public void setType(String type) { this.type = type; }

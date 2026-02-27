@@ -16,6 +16,9 @@ public record CreateEntryRequest(
         @Size(max = 2000)
         String description,
 
+        @Size(max = 50000)
+        String resourceContent,
+
         @NotNull
         String type,
 

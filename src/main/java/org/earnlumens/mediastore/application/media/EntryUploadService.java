@@ -103,6 +103,7 @@ public class EntryUploadService {
         entry.setUserId(userId);
         entry.setTitle(request.title());
         entry.setDescription(request.description());
+        entry.setResourceContent(request.resourceContent());
         entry.setType(entryType);
         entry.setStatus(EntryStatus.DRAFT);
         entry.setVisibility(MediaVisibility.PRIVATE);
