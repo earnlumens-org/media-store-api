@@ -88,7 +88,7 @@ public class PurchaseListService {
     private PurchasedEntryResponse toResponse(Entry entry, Entitlement entitlement) {
         return new PurchasedEntryResponse(
                 entry.getId(),
-                entry.getType() != null ? entry.getType().name().toLowerCase() : "entry",
+                entry.getType() != null ? entry.getType().name().toLowerCase() : "resource",
                 entry.getTitle(),
                 entry.getDescription(),
                 entry.getAuthorUsername(),

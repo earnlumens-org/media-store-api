@@ -14,7 +14,7 @@ import java.util.*;
 public class EntryMockController {
 
     private static final int MAX_PAGE_SIZE = 48;
-    private static final String[] ENTRY_TYPES = {"video", "audio", "entry", "image"};
+    private static final String[] ENTRY_TYPES = {"video", "audio", "resource", "image"};
     private static final String[] COLLECTION_TYPES = {
         "series", "course", "library", "list", "album",
         "bundle", "catalog", "volume", "archive"

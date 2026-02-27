@@ -108,16 +108,14 @@ public class PublicEntryService {
 
     /**
      * Maps backend EntryType to the lowercase string the UI expects.
-     * ARTICLE → "entry" (matches the UI's generic content card).
      */
     private String mapType(EntryType type) {
-        if (type == null) return "entry";
+        if (type == null) return "resource";
         return switch (type) {
             case VIDEO -> "video";
             case AUDIO -> "audio";
             case IMAGE -> "image";
-            case ARTICLE -> "entry";
-            case FILE -> "file";
+            case RESOURCE -> "resource";
         };
     }
 
@@ -130,8 +128,7 @@ public class PublicEntryService {
             case "video" -> EntryType.VIDEO;
             case "audio" -> EntryType.AUDIO;
             case "image" -> EntryType.IMAGE;
-            case "entry", "article" -> EntryType.ARTICLE;
-            case "file" -> EntryType.FILE;
+            case "resource" -> EntryType.RESOURCE;
             default -> null;
         };
     }

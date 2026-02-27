@@ -4,6 +4,5 @@ public enum EntryType {
     VIDEO,
     AUDIO,
     IMAGE,
-    ARTICLE,
-    FILE
+    RESOURCE
 }
