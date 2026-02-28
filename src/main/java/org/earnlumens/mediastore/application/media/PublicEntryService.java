@@ -39,7 +39,7 @@ public class PublicEntryService {
      */
     public Optional<PublicEntryResponse> getPublishedEntryById(String tenantId, String entryId) {
         return entryRepository.findByTenantIdAndId(tenantId, entryId)
-                .filter(entry -> entry.getStatus() == EntryStatus.PUBLISHED)
+                .filter(entry -> entry.getStatus() == EntryStatus.PUBLISHED || entry.getStatus() == EntryStatus.UNLISTED)
                 .map(entry -> {
                     // For detail view: include FULL asset metadata if available
                     AssetInfo assetInfo = assetRepository

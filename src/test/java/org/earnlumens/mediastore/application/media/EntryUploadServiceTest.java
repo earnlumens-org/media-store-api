@@ -215,7 +215,7 @@ class EntryUploadServiceTest {
 
         assertTrue(result.isPresent());
         assertEquals("asset-001", result.get().assetId());
-        assertEquals("UPLOADED", result.get().status());
+        assertEquals("READY", result.get().status());
         verify(assetRepository).save(any(Asset.class));
     }
 
@@ -246,7 +246,7 @@ class EntryUploadServiceTest {
             assertEquals(ENTRY_ID, a.getEntryId());
             assertEquals("image/jpeg", a.getContentType());
             assertEquals("thumb.jpg", a.getFileName());
-            assertEquals(AssetStatus.UPLOADED, a.getStatus());
+            assertEquals(AssetStatus.READY, a.getStatus());
             return a;
         });
 

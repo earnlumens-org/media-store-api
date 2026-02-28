@@ -291,7 +291,9 @@ public class EntryUploadService {
             case IN_REVIEW -> target == EntryStatus.APPROVED || target == EntryStatus.REJECTED;
             case APPROVED -> target == EntryStatus.PUBLISHED;
             case REJECTED -> target == EntryStatus.DRAFT;
-            case PUBLISHED -> false;
+            case PUBLISHED -> target == EntryStatus.UNLISTED || target == EntryStatus.SUSPENDED;
+            case UNLISTED -> target == EntryStatus.PUBLISHED || target == EntryStatus.SUSPENDED;
+            case SUSPENDED -> target == EntryStatus.PUBLISHED || target == EntryStatus.DRAFT;
         };
     }
 

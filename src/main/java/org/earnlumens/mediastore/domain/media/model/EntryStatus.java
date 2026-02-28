@@ -5,5 +5,7 @@ public enum EntryStatus {
     IN_REVIEW,
     APPROVED,
     PUBLISHED,
-    REJECTED
+    REJECTED,
+    SUSPENDED,
+    UNLISTED
 }
