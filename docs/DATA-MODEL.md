@@ -1,7 +1,7 @@
 # EarnLumens — MongoDB Data-Model & States Specification
 
 > **Audience:** Engineering team.  
-> **Scope:** Five collections — `entries`, `assets`, `collections`, `orders`, `entitlements`.  
+> **Scope:** Six collections — `entries`, `assets`, `collections`, `orders`, `entitlements`, `favorites`.  
 > **Constraints:** Shared multi-tenant collections (every document carries `tenantId`); XLM-only payments; 1 purchase = 1 entry; no relational joins — minimize round-trips.
 
 ---
@@ -15,6 +15,7 @@
 | `collections`  | Curated groups of entries         | 1 per group            |
 | `orders`       | Purchase records                  | 1 per user × entry     |
 | `entitlements` | Granted access rights             | 1 per user × entry     |
+| `favorites`    | User-saved items (entries or collections) | 1 per user × item |
 
 ---
 
@@ -247,9 +248,37 @@ Access right connecting a user to an entry. Already exists — additions marked 
 
 ---
 
-## 7. Query Patterns
+## 7. `favorites`
 
-### 7.1 Public Feed (paginated, newest first)
+A user-saved bookmark for an entry or collection. Enables cross-device "save for later" (like YouTube / Patreon).
+
+### Fields
+
+| Field      | Type     | Required | Default | Notes                                        |
+|------------|----------|----------|---------|----------------------------------------------|
+| `_id`      | ObjectId | auto     |         |                                              |
+| `tenantId` | String   | ✔        |         |                                              |
+| `userId`   | String   | ✔        |         | OAuth2 user id                               |
+| `itemId`   | String   | ✔        |         | FK to `entries._id` or `collections._id`     |
+| `itemType` | String   | ✔        |         | Enum: `ENTRY \| COLLECTION`                  |
+| `addedAt`  | DateTime | auto     |         | `@CreatedDate`                               |
+
+### State Machine
+
+No state transitions — insert or delete only (toggle).
+
+### Indexes
+
+```js
+{ tenantId: 1, userId: 1, itemId: 1 }          // unique — prevent duplicates
+{ tenantId: 1, userId: 1, addedAt: -1 }         // paginated favorites list sorted by most recent
+```
+
+---
+
+## 8. Query Patterns
+
+### 8.1 Public Feed (paginated, newest first)
 
 ```js
 db.entries.find({
@@ -262,7 +291,7 @@ db.entries.find({
 Uses index: `{ tenantId, status, publishedAt }`.  
 Returns `thumbnailR2Key` for feed cards — no Asset join needed.
 
-### 7.2 Filtered Feed by Type
+### 8.2 Filtered Feed by Type
 
 ```js
 db.entries.find({
@@ -275,7 +304,7 @@ db.entries.find({
 
 Uses index: `{ tenantId, status, type, publishedAt }`.
 
-### 7.3 Entry Detail
+### 8.3 Entry Detail
 
 ```js
 // 1. Entry document
@@ -287,7 +316,7 @@ db.assets.find({ tenantId: T, entryId: entryId })
 
 Two queries. Asset results give the UI the preview + full asset metadata.
 
-### 7.4 Entitlement Check (Worker flow)
+### 8.4 Entitlement Check (Worker flow)
 
 ```js
 // 1. Entry + owner check
@@ -308,7 +337,7 @@ return asset.r2Key
 
 Three indexed point-lookups. Fast.
 
-### 7.5 User's Library ("My Purchases")
+### 8.5 User's Library ("My Purchases")
 
 ```js
 // 1. Active entitlements, newest first
@@ -323,7 +352,7 @@ db.entries.find({ tenantId: T, _id: { $in: entryIds } })
 
 Two queries. Index: `{ tenantId, userId, status, grantedAt }`.
 
-### 7.6 Creator Dashboard — My Entries
+### 8.6 Creator Dashboard — My Entries
 
 ```js
 db.entries.find({
@@ -333,7 +362,7 @@ db.entries.find({
 
 Uses index: `{ tenantId, userId }`.
 
-### 7.7 Creator Dashboard — My Sales
+### 8.7 Creator Dashboard — My Sales
 
 ```js
 db.orders.find({
@@ -343,7 +372,7 @@ db.orders.find({
 
 Uses index: `{ tenantId, sellerId, status, createdAt }`.
 
-### 7.8 Collection Detail
+### 8.8 Collection Detail
 
 ```js
 // 1. Collection document (includes items[])
@@ -356,7 +385,7 @@ db.entries.find({ tenantId: T, _id: { $in: entryIds } })
 
 Two queries. Client re-sorts entries by `items[].position`.
 
-### 7.9 Purchase Flow
+### 8.9 Purchase Flow
 
 ```js
 // 1. Check no existing order (unique index enforces this too)
@@ -381,11 +410,11 @@ db.entitlements.insertOne({
 
 ---
 
-## 8. Migration from Step 1 Models
+## 9. Migration from Step 1 Models
 
 The Step 1 `Entry` and `Entitlement` models were intentionally minimal. Below is the diff to evolve them.
 
-### 8.1 Entry
+### 9.1 Entry
 
 | Action  | Field                           | Notes                                              |
 |---------|---------------------------------|----------------------------------------------------|
@@ -406,7 +435,7 @@ The Step 1 `Entry` and `Entitlement` models were intentionally minimal. Below is
 > **MediaKind enum** (`THUMBNAIL | PREVIEW | FULL`) stays — it is now used by Asset instead of Entry.  
 > **MediaVisibility enum** (`PUBLIC | PRIVATE`) stays on Entry.
 
-### 8.2 Entitlement
+### 9.2 Entitlement
 
 | Action  | Field        | Notes                               |
 |---------|--------------|-------------------------------------|
@@ -414,7 +443,7 @@ The Step 1 `Entry` and `Entitlement` models were intentionally minimal. Below is
 | **ADD** | `orderId`    | Nullable FK to `orders._id`          |
 | **ADD** | `expiresAt`  | Nullable, for time-limited grants    |
 
-### 8.3 New Enums
+### 9.3 New Enums
 
 | Enum               | Values                                                       |
 |--------------------|--------------------------------------------------------------|
@@ -428,7 +457,7 @@ The Step 1 `Entry` and `Entitlement` models were intentionally minimal. Below is
 
 Existing enums unchanged: `MediaKind`, `MediaVisibility`, `EntitlementStatus`.
 
-### 8.4 New Domain Repository Methods
+### 9.4 New Domain Repository Methods
 
 ```java
 // EntryRepository — add:
@@ -454,7 +483,7 @@ Order save(Order order);
 Page<Entitlement> findUserLibrary(String tenantId, String userId, int offset, int limit);
 ```
 
-### 8.5 Service Impact — MediaEntitlementService
+### 9.5 Service Impact — MediaEntitlementService
 
 Current `checkEntitlement` resolves `r2Key` directly from Entry. After migration it must resolve via Asset:
 
@@ -472,7 +501,7 @@ fullAsset.getR2Key()
 
 ---
 
-## 9. Design Decisions & Rationale
+## 10. Design Decisions & Rationale
 
 | Decision | Rationale |
 |----------|-----------|
@@ -487,7 +516,7 @@ fullAsset.getR2Key()
 
 ---
 
-## 10. Checklist for Implementation
+## 11. Checklist for Implementation
 
 - [ ] Refactor `Entry` domain model — drop file fields, add new fields per §8.1
 - [ ] Create `Asset` domain model, entity, mapper, repository, adapter

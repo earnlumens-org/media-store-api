@@ -5,10 +5,15 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.mongodb.repository.MongoRepository;
 
+import java.util.List;
+
 public interface EntitlementMongoRepository extends MongoRepository<EntitlementEntity, String> {
 
     boolean existsByTenantIdAndUserIdAndEntryIdAndStatus(
             String tenantId, String userId, String entryId, String status);
+
+    List<EntitlementEntity> findByTenantIdAndUserIdAndEntryIdInAndStatus(
+            String tenantId, String userId, List<String> entryIds, String status);
 
     Page<EntitlementEntity> findByTenantIdAndUserIdAndStatusOrderByGrantedAtDesc(
             String tenantId, String userId, String status, Pageable pageable);

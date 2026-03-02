@@ -7,6 +7,7 @@ import org.earnlumens.mediastore.infrastructure.persistence.media.mapper.Collect
 import org.earnlumens.mediastore.infrastructure.persistence.media.repository.CollectionMongoRepository;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
 import java.util.Optional;
 
 @Repository
@@ -25,6 +26,14 @@ public class CollectionRepositoryImpl implements CollectionRepository {
     public Optional<Collection> findByTenantIdAndId(String tenantId, String id) {
         return collectionMongoRepository.findByTenantIdAndId(tenantId, id)
                 .map(collectionMapper::toModel);
+    }
+
+    @Override
+    public List<Collection> findByTenantIdAndIdIn(String tenantId, List<String> ids) {
+        return collectionMongoRepository.findByTenantIdAndIdIn(tenantId, ids)
+                .stream()
+                .map(collectionMapper::toModel)
+                .toList();
     }
 
     @Override

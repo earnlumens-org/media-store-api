@@ -10,6 +10,10 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
 
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+
 @Repository
 public class EntitlementRepositoryImpl implements EntitlementRepository {
 
@@ -27,6 +31,19 @@ public class EntitlementRepositoryImpl implements EntitlementRepository {
             String tenantId, String userId, String entryId, EntitlementStatus status) {
         return entitlementMongoRepository.existsByTenantIdAndUserIdAndEntryIdAndStatus(
                 tenantId, userId, entryId, status.name());
+    }
+
+    @Override
+    public Set<String> findEntitledEntryIds(
+            String tenantId, String userId, List<String> entryIds, EntitlementStatus status) {
+        if (entryIds.isEmpty()) {
+            return Set.of();
+        }
+        return entitlementMongoRepository
+                .findByTenantIdAndUserIdAndEntryIdInAndStatus(tenantId, userId, entryIds, status.name())
+                .stream()
+                .map(EntitlementEntity::getEntryId)
+                .collect(Collectors.toSet());
     }
 
     @Override
