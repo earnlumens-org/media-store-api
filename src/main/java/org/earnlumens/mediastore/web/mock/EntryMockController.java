@@ -82,9 +82,6 @@ public class EntryMockController {
             @RequestParam(name = "page", defaultValue = "0") int page,
             @RequestParam(name = "size", defaultValue = "24") int size
     ) {
-        // Simulate latency between 250ms and 600ms
-        simulateLatency(250, 350);
-
         size = Math.min(size, MAX_PAGE_SIZE);
         int totalElements = 200;
         int totalPages = (int) Math.ceil((double) totalElements / size);
@@ -118,8 +115,6 @@ public class EntryMockController {
             @RequestParam(name = "size", defaultValue = "24") int size,
             @RequestParam(name = "type", required = false) String type
     ) {
-        simulateLatency(250, 350);
-
         size = Math.min(size, MAX_PAGE_SIZE);
         int totalElements = 150;
         int totalPages = (int) Math.ceil((double) totalElements / size);
@@ -153,8 +148,6 @@ public class EntryMockController {
             @RequestParam(name = "size", defaultValue = "24") int size,
             @RequestParam(name = "collectionType", required = false) String collectionType
     ) {
-        simulateLatency(250, 350);
-
         size = Math.min(size, MAX_PAGE_SIZE);
         int totalElements = 80;
         int totalPages = (int) Math.ceil((double) totalElements / size);
@@ -188,8 +181,6 @@ public class EntryMockController {
             @PathVariable("id") String id,
             @RequestParam(name = "type", required = false) String type
     ) {
-        simulateLatency(250, 350);
-        
         Random random = new Random(id.hashCode()); // Deterministic based on ID
         Map<String, Object> entry = generateRandomEntry(random);
         entry.put("id", id);
@@ -211,8 +202,6 @@ public class EntryMockController {
      */
     @GetMapping("/collection/{id}")
     public Map<String, Object> getCollectionById(@PathVariable("id") String id) {
-        simulateLatency(250, 350);
-        
         Random random = new Random(id.hashCode()); // Deterministic based on ID
         Map<String, Object> collection = generateRandomCollection(random);
         collection.put("id", id);
@@ -342,15 +331,6 @@ public class EntryMockController {
         response.put("totalElements", totalElements);
         response.put("totalPages", totalPages);
         return response;
-    }
-
-    private void simulateLatency(int minMs, int rangeMs) {
-        try {
-            int delay = minMs + new Random().nextInt(rangeMs + 1);
-            Thread.sleep(delay);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
     }
 
     private int getValidImageNumber(Random random) {

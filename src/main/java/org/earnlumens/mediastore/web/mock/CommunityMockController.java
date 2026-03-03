@@ -180,8 +180,6 @@ public class CommunityMockController {
             @RequestParam(name = "page", defaultValue = "0") int page,
             @RequestParam(name = "size", defaultValue = "24") int size
     ) {
-        simulateLatency(250, 350);
-
         size = Math.min(size, MAX_PAGE_SIZE);
         int totalElements = 240;
         int totalPages = (int) Math.ceil((double) totalElements / size);
@@ -314,15 +312,6 @@ public class CommunityMockController {
         response.put("totalElements", totalElements);
         response.put("totalPages", totalPages);
         return response;
-    }
-
-    private void simulateLatency(int minMs, int rangeMs) {
-        try {
-            int delay = minMs + new Random().nextInt(rangeMs + 1);
-            Thread.sleep(delay);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
     }
 
     private int getValidImageNumber(Random random) {

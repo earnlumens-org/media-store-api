@@ -35,8 +35,6 @@ public class FirstStepsMockController {
             @RequestParam(name = "page", defaultValue = "0") int page,
             @RequestParam(name = "size", defaultValue = "24") int size
     ) {
-        simulateLatency(200, 150);
-
         List<Map<String, Object>> items = new ArrayList<>();
 
         // Only page 0 has content; there are exactly 8 items
@@ -74,11 +72,4 @@ public class FirstStepsMockController {
         return entry;
     }
 
-    private void simulateLatency(int minMs, int rangeMs) {
-        try {
-            Thread.sleep(minMs + new Random().nextInt(rangeMs + 1));
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-    }
 }
