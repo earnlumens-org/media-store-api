@@ -330,6 +330,7 @@ class FavoriteServiceTest {
         assertEquals("fav-" + ENTRY_ID, item.id());
         assertEquals(ENTRY_ID, item.itemId());
         assertEquals("entry", item.itemType());
+        assertEquals("video", item.entryType());
         assertEquals("Test Video", item.title());
         assertEquals("creator", item.authorName());
         assertEquals("public/thumb/entry-abc.jpg", item.thumbnailUrl());
@@ -357,6 +358,7 @@ class FavoriteServiceTest {
         assertEquals("fav-" + COLLECTION_ID, item.id());
         assertEquals(COLLECTION_ID, item.itemId());
         assertEquals("collection", item.itemType());
+        assertNull(item.entryType());
         assertEquals("My Playlist", item.title());
         assertEquals("public/cover/coll-xyz.jpg", item.coverUrl());
         assertEquals("list", item.collectionType());

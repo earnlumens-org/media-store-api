@@ -4,6 +4,7 @@ import org.earnlumens.mediastore.domain.media.dto.response.FavoriteItemResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.FavoritePageResponse;
 import org.earnlumens.mediastore.domain.media.model.Collection;
 import org.earnlumens.mediastore.domain.media.model.Entry;
+import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.model.Favorite;
 import org.earnlumens.mediastore.domain.media.model.FavoriteItemType;
 import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
@@ -187,6 +188,7 @@ public class FavoriteService {
                 fav.getId(),
                 entry.getId(),
                 "entry",
+                mapEntryType(entry.getType()),
                 entry.getTitle(),
                 entry.getAuthorUsername(),
                 entry.getAuthorAvatarUrl(),
@@ -207,6 +209,7 @@ public class FavoriteService {
                 fav.getId(),
                 collection.getId(),
                 "collection",
+                null, // entryType — not applicable for collections
                 collection.getTitle(),
                 null, // authorName — collections store userId, not username
                 null, // authorAvatarUrl
@@ -220,5 +223,15 @@ public class FavoriteService {
                 false, // unlocked — collections are never paid
                 fav.getAddedAt() != null ? fav.getAddedAt().format(ISO_FORMATTER) : null
         );
+    }
+
+    private String mapEntryType(EntryType type) {
+        if (type == null) return "resource";
+        return switch (type) {
+            case VIDEO -> "video";
+            case AUDIO -> "audio";
+            case IMAGE -> "image";
+            case RESOURCE -> "resource";
+        };
     }
 }

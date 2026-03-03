@@ -7,6 +7,7 @@ public record FavoriteItemResponse(
         String id,
         String itemId,
         String itemType,
+        String entryType,
         String title,
         String authorName,
         String authorAvatarUrl,
