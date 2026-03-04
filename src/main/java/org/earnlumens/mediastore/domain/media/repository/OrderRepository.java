@@ -9,7 +9,7 @@ import java.util.Optional;
 
 public interface OrderRepository {
 
-    Optional<Order> findByTenantIdAndUserIdAndEntryId(String tenantId, String userId, String entryId);
+    List<Order> findAllByTenantIdAndUserIdAndEntryId(String tenantId, String userId, String entryId);
 
     Optional<Order> findById(String id);
 

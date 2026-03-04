@@ -4,9 +4,11 @@ import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
 import org.earnlumens.mediastore.infrastructure.config.StellarConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.stellar.sdk.*;
 import org.stellar.sdk.operations.PaymentOperation;
+import org.stellar.sdk.responses.FeeStatsResponse;
 import org.stellar.sdk.responses.TransactionResponse;
 
 import java.math.BigDecimal;
@@ -32,13 +34,27 @@ public class StellarTransactionService {
     private static final Logger logger = LoggerFactory.getLogger(StellarTransactionService.class);
     private static final BigDecimal ONE_HUNDRED = new BigDecimal("100");
 
+    /**
+     * Maximum base fee per operation (1 000 stroops = 0.0001 XLM).
+     * Caps the resolved fee to protect users from extreme spikes.
+     * 10× MIN_BASE_FEE is enough for severe congestion while keeping
+     * the fee shown in wallets at sane levels ($0.01 at XLM = $100).
+     */
+    private static final long MAX_BASE_FEE = 1_000L;  // 0.0001 XLM per op
+
     private final StellarConfig stellarConfig;
     private final Server server;
     private final Network network;
 
+    @Autowired
     public StellarTransactionService(StellarConfig stellarConfig) {
+        this(stellarConfig, new Server(stellarConfig.getHorizonUrl()));
+    }
+
+    /** Package-private constructor for unit testing with a mock Server. */
+    StellarTransactionService(StellarConfig stellarConfig, Server server) {
         this.stellarConfig = stellarConfig;
-        this.server = new Server(stellarConfig.getHorizonUrl());
+        this.server = server;
         this.network = new Network(stellarConfig.getNetworkPassphrase());
     }
 
@@ -57,8 +73,12 @@ public class StellarTransactionService {
             // SDK 2.x: Server.loadAccount returns TransactionBuilderAccount
             TransactionBuilderAccount sourceAccount = server.loadAccount(buyerWallet);
 
+            // Use fee_stats p90 for reliable inclusion under congestion.
+            // In normal conditions Stellar charges MIN_BASE_FEE regardless of the max set here.
+            long baseFee = resolveBaseFee();
+
             TransactionBuilder txBuilder = new TransactionBuilder(sourceAccount, network)
-                    .setBaseFee(AbstractTransaction.MIN_BASE_FEE)
+                    .setBaseFee(baseFee)
                     .setTimeout(stellarConfig.getTxTimeoutSeconds())
                     .addMemo(Memo.text(memo));
 
@@ -96,6 +116,34 @@ public class StellarTransactionService {
         } catch (Exception e) {
             logger.error("Failed to build Stellar transaction: buyer={}, total={}", buyerWallet, totalXlm, e);
             throw new RuntimeException("Failed to build payment transaction", e);
+        }
+    }
+
+    /**
+     * Resolves the base fee per operation using Horizon's /fee_stats endpoint.
+     * Uses {@code lastLedgerBaseFee} — the actual base fee from the most recently
+     * closed ledger — plus a 10% safety buffer to absorb minor fee increases
+     * between XDR creation and user signing/submission.
+     *
+     * Stellar always charges the minimum needed regardless of the max fee set,
+     * so the buffer never results in overpayment — it only ensures inclusion.
+     *
+     * Clamped between MIN_BASE_FEE (100 stroops) and MAX_BASE_FEE (1 000 stroops).
+     * Falls back to MIN_BASE_FEE if the fee_stats call fails.
+     */
+    private long resolveBaseFee() {
+        try {
+            FeeStatsResponse stats = server.feeStats().execute();
+            Long lastFee = stats.getLastLedgerBaseFee();
+            long base = (lastFee != null) ? lastFee : AbstractTransaction.MIN_BASE_FEE;
+            // Add 10% safety buffer, rounding up to the next stroop
+            long buffered = base + (base + 9) / 10;
+            long fee = Math.min(Math.max(buffered, AbstractTransaction.MIN_BASE_FEE), MAX_BASE_FEE);
+            logger.debug("Resolved base fee: lastLedgerBaseFee={}, +10%={}, clamped={}", lastFee, buffered, fee);
+            return fee;
+        } catch (Exception e) {
+            logger.warn("Failed to fetch fee_stats, falling back to MIN_BASE_FEE", e);
+            return AbstractTransaction.MIN_BASE_FEE;
         }
     }
 

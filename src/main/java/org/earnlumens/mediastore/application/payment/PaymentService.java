@@ -18,7 +18,6 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
-import java.util.Optional;
 
 /**
  * Orchestrates the two-phase payment flow:
@@ -87,24 +86,31 @@ public class PaymentService {
             throw new IllegalArgumentException("Entry has no payment splits configured");
         }
 
-        // 2. Check for existing order (idempotency)
-        Optional<Order> existingOrder = orderRepository.findByTenantIdAndUserIdAndEntryId(tenantId, userId, entryId);
-        if (existingOrder.isPresent()) {
-            Order existing = existingOrder.get();
+        // 2. Check for existing orders (idempotency + duplicate handling)
+        List<Order> existingOrders = orderRepository.findAllByTenantIdAndUserIdAndEntryId(tenantId, userId, entryId);
+        Order reusableOrder = null;
+
+        for (Order existing : existingOrders) {
             if (existing.getStatus() == OrderStatus.COMPLETED) {
                 throw new IllegalStateException("Content already purchased");
             }
-            // If PENDING and not expired, return the existing order's XDR
+            // If PENDING and not expired, keep it for reuse
             if (existing.getStatus() == OrderStatus.PENDING
                     && existing.getExpiresAt() != null
                     && existing.getExpiresAt().isAfter(LocalDateTime.now(ZoneOffset.UTC))) {
-                return toResponse(existing);
+                reusableOrder = existing;
+                continue;
             }
-            // If PENDING but expired, or FAILED — mark as EXPIRED and create a new one
+            // Mark stale PENDING (expired) or FAILED orders as EXPIRED
             if (existing.getStatus() == OrderStatus.PENDING || existing.getStatus() == OrderStatus.FAILED) {
                 existing.setStatus(OrderStatus.EXPIRED);
                 orderRepository.save(existing);
             }
+        }
+
+        // If there's a valid PENDING order, reuse it
+        if (reusableOrder != null) {
+            return toResponse(reusableOrder);
         }
 
         // 3. Build the MEMO
