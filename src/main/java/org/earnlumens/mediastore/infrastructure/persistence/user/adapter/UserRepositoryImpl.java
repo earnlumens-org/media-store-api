@@ -31,13 +31,13 @@ public class UserRepositoryImpl implements UserRepository {
 
     @Override
     public Optional<User> findByUsername(String username) {
-        return userMongoRepository.findByUsername(username)
+        return userMongoRepository.findByUsernameIgnoreCase(username)
                 .map(userMapper::toModel);
     }
 
     @Override
     public Boolean existsByUsername(String username) {
-        return userMongoRepository.existsByUsername(username);
+        return userMongoRepository.existsByUsernameIgnoreCase(username);
     }
 
     @Override
