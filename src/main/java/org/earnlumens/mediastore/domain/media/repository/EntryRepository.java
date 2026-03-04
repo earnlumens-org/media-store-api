@@ -29,4 +29,10 @@ public interface EntryRepository {
     Entry save(Entry entry);
 
     void deleteById(String id);
+
+    /**
+     * Bulk-updates authorUsername and authorAvatarUrl on all entries belonging to a user.
+     * Called when a user's profile info changes (e.g. username change on X/Twitter).
+     */
+    long updateAuthorInfoByUserId(String userId, String newUsername, String newAvatarUrl);
 }

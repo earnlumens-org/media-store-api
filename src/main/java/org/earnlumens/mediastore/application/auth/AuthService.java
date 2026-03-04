@@ -1,7 +1,10 @@
 package org.earnlumens.mediastore.application.auth;
 
 import org.earnlumens.mediastore.application.user.UserService;
+import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.user.model.User;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.stereotype.Service;
@@ -17,12 +20,15 @@ import java.util.UUID;
 @Service
 public class AuthService {
 
+    private static final Logger log = LoggerFactory.getLogger(AuthService.class);
     private static final Duration TEMP_UUID_TTL = Duration.ofMinutes(2);
 
     private final UserService userService;
+    private final EntryRepository entryRepository;
 
-    public AuthService(UserService userService) {
+    public AuthService(UserService userService, EntryRepository entryRepository) {
         this.userService = userService;
+        this.entryRepository = entryRepository;
     }
 
     public String generateTempUUID(Authentication authentication) {
@@ -53,6 +59,11 @@ public class AuthService {
 
         if (optionalUser.isPresent()) {
             User user = optionalUser.get();
+
+            // Detect if username or avatar changed so we can update denormalized entry data
+            boolean usernameChanged = !username.equals(user.getUsername());
+            boolean avatarChanged = !profileImageUrl.equals(user.getProfileImageUrl());
+
             user.setDisplayName(displayName);
             user.setUsername(username);
             user.setProfileImageUrl(profileImageUrl);
@@ -61,6 +72,13 @@ public class AuthService {
             user.setTempUUID(tempUUID);
             user.setTempUUIDCreatedAt(Instant.now());
             userService.save(user);
+
+            // Sync denormalized author info on all entries when username or avatar changes
+            if (usernameChanged || avatarChanged) {
+                long updated = entryRepository.updateAuthorInfoByUserId(oauthUserId, username, profileImageUrl);
+                log.info("User {} changed profile info (username={}, avatar={}). Updated {} entries.",
+                        oauthUserId, usernameChanged, avatarChanged, updated);
+            }
         } else {
             User newUser = new User();
             newUser.setOauthUserId(oauthUserId);

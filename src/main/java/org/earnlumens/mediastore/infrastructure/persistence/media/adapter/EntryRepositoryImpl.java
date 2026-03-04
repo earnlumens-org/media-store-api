@@ -85,4 +85,9 @@ public class EntryRepositoryImpl implements EntryRepository {
     public void deleteById(String id) {
         entryMongoRepository.deleteById(id);
     }
+
+    @Override
+    public long updateAuthorInfoByUserId(String userId, String newUsername, String newAvatarUrl) {
+        return entryMongoRepository.updateAuthorInfoByUserId(userId, newUsername, newAvatarUrl);
+    }
 }

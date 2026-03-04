@@ -1,6 +1,7 @@
 package org.earnlumens.mediastore.application.auth;
 
 import org.earnlumens.mediastore.application.user.UserService;
+import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.user.model.User;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,12 +19,14 @@ import static org.mockito.Mockito.*;
 class AuthServiceTempUuidTest {
 
     private UserService userService;
+    private EntryRepository entryRepository;
     private AuthService authService;
 
     @BeforeEach
     void setUp() {
         userService = mock(UserService.class);
-        authService = new AuthService(userService);
+        entryRepository = mock(EntryRepository.class);
+        authService = new AuthService(userService, entryRepository);
     }
 
     @Test

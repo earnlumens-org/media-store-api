@@ -9,7 +9,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
-public interface EntryMongoRepository extends MongoRepository<EntryEntity, String> {
+public interface EntryMongoRepository extends MongoRepository<EntryEntity, String>, EntryMongoRepositoryCustom {
 
     Optional<EntryEntity> findByTenantIdAndId(String tenantId, String id);
 
