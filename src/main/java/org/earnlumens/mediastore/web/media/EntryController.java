@@ -181,6 +181,22 @@ public class EntryController {
         return ResponseEntity.ok(response);
     }
 
+    /**
+     * GET /api/entries/mine/sales — List completed sales for the authenticated creator.
+     * Returns orders where the current user is the seller, with payment split breakdown.
+     */
+    @GetMapping("/mine/sales")
+    public ResponseEntity<?> getMySales(HttpServletRequest httpRequest) {
+        String userId = extractUserId();
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+
+        String tenantId = tenantResolver.resolve(httpRequest);
+        var sales = entryUploadService.getSellerSales(tenantId, userId);
+        return ResponseEntity.ok(sales);
+    }
+
     private String extractUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !(auth.getPrincipal() instanceof OAuth2User principal)) {

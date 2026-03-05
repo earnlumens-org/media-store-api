@@ -16,5 +16,11 @@ public interface OrderRepository {
     /** Find expired PENDING orders for cleanup */
     List<Order> findByStatusAndExpiresAtBefore(OrderStatus status, LocalDateTime cutoff);
 
+    /** Count completed sales for a seller within a tenant */
+    long countByTenantIdAndSellerIdAndStatus(String tenantId, String sellerId, OrderStatus status);
+
+    /** List completed sales for a seller within a tenant, newest first */
+    List<Order> findByTenantIdAndSellerIdAndStatus(String tenantId, String sellerId, OrderStatus status);
+
     Order save(Order order);
 }

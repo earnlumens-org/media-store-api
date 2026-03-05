@@ -11,4 +11,8 @@ public interface OrderMongoRepository extends MongoRepository<OrderEntity, Strin
     List<OrderEntity> findByTenantIdAndUserIdAndEntryId(String tenantId, String userId, String entryId);
 
     List<OrderEntity> findByStatusAndExpiresAtBefore(String status, LocalDateTime cutoff);
+
+    long countByTenantIdAndSellerIdAndStatus(String tenantId, String sellerId, String status);
+
+    List<OrderEntity> findByTenantIdAndSellerIdAndStatusOrderByCompletedAtDesc(String tenantId, String sellerId, String status);
 }

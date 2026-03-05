@@ -15,6 +15,7 @@ import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
+import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.earnlumens.mediastore.domain.user.repository.UserRepository;
 import org.earnlumens.mediastore.infrastructure.config.PlatformConfig;
 import org.earnlumens.mediastore.infrastructure.r2.R2PresignedUrlService;
@@ -44,6 +45,7 @@ class EntryUploadServiceTest {
     private EntryRepository entryRepository;
     private AssetRepository assetRepository;
     private UserRepository userRepository;
+    private OrderRepository orderRepository;
     private R2PresignedUrlService r2PresignedUrlService;
     private PlatformConfig platformConfig;
     private EntryUploadService service;
@@ -53,11 +55,12 @@ class EntryUploadServiceTest {
         entryRepository = mock(EntryRepository.class);
         assetRepository = mock(AssetRepository.class);
         userRepository = mock(UserRepository.class);
+        orderRepository = mock(OrderRepository.class);
         r2PresignedUrlService = mock(R2PresignedUrlService.class);
         platformConfig = new PlatformConfig();
         platformConfig.setWallet(PLATFORM_WALLET);
         platformConfig.setFeePercent(new BigDecimal("10.00"));
-        service = new EntryUploadService(entryRepository, assetRepository, userRepository, r2PresignedUrlService, platformConfig);
+        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, r2PresignedUrlService, platformConfig);
         when(userRepository.findAllById(any())).thenReturn(java.util.List.of());
     }
 

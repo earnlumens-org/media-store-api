@@ -17,10 +17,12 @@ import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.model.MediaKind;
 import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
+import org.earnlumens.mediastore.domain.media.model.OrderStatus;
 import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
 import org.earnlumens.mediastore.domain.media.model.SplitRole;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
+import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.earnlumens.mediastore.domain.user.repository.UserRepository;
 import org.earnlumens.mediastore.infrastructure.config.PlatformConfig;
 import org.earnlumens.mediastore.infrastructure.r2.R2PresignedUrlService;
@@ -56,6 +58,7 @@ public class EntryUploadService {
     private final EntryRepository entryRepository;
     private final AssetRepository assetRepository;
     private final UserRepository userRepository;
+    private final OrderRepository orderRepository;
     private final R2PresignedUrlService r2PresignedUrlService;
     private final PlatformConfig platformConfig;
 
@@ -63,12 +66,14 @@ public class EntryUploadService {
             EntryRepository entryRepository,
             AssetRepository assetRepository,
             UserRepository userRepository,
+            OrderRepository orderRepository,
             R2PresignedUrlService r2PresignedUrlService,
             PlatformConfig platformConfig
     ) {
         this.entryRepository = entryRepository;
         this.assetRepository = assetRepository;
         this.userRepository = userRepository;
+        this.orderRepository = orderRepository;
         this.r2PresignedUrlService = r2PresignedUrlService;
         this.platformConfig = platformConfig;
     }
@@ -377,6 +382,8 @@ public class EntryUploadService {
     public org.earnlumens.mediastore.domain.media.dto.response.OwnerStatsResponse getOwnerStats(
             String tenantId, String userId) {
         java.util.Map<String, Long> raw = entryRepository.getOwnerStats(tenantId, userId);
+        long totalSales = orderRepository.countByTenantIdAndSellerIdAndStatus(
+                tenantId, userId, OrderStatus.COMPLETED);
         return new org.earnlumens.mediastore.domain.media.dto.response.OwnerStatsResponse(
                 raw.getOrDefault("totalEntries", 0L),
                 raw.getOrDefault("published", 0L),
@@ -384,8 +391,49 @@ public class EntryUploadService {
                 raw.getOrDefault("inReview", 0L),
                 raw.getOrDefault("rejected", 0L),
                 raw.getOrDefault("archived", 0L),
-                raw.getOrDefault("totalViews", 0L)
+                raw.getOrDefault("totalViews", 0L),
+                totalSales
         );
+    }
+
+    /**
+     * Returns the list of completed sales for a seller, with payment split breakdown.
+     * Each sale includes the entry title, gross amount, splits (with computed XLM amounts),
+     * and the Stellar transaction hash for on-chain verification.
+     */
+    public List<org.earnlumens.mediastore.domain.media.dto.response.SellerOrderResponse> getSellerSales(
+            String tenantId, String sellerId) {
+        var orders = orderRepository.findByTenantIdAndSellerIdAndStatus(
+                tenantId, sellerId, OrderStatus.COMPLETED);
+
+        // Batch-load entry titles
+        List<String> entryIds = orders.stream().map(o -> o.getEntryId()).distinct().toList();
+        java.util.Map<String, Entry> entryMap = new java.util.HashMap<>();
+        if (!entryIds.isEmpty()) {
+            entryRepository.findByTenantIdAndIdIn(tenantId, entryIds)
+                    .forEach(e -> entryMap.put(e.getId(), e));
+        }
+
+        return orders.stream().map(order -> {
+            // Look up entry title
+            Entry entry = entryMap.get(order.getEntryId());
+            String entryTitle = entry != null ? entry.getTitle() : "—";
+            String entryType = entry != null && entry.getType() != null ? entry.getType().name() : "RESOURCE";
+
+            // Build split details with computed XLM amounts
+            BigDecimal gross = order.getAmountXlm() != null ? order.getAmountXlm() : BigDecimal.ZERO;
+            List<org.earnlumens.mediastore.domain.media.dto.response.SellerOrderResponse.SplitDetail> splits =
+                    order.getPaymentSplits().stream().map(s -> {
+                        BigDecimal splitXlm = gross.multiply(s.getPercent())
+                                .divide(ONE_HUNDRED, 7, java.math.RoundingMode.HALF_UP);
+                        return new org.earnlumens.mediastore.domain.media.dto.response.SellerOrderResponse.SplitDetail(
+                                s.getWallet(), s.getRole().name(), s.getPercent(), splitXlm);
+                    }).toList();
+
+            return new org.earnlumens.mediastore.domain.media.dto.response.SellerOrderResponse(
+                    order.getId(), order.getEntryId(), entryTitle, entryType,
+                    gross, order.getStellarTxHash(), order.getCompletedAt(), splits);
+        }).toList();
     }
 
     /**

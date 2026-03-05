@@ -46,6 +46,19 @@ public class OrderRepositoryImpl implements OrderRepository {
     }
 
     @Override
+    public long countByTenantIdAndSellerIdAndStatus(String tenantId, String sellerId, OrderStatus status) {
+        return orderMongoRepository.countByTenantIdAndSellerIdAndStatus(tenantId, sellerId, status.name());
+    }
+
+    @Override
+    public List<Order> findByTenantIdAndSellerIdAndStatus(String tenantId, String sellerId, OrderStatus status) {
+        return orderMongoRepository.findByTenantIdAndSellerIdAndStatusOrderByCompletedAtDesc(tenantId, sellerId, status.name())
+                .stream()
+                .map(orderMapper::toModel)
+                .toList();
+    }
+
+    @Override
     public Order save(Order order) {
         OrderEntity entity = orderMapper.toEntity(order);
         OrderEntity saved = orderMongoRepository.save(entity);
