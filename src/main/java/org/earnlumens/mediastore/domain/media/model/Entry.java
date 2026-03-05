@@ -18,6 +18,8 @@ public class Entry {
     private String resourceContent;
     private EntryType type;
     private EntryStatus status;
+    /** Status before archiving — used to restore on unarchive. */
+    private EntryStatus previousStatus;
     private MediaVisibility visibility;
     private boolean isPaid;
     private BigDecimal priceXlm;
@@ -34,6 +36,7 @@ public class Entry {
     private String thumbnailR2Key;
     private String previewR2Key;
     private Integer durationSec;
+    private long viewCount;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private LocalDateTime publishedAt;
@@ -70,6 +73,9 @@ public class Entry {
     public EntryStatus getStatus() { return status; }
     public void setStatus(EntryStatus status) { this.status = status; }
 
+    public EntryStatus getPreviousStatus() { return previousStatus; }
+    public void setPreviousStatus(EntryStatus previousStatus) { this.previousStatus = previousStatus; }
+
     public MediaVisibility getVisibility() { return visibility; }
     public void setVisibility(MediaVisibility visibility) { this.visibility = visibility; }
 
@@ -96,6 +102,9 @@ public class Entry {
 
     public Integer getDurationSec() { return durationSec; }
     public void setDurationSec(Integer durationSec) { this.durationSec = durationSec; }
+
+    public long getViewCount() { return viewCount; }
+    public void setViewCount(long viewCount) { this.viewCount = viewCount; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

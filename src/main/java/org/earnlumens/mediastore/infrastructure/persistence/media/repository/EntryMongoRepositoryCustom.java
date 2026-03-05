@@ -15,4 +15,16 @@ public interface EntryMongoRepositoryCustom {
      * @return number of entries updated
      */
     long updateAuthorInfoByUserId(String userId, String newUsername, String newAvatarUrl);
+
+    /**
+     * Atomically increments the viewCount field on a single entry.
+     * Uses MongoDB $inc for thread-safe, lock-free counting.
+     */
+    void incrementViewCount(String entryId);
+
+    /**
+     * Aggregates owner stats: count by status + sum of viewCount.
+     * Returns a map with keys: totalEntries, published, drafts, inReview, rejected, totalViews.
+     */
+    java.util.Map<String, Long> getOwnerStats(String tenantId, String userId);
 }

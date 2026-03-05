@@ -7,5 +7,6 @@ public enum EntryStatus {
     PUBLISHED,
     REJECTED,
     SUSPENDED,
-    UNLISTED
+    UNLISTED,
+    ARCHIVED
 }

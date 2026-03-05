@@ -3,10 +3,13 @@ package org.earnlumens.mediastore.application.media;
 import org.earnlumens.mediastore.domain.media.dto.request.CreateEntryRequest;
 import org.earnlumens.mediastore.domain.media.dto.request.FinalizeUploadRequest;
 import org.earnlumens.mediastore.domain.media.dto.request.InitUploadRequest;
+import org.earnlumens.mediastore.domain.media.dto.request.UpdateEntryMetadataRequest;
 import org.earnlumens.mediastore.domain.media.dto.request.UpdateEntryStatusRequest;
 import org.earnlumens.mediastore.domain.media.dto.response.CreateEntryResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.FinalizeUploadResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.InitUploadResponse;
+import org.earnlumens.mediastore.domain.media.dto.response.OwnerEntryPageResponse;
+import org.earnlumens.mediastore.domain.media.dto.response.OwnerEntryResponse;
 import org.earnlumens.mediastore.domain.media.model.Asset;
 import org.earnlumens.mediastore.domain.media.model.AssetStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
@@ -23,6 +26,8 @@ import org.earnlumens.mediastore.infrastructure.config.PlatformConfig;
 import org.earnlumens.mediastore.infrastructure.r2.R2PresignedUrlService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -256,6 +261,47 @@ public class EntryUploadService {
      *
      * @return true if the status was updated, false if entry not found, not owned, or invalid transition
      */
+    /**
+     * Updates entry metadata (title, description, isPaid, priceXlm).
+     * Only non-null fields in the request are applied.
+     *
+     * @return true if updated, false if entry not found or not owned
+     */
+    public boolean updateEntryMetadata(String tenantId, String userId, String entryId, UpdateEntryMetadataRequest request) {
+        Optional<Entry> optEntry = entryRepository.findByTenantIdAndId(tenantId, entryId);
+        if (optEntry.isEmpty()) {
+            logger.debug("updateEntryMetadata: entry not found: tenantId={}, entryId={}", tenantId, entryId);
+            return false;
+        }
+
+        Entry entry = optEntry.get();
+        if (!userId.equals(entry.getUserId())) {
+            logger.warn("updateEntryMetadata: user {} does not own entry {}", userId, entryId);
+            return false;
+        }
+
+        if (request.title() != null) {
+            entry.setTitle(request.title());
+        }
+        if (request.description() != null) {
+            entry.setDescription(request.description());
+        }
+        if (request.isPaid() != null) {
+            entry.setPaid(request.isPaid());
+            if (Boolean.TRUE.equals(request.isPaid()) && request.priceXlm() != null) {
+                entry.setPriceXlm(request.priceXlm());
+            } else if (Boolean.FALSE.equals(request.isPaid())) {
+                entry.setPriceXlm(null);
+            }
+        }
+
+        entry.setUpdatedAt(java.time.LocalDateTime.now());
+        entryRepository.save(entry);
+
+        logger.info("updateEntryMetadata: entryId={}, title={}", entryId, entry.getTitle());
+        return true;
+    }
+
     public boolean updateEntryStatus(String tenantId, String userId, String entryId, UpdateEntryStatusRequest request) {
         Optional<Entry> optEntry = entryRepository.findByTenantIdAndId(tenantId, entryId);
         if (optEntry.isEmpty()) {
@@ -278,6 +324,11 @@ public class EntryUploadService {
             return false;
         }
 
+        // When archiving, remember the current status so we can restore it later
+        if (newStatus == EntryStatus.ARCHIVED) {
+            entry.setPreviousStatus(entry.getStatus());
+        }
+
         entry.setStatus(newStatus);
         entryRepository.save(entry);
 
@@ -285,7 +336,143 @@ public class EntryUploadService {
         return true;
     }
 
+    /**
+     * Restores an archived entry to its previous status.
+     *
+     * @return true if unarchived, false if entry not found, not owned, or not archived
+     */
+    public boolean unarchiveEntry(String tenantId, String userId, String entryId) {
+        Optional<Entry> optEntry = entryRepository.findByTenantIdAndId(tenantId, entryId);
+        if (optEntry.isEmpty()) {
+            logger.debug("unarchiveEntry: entry not found: tenantId={}, entryId={}", tenantId, entryId);
+            return false;
+        }
+
+        Entry entry = optEntry.get();
+        if (!userId.equals(entry.getUserId())) {
+            logger.warn("unarchiveEntry: user {} does not own entry {}", userId, entryId);
+            return false;
+        }
+
+        if (entry.getStatus() != EntryStatus.ARCHIVED) {
+            logger.warn("unarchiveEntry: entry {} is not archived (status={})", entryId, entry.getStatus());
+            return false;
+        }
+
+        EntryStatus restoreTo = entry.getPreviousStatus() != null
+                ? entry.getPreviousStatus()
+                : EntryStatus.DRAFT;
+
+        logger.info("unarchiveEntry: entryId={}, ARCHIVED → {}", entryId, restoreTo);
+        entry.setStatus(restoreTo);
+        entry.setPreviousStatus(null);
+        entryRepository.save(entry);
+        return true;
+    }
+
+    /**
+     * Aggregated dashboard stats for the owner (counts by status + total views).
+     * Delegates to a single MongoDB aggregation pipeline for efficiency.
+     */
+    public org.earnlumens.mediastore.domain.media.dto.response.OwnerStatsResponse getOwnerStats(
+            String tenantId, String userId) {
+        java.util.Map<String, Long> raw = entryRepository.getOwnerStats(tenantId, userId);
+        return new org.earnlumens.mediastore.domain.media.dto.response.OwnerStatsResponse(
+                raw.getOrDefault("totalEntries", 0L),
+                raw.getOrDefault("published", 0L),
+                raw.getOrDefault("drafts", 0L),
+                raw.getOrDefault("inReview", 0L),
+                raw.getOrDefault("rejected", 0L),
+                raw.getOrDefault("archived", 0L),
+                raw.getOrDefault("totalViews", 0L)
+        );
+    }
+
+    /**
+     * Returns a paginated list of entries owned by the authenticated user,
+     * optionally filtered by status and/or type.
+     * Ordered by createdAt descending (most recent first).
+     */
+    public OwnerEntryPageResponse getEntriesByOwner(
+            String tenantId, String userId,
+            String status, String type,
+            int page, int size
+    ) {
+        Page<Entry> entryPage;
+        EntryStatus entryStatus = parseStatus(status);
+        EntryType entryType = parseType(type);
+
+        if (entryStatus != null && entryType != null) {
+            entryPage = entryRepository.findByTenantIdAndUserIdAndStatusAndType(
+                    tenantId, userId, entryStatus, entryType, PageRequest.of(page, size));
+        } else if (entryStatus != null) {
+            entryPage = entryRepository.findByTenantIdAndUserIdAndStatus(
+                    tenantId, userId, entryStatus, PageRequest.of(page, size));
+        } else if (entryType != null) {
+            // No explicit status → exclude ARCHIVED by default
+            entryPage = entryRepository.findByTenantIdAndUserIdAndStatusNotAndType(
+                    tenantId, userId, EntryStatus.ARCHIVED, entryType, PageRequest.of(page, size));
+        } else {
+            // No explicit status → exclude ARCHIVED by default
+            entryPage = entryRepository.findByTenantIdAndUserIdAndStatusNot(
+                    tenantId, userId, EntryStatus.ARCHIVED, PageRequest.of(page, size));
+        }
+
+        List<OwnerEntryResponse> content = entryPage.getContent().stream()
+                .map(this::toOwnerResponse)
+                .toList();
+
+        return new OwnerEntryPageResponse(
+                content,
+                entryPage.getNumber(),
+                entryPage.getSize(),
+                entryPage.getTotalElements(),
+                entryPage.getTotalPages()
+        );
+    }
+
+    private OwnerEntryResponse toOwnerResponse(Entry entry) {
+        java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME;
+        return new OwnerEntryResponse(
+                entry.getId(),
+                entry.getType() != null ? entry.getType().name().toLowerCase() : "resource",
+                entry.getTitle(),
+                entry.getDescription(),
+                entry.getStatus() != null ? entry.getStatus().name() : "DRAFT",
+                entry.getThumbnailR2Key(),
+                entry.getPreviewR2Key(),
+                entry.isPaid(),
+                entry.getPriceXlm(),
+                entry.getDurationSec(),
+                entry.getViewCount(),
+                entry.getCreatedAt() != null ? entry.getCreatedAt().format(fmt) : null,
+                entry.getUpdatedAt() != null ? entry.getUpdatedAt().format(fmt) : null,
+                entry.getPublishedAt() != null ? entry.getPublishedAt().format(fmt) : null
+        );
+    }
+
+    private EntryStatus parseStatus(String status) {
+        if (status == null || status.isBlank()) return null;
+        try {
+            return EntryStatus.valueOf(status.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private EntryType parseType(String type) {
+        if (type == null || type.isBlank()) return null;
+        try {
+            return EntryType.valueOf(type.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
     private boolean isValidStatusTransition(EntryStatus current, EntryStatus target) {
+        // Any status can transition to ARCHIVED (creator can always archive)
+        if (target == EntryStatus.ARCHIVED) return true;
+
         return switch (current) {
             case DRAFT -> target == EntryStatus.IN_REVIEW;
             case IN_REVIEW -> target == EntryStatus.APPROVED || target == EntryStatus.REJECTED;
@@ -294,6 +481,7 @@ public class EntryUploadService {
             case PUBLISHED -> target == EntryStatus.UNLISTED || target == EntryStatus.SUSPENDED;
             case UNLISTED -> target == EntryStatus.PUBLISHED || target == EntryStatus.SUSPENDED;
             case SUSPENDED -> target == EntryStatus.PUBLISHED || target == EntryStatus.DRAFT;
+            case ARCHIVED -> target == EntryStatus.DRAFT;
         };
     }
 

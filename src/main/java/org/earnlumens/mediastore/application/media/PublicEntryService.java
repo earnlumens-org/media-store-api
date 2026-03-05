@@ -41,6 +41,9 @@ public class PublicEntryService {
         return entryRepository.findByTenantIdAndId(tenantId, entryId)
                 .filter(entry -> entry.getStatus() == EntryStatus.PUBLISHED || entry.getStatus() == EntryStatus.UNLISTED)
                 .map(entry -> {
+                    // Atomically increment view count (fire-and-forget)
+                    entryRepository.incrementViewCount(entryId);
+
                     // For detail view: include FULL asset metadata if available
                     AssetInfo assetInfo = assetRepository
                             .findByTenantIdAndEntryIdAndKindAndStatus(tenantId, entryId, MediaKind.FULL, AssetStatus.READY)
@@ -114,6 +117,7 @@ public class PublicEntryService {
                 entry.getThumbnailR2Key(),
                 entry.getPreviewR2Key(),
                 entry.getDurationSec(),
+                entry.getViewCount(),
                 entry.isPaid(),
                 entry.getPriceXlm(),
                 entry.getTags(),

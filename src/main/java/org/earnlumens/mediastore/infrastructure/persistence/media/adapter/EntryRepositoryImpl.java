@@ -51,6 +51,42 @@ public class EntryRepositoryImpl implements EntryRepository {
     }
 
     @Override
+    public Page<Entry> findByTenantIdAndUserId(String tenantId, String userId, Pageable pageable) {
+        return entryMongoRepository.findByTenantIdAndUserIdOrderByCreatedAtDesc(tenantId, userId, pageable)
+                .map(entryMapper::toModel);
+    }
+
+    @Override
+    public Page<Entry> findByTenantIdAndUserIdAndStatusNot(String tenantId, String userId, EntryStatus excludeStatus, Pageable pageable) {
+        return entryMongoRepository.findByTenantIdAndUserIdAndStatusNotOrderByCreatedAtDesc(tenantId, userId, excludeStatus.name(), pageable)
+                .map(entryMapper::toModel);
+    }
+
+    @Override
+    public Page<Entry> findByTenantIdAndUserIdAndStatus(String tenantId, String userId, EntryStatus status, Pageable pageable) {
+        return entryMongoRepository.findByTenantIdAndUserIdAndStatusOrderByCreatedAtDesc(tenantId, userId, status.name(), pageable)
+                .map(entryMapper::toModel);
+    }
+
+    @Override
+    public Page<Entry> findByTenantIdAndUserIdAndType(String tenantId, String userId, EntryType type, Pageable pageable) {
+        return entryMongoRepository.findByTenantIdAndUserIdAndTypeOrderByCreatedAtDesc(tenantId, userId, type.name(), pageable)
+                .map(entryMapper::toModel);
+    }
+
+    @Override
+    public Page<Entry> findByTenantIdAndUserIdAndStatusNotAndType(String tenantId, String userId, EntryStatus excludeStatus, EntryType type, Pageable pageable) {
+        return entryMongoRepository.findByTenantIdAndUserIdAndStatusNotAndTypeOrderByCreatedAtDesc(tenantId, userId, excludeStatus.name(), type.name(), pageable)
+                .map(entryMapper::toModel);
+    }
+
+    @Override
+    public Page<Entry> findByTenantIdAndUserIdAndStatusAndType(String tenantId, String userId, EntryStatus status, EntryType type, Pageable pageable) {
+        return entryMongoRepository.findByTenantIdAndUserIdAndStatusAndTypeOrderByCreatedAtDesc(tenantId, userId, status.name(), type.name(), pageable)
+                .map(entryMapper::toModel);
+    }
+
+    @Override
     public List<Entry> findByTenantIdAndIdIn(String tenantId, List<String> ids) {
         return entryMongoRepository.findByTenantIdAndIdIn(tenantId, ids)
                 .stream()
@@ -72,6 +108,16 @@ public class EntryRepositoryImpl implements EntryRepository {
                 .stream()
                 .map(entryMapper::toModel)
                 .toList();
+    }
+
+    @Override
+    public void incrementViewCount(String entryId) {
+        entryMongoRepository.incrementViewCount(entryId);
+    }
+
+    @Override
+    public java.util.Map<String, Long> getOwnerStats(String tenantId, String userId) {
+        return entryMongoRepository.getOwnerStats(tenantId, userId);
     }
 
     @Override

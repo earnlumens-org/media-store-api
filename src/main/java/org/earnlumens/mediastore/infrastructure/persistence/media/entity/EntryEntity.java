@@ -50,6 +50,9 @@ public class EntryEntity {
     @NotBlank
     private String status;
 
+    /** Status before archiving — used to restore on unarchive. */
+    private String previousStatus;
+
     @NotBlank
     private String visibility;
 
@@ -74,6 +77,8 @@ public class EntryEntity {
     private String previewR2Key;
 
     private Integer durationSec;
+
+    private long viewCount;
 
     @CreatedDate
     private LocalDateTime createdAt;
@@ -115,6 +120,9 @@ public class EntryEntity {
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
 
+    public String getPreviousStatus() { return previousStatus; }
+    public void setPreviousStatus(String previousStatus) { this.previousStatus = previousStatus; }
+
     public String getVisibility() { return visibility; }
     public void setVisibility(String visibility) { this.visibility = visibility; }
 
@@ -141,6 +149,9 @@ public class EntryEntity {
 
     public Integer getDurationSec() { return durationSec; }
     public void setDurationSec(Integer durationSec) { this.durationSec = durationSec; }
+
+    public long getViewCount() { return viewCount; }
+    public void setViewCount(long viewCount) { this.viewCount = viewCount; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

@@ -20,11 +20,29 @@ public interface EntryRepository {
 
     Page<Entry> findByTenantIdAndAuthorUsernameAndStatusAndType(String tenantId, String authorUsername, EntryStatus status, EntryType type, Pageable pageable);
 
+    Page<Entry> findByTenantIdAndUserId(String tenantId, String userId, Pageable pageable);
+
+    Page<Entry> findByTenantIdAndUserIdAndStatusNot(String tenantId, String userId, EntryStatus excludeStatus, Pageable pageable);
+
+    Page<Entry> findByTenantIdAndUserIdAndStatus(String tenantId, String userId, EntryStatus status, Pageable pageable);
+
+    Page<Entry> findByTenantIdAndUserIdAndType(String tenantId, String userId, EntryType type, Pageable pageable);
+
+    Page<Entry> findByTenantIdAndUserIdAndStatusNotAndType(String tenantId, String userId, EntryStatus excludeStatus, EntryType type, Pageable pageable);
+
+    Page<Entry> findByTenantIdAndUserIdAndStatusAndType(String tenantId, String userId, EntryStatus status, EntryType type, Pageable pageable);
+
     List<Entry> findByTenantIdAndIdIn(String tenantId, List<String> ids);
 
     List<Entry> findByStatus(EntryStatus status);
 
     List<Entry> findByStatusAndCreatedAtBefore(EntryStatus status, LocalDateTime cutoff);
+
+    /** Atomically increments the view counter on an entry. */
+    void incrementViewCount(String entryId);
+
+    /** Aggregated stats for the owner dashboard (counts by status + total views). */
+    java.util.Map<String, Long> getOwnerStats(String tenantId, String userId);
 
     Entry save(Entry entry);
 

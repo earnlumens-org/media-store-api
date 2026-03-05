@@ -19,6 +19,7 @@ public record PublicEntryResponse(
         String thumbnailR2Key,
         String previewR2Key,
         Integer durationSec,
+        long viewCount,
         boolean isPaid,
         BigDecimal priceXlm,
         List<String> tags,

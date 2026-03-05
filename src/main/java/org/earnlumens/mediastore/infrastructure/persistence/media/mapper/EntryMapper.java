@@ -19,12 +19,14 @@ public interface EntryMapper {
 
     @Mapping(target = "type", source = "type", qualifiedByName = "stringToEntryType")
     @Mapping(target = "status", source = "status", qualifiedByName = "stringToEntryStatus")
+    @Mapping(target = "previousStatus", source = "previousStatus", qualifiedByName = "stringToEntryStatus")
     @Mapping(target = "visibility", source = "visibility", qualifiedByName = "stringToMediaVisibility")
     @Mapping(target = "paymentSplits", source = "paymentSplits", qualifiedByName = "entitiesToSplits")
     Entry toModel(EntryEntity entity);
 
     @Mapping(target = "type", source = "type", qualifiedByName = "entryTypeToString")
     @Mapping(target = "status", source = "status", qualifiedByName = "entryStatusToString")
+    @Mapping(target = "previousStatus", source = "previousStatus", qualifiedByName = "entryStatusToString")
     @Mapping(target = "visibility", source = "visibility", qualifiedByName = "mediaVisibilityToString")
     @Mapping(target = "paymentSplits", source = "paymentSplits", qualifiedByName = "splitsToEntities")
     EntryEntity toEntity(Entry model);
