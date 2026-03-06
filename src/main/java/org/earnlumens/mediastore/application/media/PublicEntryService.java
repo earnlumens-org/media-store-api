@@ -111,6 +111,7 @@ public class PublicEntryService {
                 entry.getTitle(),
                 entry.getDescription(),
                 entry.getResourceContent(),
+                entry.getUserId(),
                 entry.getAuthorUsername() != null ? entry.getAuthorUsername() : entry.getUserId(),
                 entry.getAuthorAvatarUrl(),
                 publishedAt,

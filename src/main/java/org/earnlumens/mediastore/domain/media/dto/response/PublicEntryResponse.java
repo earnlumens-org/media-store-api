@@ -13,6 +13,7 @@ public record PublicEntryResponse(
         String title,
         String description,
         String resourceContent,
+        String authorId,
         String authorName,
         String authorAvatarUrl,
         String publishedAt,

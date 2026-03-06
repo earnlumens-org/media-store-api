@@ -58,6 +58,9 @@ public class UserController {
 
     private Map<String, Object> toResponse(User user) {
         Map<String, Object> response = new LinkedHashMap<>();
+        // Expose the OAuth provider ID (same identifier used by JWT / extractUserId everywhere)
+        // rather than the internal MongoDB _id, so subscription and other features stay consistent.
+        response.put("id", user.getOauthUserId());
         response.put("username", user.getUsername());
         response.put("displayName", user.getDisplayName());
         response.put("profileImageUrl", user.getProfileImageUrl());
@@ -69,6 +72,7 @@ public class UserController {
         Map<String, Object> attributes = oauth2User.getAttributes();
 
         Map<String, Object> response = new LinkedHashMap<>();
+        response.put("id", attributes.get("id"));
         response.put("username", attributes.get("username"));
         response.put("displayName", attributes.get("name"));
         response.put("profileImageUrl", attributes.get("profile_image_url"));
