@@ -212,7 +212,8 @@ class EntryUploadServiceTest {
 
         FinalizeUploadRequest request = new FinalizeUploadRequest(
                 "upload-id", ENTRY_ID, "private/media/entry-abc/full/uuid-video.mp4",
-                "video/mp4", "video.mp4", 1024L, "FULL");
+                "video/mp4", "video.mp4", 1024L, "FULL",
+                1920, 1080, 120, null, null, 68267L);
 
         Optional<FinalizeUploadResponse> result = service.finalizeUpload(TENANT, USER_ID, request);
 
@@ -228,7 +229,8 @@ class EntryUploadServiceTest {
                 .thenReturn(Optional.of(draftEntry()));
 
         FinalizeUploadRequest request = new FinalizeUploadRequest(
-                "upload-id", ENTRY_ID, "r2key", "video/mp4", "v.mp4", 100L, "FULL");
+                "upload-id", ENTRY_ID, "r2key", "video/mp4", "v.mp4", 100L, "FULL",
+                null, null, null, null, null, null);
 
         Optional<FinalizeUploadResponse> result = service.finalizeUpload(TENANT, OTHER_USER, request);
 
@@ -254,7 +256,8 @@ class EntryUploadServiceTest {
         });
 
         FinalizeUploadRequest request = new FinalizeUploadRequest(
-                "uid", ENTRY_ID, "r2key", "image/jpeg", "thumb.jpg", 50L, "THUMBNAIL");
+                "uid", ENTRY_ID, "r2key", "image/jpeg", "thumb.jpg", 50L, "THUMBNAIL",
+                800, 600, null, null, null, null);
 
         service.finalizeUpload(TENANT, USER_ID, request);
 

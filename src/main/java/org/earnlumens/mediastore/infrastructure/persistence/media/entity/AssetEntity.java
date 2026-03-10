@@ -39,6 +39,13 @@ public class AssetEntity {
     @NotBlank
     private String status;
 
+    private Integer widthPx;
+    private Integer heightPx;
+    private Integer durationSec;
+    private String codecVideo;
+    private String codecAudio;
+    private Long bitrateBps;
+
     @CreatedDate
     private LocalDateTime createdAt;
 
@@ -70,6 +77,24 @@ public class AssetEntity {
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+
+    public Integer getWidthPx() { return widthPx; }
+    public void setWidthPx(Integer widthPx) { this.widthPx = widthPx; }
+
+    public Integer getHeightPx() { return heightPx; }
+    public void setHeightPx(Integer heightPx) { this.heightPx = heightPx; }
+
+    public Integer getDurationSec() { return durationSec; }
+    public void setDurationSec(Integer durationSec) { this.durationSec = durationSec; }
+
+    public String getCodecVideo() { return codecVideo; }
+    public void setCodecVideo(String codecVideo) { this.codecVideo = codecVideo; }
+
+    public String getCodecAudio() { return codecAudio; }
+    public void setCodecAudio(String codecAudio) { this.codecAudio = codecAudio; }
+
+    public Long getBitrateBps() { return bitrateBps; }
+    public void setBitrateBps(Long bitrateBps) { this.bitrateBps = bitrateBps; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

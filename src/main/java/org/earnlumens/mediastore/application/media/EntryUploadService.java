@@ -235,6 +235,15 @@ public class EntryUploadService {
         asset.setFileName(request.fileName());
         asset.setFileSizeBytes(request.fileSizeBytes());
         asset.setKind(kind);
+
+        // Persist client-extracted media metadata (best-effort, nullable)
+        asset.setWidthPx(request.widthPx());
+        asset.setHeightPx(request.heightPx());
+        asset.setDurationSec(request.durationSec());
+        asset.setCodecVideo(request.codecVideo());
+        asset.setCodecAudio(request.codecAudio());
+        asset.setBitrateBps(request.bitrateBps());
+
         // No transcoding pipeline yet — files are uploaded directly to R2 and ready to serve.
         // When HLS transcoding is added, FULL assets should start as UPLOADED and transition
         // to READY via a webhook/callback after processing completes.
@@ -255,8 +264,16 @@ public class EntryUploadService {
             logger.info("finalizeUpload: set previewR2Key on entry {}: {}", request.entryId(), request.r2Key());
         }
 
-        logger.info("finalizeUpload: assetId={}, entryId={}, kind={}, r2Key={}",
-                saved.getId(), request.entryId(), kind, request.r2Key());
+        // Denormalize duration onto the entry for feed display (from the FULL asset)
+        if (kind == MediaKind.FULL && request.durationSec() != null && request.durationSec() > 0) {
+            entry.setDurationSec(request.durationSec());
+            entryRepository.save(entry);
+            logger.info("finalizeUpload: set durationSec={} on entry {}", request.durationSec(), request.entryId());
+        }
+
+        logger.info("finalizeUpload: assetId={}, entryId={}, kind={}, r2Key={}, widthPx={}, heightPx={}, durationSec={}",
+                saved.getId(), request.entryId(), kind, request.r2Key(),
+                request.widthPx(), request.heightPx(), request.durationSec());
 
         return Optional.of(new FinalizeUploadResponse(saved.getId(), saved.getStatus().name()));
     }
