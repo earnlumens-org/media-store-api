@@ -7,6 +7,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.stellar.sdk.*;
+import org.stellar.sdk.exception.AccountNotFoundException;
+import org.stellar.sdk.exception.BadRequestException;
 import org.stellar.sdk.operations.PaymentOperation;
 import org.stellar.sdk.responses.FeeStatsResponse;
 import org.stellar.sdk.responses.TransactionResponse;
@@ -70,8 +72,16 @@ public class StellarTransactionService {
     public BuildResult buildTransaction(String buyerWallet, BigDecimal totalXlm,
                                         List<PaymentSplit> splits, String memo) {
         try {
-            // SDK 2.x: Server.loadAccount returns TransactionBuilderAccount
-            TransactionBuilderAccount sourceAccount = server.loadAccount(buyerWallet);
+            // Load buyer account — fails if wallet is not funded on Stellar network.
+            // Horizon may throw AccountNotFoundException (404) or BadRequestException (400)
+            // depending on the network/SDK version.
+            TransactionBuilderAccount sourceAccount;
+            try {
+                sourceAccount = server.loadAccount(buyerWallet);
+            } catch (AccountNotFoundException | BadRequestException e) {
+                logger.warn("Buyer wallet not found on Stellar network: {} ({})", buyerWallet, e.getClass().getSimpleName());
+                throw new IllegalArgumentException("WALLET_NOT_ACTIVATED");
+            }
 
             // Use fee_stats p90 for reliable inclusion under congestion.
             // In normal conditions Stellar charges MIN_BASE_FEE regardless of the max set here.
@@ -113,6 +123,9 @@ public class StellarTransactionService {
 
             return new BuildResult(unsignedXdr, integrityHash, txHash);
 
+        } catch (IllegalArgumentException e) {
+            // Re-throw WALLET_NOT_ACTIVATED from the inner catch
+            throw e;
         } catch (Exception e) {
             logger.error("Failed to build Stellar transaction: buyer={}, total={}", buyerWallet, totalXlm, e);
             throw new RuntimeException("Failed to build payment transaction", e);
