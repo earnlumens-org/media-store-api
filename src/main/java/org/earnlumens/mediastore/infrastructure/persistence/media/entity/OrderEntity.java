@@ -37,6 +37,13 @@ public class OrderEntity {
 
     private BigDecimal amountXlm;
 
+    /** Original USD amount (only set for USD-priced entries) */
+    private BigDecimal originalAmountUsd;
+    /** XLM/USD rate used for conversion (only set for USD-priced entries) */
+    private BigDecimal xlmUsdRate;
+    /** Price currency of the entry at order time: "XLM" or "USD" */
+    private String priceCurrency;
+
     @NotBlank
     private String status;
 
@@ -75,6 +82,15 @@ public class OrderEntity {
 
     public BigDecimal getAmountXlm() { return amountXlm; }
     public void setAmountXlm(BigDecimal amountXlm) { this.amountXlm = amountXlm; }
+
+    public BigDecimal getOriginalAmountUsd() { return originalAmountUsd; }
+    public void setOriginalAmountUsd(BigDecimal originalAmountUsd) { this.originalAmountUsd = originalAmountUsd; }
+
+    public BigDecimal getXlmUsdRate() { return xlmUsdRate; }
+    public void setXlmUsdRate(BigDecimal xlmUsdRate) { this.xlmUsdRate = xlmUsdRate; }
+
+    public String getPriceCurrency() { return priceCurrency; }
+    public void setPriceCurrency(String priceCurrency) { this.priceCurrency = priceCurrency; }
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }

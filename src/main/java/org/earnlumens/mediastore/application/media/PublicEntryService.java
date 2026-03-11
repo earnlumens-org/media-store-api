@@ -121,6 +121,9 @@ public class PublicEntryService {
                 entry.getViewCount(),
                 entry.isPaid(),
                 entry.getPriceXlm(),
+                entry.getPriceUsd(),
+                entry.getPriceCurrency() != null ? entry.getPriceCurrency().name() : null,
+                entry.getContentLanguage(),
                 entry.getTags(),
                 assetInfo
         );

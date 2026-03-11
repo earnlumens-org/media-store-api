@@ -5,6 +5,7 @@ import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
 import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
+import org.earnlumens.mediastore.domain.media.model.PriceCurrency;
 import org.earnlumens.mediastore.domain.media.model.SplitRole;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.EntryEntity;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.PaymentSplitEntity;
@@ -21,6 +22,7 @@ public interface EntryMapper {
     @Mapping(target = "status", source = "status", qualifiedByName = "stringToEntryStatus")
     @Mapping(target = "previousStatus", source = "previousStatus", qualifiedByName = "stringToEntryStatus")
     @Mapping(target = "visibility", source = "visibility", qualifiedByName = "stringToMediaVisibility")
+    @Mapping(target = "priceCurrency", source = "priceCurrency", qualifiedByName = "stringToPriceCurrency")
     @Mapping(target = "paymentSplits", source = "paymentSplits", qualifiedByName = "entitiesToSplits")
     Entry toModel(EntryEntity entity);
 
@@ -28,6 +30,7 @@ public interface EntryMapper {
     @Mapping(target = "status", source = "status", qualifiedByName = "entryStatusToString")
     @Mapping(target = "previousStatus", source = "previousStatus", qualifiedByName = "entryStatusToString")
     @Mapping(target = "visibility", source = "visibility", qualifiedByName = "mediaVisibilityToString")
+    @Mapping(target = "priceCurrency", source = "priceCurrency", qualifiedByName = "priceCurrencyToString")
     @Mapping(target = "paymentSplits", source = "paymentSplits", qualifiedByName = "splitsToEntities")
     EntryEntity toEntity(Entry model);
 
@@ -58,6 +61,16 @@ public interface EntryMapper {
 
     @Named("mediaVisibilityToString")
     default String mediaVisibilityToString(MediaVisibility value) {
+        return value == null ? null : value.name();
+    }
+
+    @Named("stringToPriceCurrency")
+    default PriceCurrency stringToPriceCurrency(String value) {
+        return value == null ? null : PriceCurrency.valueOf(value);
+    }
+
+    @Named("priceCurrencyToString")
+    default String priceCurrencyToString(PriceCurrency value) {
         return value == null ? null : value.name();
     }
 

@@ -60,6 +60,10 @@ public class EntryEntity {
 
     private BigDecimal priceXlm;
 
+    private BigDecimal priceUsd;
+
+    private String priceCurrency;
+
     /** Stellar public key (G...) of the seller. Required for paid content. */
     private String sellerWallet;
 
@@ -71,6 +75,9 @@ public class EntryEntity {
     private List<PaymentSplitEntity> paymentSplits = new ArrayList<>();
 
     private List<String> tags = new ArrayList<>();
+
+    /** ISO 639-1 language code of the content (e.g. "es", "en"). */
+    private String contentLanguage;
 
     private String thumbnailR2Key;
 
@@ -132,6 +139,12 @@ public class EntryEntity {
     public BigDecimal getPriceXlm() { return priceXlm; }
     public void setPriceXlm(BigDecimal priceXlm) { this.priceXlm = priceXlm; }
 
+    public BigDecimal getPriceUsd() { return priceUsd; }
+    public void setPriceUsd(BigDecimal priceUsd) { this.priceUsd = priceUsd; }
+
+    public String getPriceCurrency() { return priceCurrency; }
+    public void setPriceCurrency(String priceCurrency) { this.priceCurrency = priceCurrency; }
+
     public String getSellerWallet() { return sellerWallet; }
     public void setSellerWallet(String sellerWallet) { this.sellerWallet = sellerWallet; }
 
@@ -140,6 +153,9 @@ public class EntryEntity {
 
     public List<String> getTags() { return tags; }
     public void setTags(List<String> tags) { this.tags = tags; }
+
+    public String getContentLanguage() { return contentLanguage; }
+    public void setContentLanguage(String contentLanguage) { this.contentLanguage = contentLanguage; }
 
     public String getThumbnailR2Key() { return thumbnailR2Key; }
     public void setThumbnailR2Key(String thumbnailR2Key) { this.thumbnailR2Key = thumbnailR2Key; }

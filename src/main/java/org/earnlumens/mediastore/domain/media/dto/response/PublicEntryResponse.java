@@ -23,6 +23,9 @@ public record PublicEntryResponse(
         long viewCount,
         boolean isPaid,
         BigDecimal priceXlm,
+        BigDecimal priceUsd,
+        String priceCurrency,
+        String contentLanguage,
         List<String> tags,
         AssetInfo asset
 ) {}

@@ -13,6 +13,12 @@ public class Order {
     private String entryId;
     private String sellerId;
     private BigDecimal amountXlm;
+    /** Original USD amount (only set for USD-priced entries) */
+    private BigDecimal originalAmountUsd;
+    /** XLM/USD rate used for conversion (only set for USD-priced entries) */
+    private BigDecimal xlmUsdRate;
+    /** Price currency of the entry at order time: "XLM" or "USD" */
+    private String priceCurrency;
     private OrderStatus status;
     private String stellarTxHash;
     private LocalDateTime createdAt;
@@ -48,6 +54,12 @@ public class Order {
     public void setSellerId(String sellerId) { this.sellerId = sellerId; }
     public BigDecimal getAmountXlm() { return amountXlm; }
     public void setAmountXlm(BigDecimal amountXlm) { this.amountXlm = amountXlm; }
+    public BigDecimal getOriginalAmountUsd() { return originalAmountUsd; }
+    public void setOriginalAmountUsd(BigDecimal originalAmountUsd) { this.originalAmountUsd = originalAmountUsd; }
+    public BigDecimal getXlmUsdRate() { return xlmUsdRate; }
+    public void setXlmUsdRate(BigDecimal xlmUsdRate) { this.xlmUsdRate = xlmUsdRate; }
+    public String getPriceCurrency() { return priceCurrency; }
+    public void setPriceCurrency(String priceCurrency) { this.priceCurrency = priceCurrency; }
     public OrderStatus getStatus() { return status; }
     public void setStatus(OrderStatus status) { this.status = status; }
     public String getStellarTxHash() { return stellarTxHash; }

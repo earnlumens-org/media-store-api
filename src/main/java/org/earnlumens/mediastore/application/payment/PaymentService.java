@@ -9,11 +9,13 @@ import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.earnlumens.mediastore.infrastructure.config.StellarConfig;
+import org.earnlumens.mediastore.infrastructure.external.pricing.XlmUsdPriceService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -41,17 +43,20 @@ public class PaymentService {
     private final EntitlementRepository entitlementRepository;
     private final StellarTransactionService stellarTxService;
     private final StellarConfig stellarConfig;
+    private final XlmUsdPriceService xlmUsdPriceService;
 
     public PaymentService(EntryRepository entryRepository,
                           OrderRepository orderRepository,
                           EntitlementRepository entitlementRepository,
                           StellarTransactionService stellarTxService,
-                          StellarConfig stellarConfig) {
+                          StellarConfig stellarConfig,
+                          XlmUsdPriceService xlmUsdPriceService) {
         this.entryRepository = entryRepository;
         this.orderRepository = orderRepository;
         this.entitlementRepository = entitlementRepository;
         this.stellarTxService = stellarTxService;
         this.stellarConfig = stellarConfig;
+        this.xlmUsdPriceService = xlmUsdPriceService;
     }
 
     /**
@@ -76,9 +81,36 @@ public class PaymentService {
             throw new IllegalArgumentException("Cannot purchase your own content");
         }
 
-        BigDecimal totalXlm = entry.getPriceXlm();
-        if (totalXlm == null || totalXlm.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException("Entry has no valid price");
+        // Resolve the total amount in XLM based on the entry's price currency
+        BigDecimal totalXlm;
+        BigDecimal originalAmountUsd = null;
+        BigDecimal xlmUsdRate = null;
+        String priceCurrency = entry.getPriceCurrency() != null
+                ? entry.getPriceCurrency().name()
+                : "XLM";
+
+        if (entry.getPriceCurrency() == PriceCurrency.USD) {
+            // USD-priced entry: convert to XLM using live rate
+            BigDecimal usdAmount = entry.getPriceUsd();
+            if (usdAmount == null || usdAmount.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new IllegalArgumentException("Entry has no valid USD price");
+            }
+            var snapshot = xlmUsdPriceService.getPrice();
+            BigDecimal rate = snapshot != null ? snapshot.price() : null;
+            if (rate == null || rate.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new IllegalStateException("XLM/USD price unavailable — cannot process USD payments");
+            }
+            totalXlm = usdAmount.divide(rate, 7, RoundingMode.CEILING);
+            originalAmountUsd = usdAmount;
+            xlmUsdRate = rate;
+            logger.info("USD→XLM conversion: ${} / {} = {} XLM",
+                    usdAmount.toPlainString(), rate.toPlainString(), totalXlm.toPlainString());
+        } else {
+            // XLM-priced entry (default, backward compatible)
+            totalXlm = entry.getPriceXlm();
+            if (totalXlm == null || totalXlm.compareTo(BigDecimal.ZERO) <= 0) {
+                throw new IllegalArgumentException("Entry has no valid price");
+            }
         }
 
         List<PaymentSplit> splits = entry.getPaymentSplits();
@@ -130,6 +162,9 @@ public class PaymentService {
         order.setEntryId(entryId);
         order.setSellerId(entry.getUserId());
         order.setAmountXlm(totalXlm);
+        order.setOriginalAmountUsd(originalAmountUsd);
+        order.setXlmUsdRate(xlmUsdRate);
+        order.setPriceCurrency(priceCurrency);
         order.setBuyerWallet(buyerWallet);
         order.setMemo(memo);
         order.setUnsignedXdr(buildResult.unsignedXdr());
@@ -239,6 +274,9 @@ public class PaymentService {
                 order.getUnsignedXdr(),
                 order.getIntegrityHash(),
                 order.getAmountXlm(),
+                order.getOriginalAmountUsd(),
+                order.getPriceCurrency(),
+                order.getXlmUsdRate(),
                 order.getMemo(),
                 expiresAtIso,
                 stellarConfig.getNetworkPassphrase()

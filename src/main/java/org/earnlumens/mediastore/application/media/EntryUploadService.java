@@ -19,6 +19,7 @@ import org.earnlumens.mediastore.domain.media.model.MediaKind;
 import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
 import org.earnlumens.mediastore.domain.media.model.OrderStatus;
 import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
+import org.earnlumens.mediastore.domain.media.model.PriceCurrency;
 import org.earnlumens.mediastore.domain.media.model.SplitRole;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
@@ -92,6 +93,9 @@ public class EntryUploadService {
         EntryType entryType = EntryType.valueOf(request.type());
         boolean isPaid = Boolean.TRUE.equals(request.isPaid());
 
+        // Parse currency (default to XLM for backward compatibility)
+        PriceCurrency currency = parsePriceCurrency(request.priceCurrency());
+
         // Validate wallet requirement for paid content
         if (isPaid) {
             if (request.sellerWallet() == null || request.sellerWallet().isBlank()) {
@@ -100,8 +104,15 @@ public class EntryUploadService {
             if (!STELLAR_PUBLIC_KEY.matcher(request.sellerWallet()).matches()) {
                 throw new IllegalArgumentException("Invalid Stellar public key");
             }
-            if (request.priceXlm() == null || request.priceXlm().compareTo(BigDecimal.ZERO) <= 0) {
-                throw new IllegalArgumentException("Price must be greater than 0 for paid content");
+            // Validate that at least one price field is provided based on currency
+            if (currency == PriceCurrency.USD) {
+                if (request.priceUsd() == null || request.priceUsd().compareTo(BigDecimal.ZERO) <= 0) {
+                    throw new IllegalArgumentException("Price must be greater than 0 for paid content");
+                }
+            } else {
+                if (request.priceXlm() == null || request.priceXlm().compareTo(BigDecimal.ZERO) <= 0) {
+                    throw new IllegalArgumentException("Price must be greater than 0 for paid content");
+                }
             }
             if (request.sellerWallet().equals(platformConfig.getWallet())) {
                 throw new IllegalArgumentException("Seller wallet cannot be the platform wallet");
@@ -119,6 +130,9 @@ public class EntryUploadService {
         entry.setVisibility(MediaVisibility.PRIVATE);
         entry.setPaid(isPaid);
         entry.setPriceXlm(request.priceXlm());
+        entry.setPriceUsd(request.priceUsd());
+        entry.setPriceCurrency(currency);
+        entry.setContentLanguage(request.contentLanguage());
 
         // Set seller wallet and generate payment splits for paid content
         if (isPaid) {
@@ -310,11 +324,25 @@ public class EntryUploadService {
         }
         if (request.isPaid() != null) {
             entry.setPaid(request.isPaid());
-            if (Boolean.TRUE.equals(request.isPaid()) && request.priceXlm() != null) {
-                entry.setPriceXlm(request.priceXlm());
+            if (Boolean.TRUE.equals(request.isPaid())) {
+                PriceCurrency currency = parsePriceCurrency(request.priceCurrency());
+                entry.setPriceCurrency(currency);
+                if (currency == PriceCurrency.USD) {
+                    entry.setPriceUsd(request.priceUsd());
+                    entry.setPriceXlm(null);
+                } else {
+                    entry.setPriceXlm(request.priceXlm());
+                    entry.setPriceUsd(null);
+                }
             } else if (Boolean.FALSE.equals(request.isPaid())) {
                 entry.setPriceXlm(null);
+                entry.setPriceUsd(null);
+                entry.setPriceCurrency(null);
             }
+        }
+
+        if (request.contentLanguage() != null) {
+            entry.setContentLanguage(request.contentLanguage());
         }
 
         entry.setUpdatedAt(java.time.LocalDateTime.now());
@@ -508,6 +536,9 @@ public class EntryUploadService {
                 entry.getPreviewR2Key(),
                 entry.isPaid(),
                 entry.getPriceXlm(),
+                entry.getPriceUsd(),
+                entry.getPriceCurrency() != null ? entry.getPriceCurrency().name() : null,
+                entry.getContentLanguage(),
                 entry.getDurationSec(),
                 entry.getViewCount(),
                 entry.getCreatedAt() != null ? entry.getCreatedAt().format(fmt) : null,
@@ -531,6 +562,18 @@ public class EntryUploadService {
             return EntryType.valueOf(type.toUpperCase());
         } catch (IllegalArgumentException e) {
             return null;
+        }
+    }
+
+    /**
+     * Parses the priceCurrency string. Defaults to XLM if null/blank (backward compatible).
+     */
+    private PriceCurrency parsePriceCurrency(String priceCurrency) {
+        if (priceCurrency == null || priceCurrency.isBlank()) return PriceCurrency.XLM;
+        try {
+            return PriceCurrency.valueOf(priceCurrency.toUpperCase());
+        } catch (IllegalArgumentException e) {
+            return PriceCurrency.XLM;
         }
     }
 

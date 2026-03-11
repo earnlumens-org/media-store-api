@@ -23,6 +23,8 @@ public class Entry {
     private MediaVisibility visibility;
     private boolean isPaid;
     private BigDecimal priceXlm;
+    private BigDecimal priceUsd;
+    private PriceCurrency priceCurrency;
     /** Stellar public key of the seller at the time of publishing. Required for paid content. */
     private String sellerWallet;
     /**
@@ -35,6 +37,8 @@ public class Entry {
     private List<String> tags = new ArrayList<>();
     private String thumbnailR2Key;
     private String previewR2Key;
+    /** ISO 639-1 language code of the content (e.g. "es", "en"). Nullable for legacy entries. */
+    private String contentLanguage;
     private Integer durationSec;
     private long viewCount;
     private LocalDateTime createdAt;
@@ -85,6 +89,12 @@ public class Entry {
     public BigDecimal getPriceXlm() { return priceXlm; }
     public void setPriceXlm(BigDecimal priceXlm) { this.priceXlm = priceXlm; }
 
+    public BigDecimal getPriceUsd() { return priceUsd; }
+    public void setPriceUsd(BigDecimal priceUsd) { this.priceUsd = priceUsd; }
+
+    public PriceCurrency getPriceCurrency() { return priceCurrency; }
+    public void setPriceCurrency(PriceCurrency priceCurrency) { this.priceCurrency = priceCurrency; }
+
     public String getSellerWallet() { return sellerWallet; }
     public void setSellerWallet(String sellerWallet) { this.sellerWallet = sellerWallet; }
 
@@ -99,6 +109,9 @@ public class Entry {
 
     public String getPreviewR2Key() { return previewR2Key; }
     public void setPreviewR2Key(String previewR2Key) { this.previewR2Key = previewR2Key; }
+
+    public String getContentLanguage() { return contentLanguage; }
+    public void setContentLanguage(String contentLanguage) { this.contentLanguage = contentLanguage; }
 
     public Integer getDurationSec() { return durationSec; }
     public void setDurationSec(Integer durationSec) { this.durationSec = durationSec; }

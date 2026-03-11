@@ -10,5 +10,8 @@ public record UpdateEntryMetadataRequest(
         String title,
         String description,
         Boolean isPaid,
-        BigDecimal priceXlm
+        BigDecimal priceXlm,
+        BigDecimal priceUsd,
+        String priceCurrency,
+        String contentLanguage
 ) {}

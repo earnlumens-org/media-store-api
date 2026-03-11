@@ -13,8 +13,14 @@ public record PreparePaymentResponse(
         String unsignedXdr,
         /** SHA-256 hex of the unsigned XDR (integrity check) */
         String integrityHash,
-        /** Total amount in XLM */
+        /** Total amount in XLM (this is what the Stellar tx will charge) */
         BigDecimal totalXlm,
+        /** Original USD amount if entry priced in USD, null otherwise */
+        BigDecimal originalAmountUsd,
+        /** Price currency of the entry: "XLM" or "USD" */
+        String priceCurrency,
+        /** XLM/USD rate used for conversion (null for XLM-native prices) */
+        BigDecimal xlmUsdRate,
         /** MEMO text embedded in the transaction */
         String memo,
         /** ISO-8601 expiration timestamp */
