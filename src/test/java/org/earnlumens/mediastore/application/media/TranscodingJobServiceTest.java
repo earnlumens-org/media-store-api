@@ -4,6 +4,7 @@ import org.earnlumens.mediastore.domain.media.model.Asset;
 import org.earnlumens.mediastore.domain.media.model.AssetStatus;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJob;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus;
+import org.earnlumens.mediastore.domain.media.port.TranscodingDispatchPort;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.TranscodingJobRepository;
 import org.earnlumens.mediastore.infrastructure.config.TranscodingConfig;
@@ -29,17 +30,20 @@ class TranscodingJobServiceTest {
     private TranscodingJobRepository jobRepository;
     private AssetRepository assetRepository;
     private TranscodingConfig config;
+    private TranscodingDispatchPort dispatchPort;
     private TranscodingJobService service;
 
     @BeforeEach
     void setUp() {
         jobRepository = mock(TranscodingJobRepository.class);
         assetRepository = mock(AssetRepository.class);
+        dispatchPort = mock(TranscodingDispatchPort.class);
         config = new TranscodingConfig();
         config.setMaxRetries(3);
         config.setHeartbeatTimeoutSeconds(120);
         config.setStaleBatchSize(50);
-        service = new TranscodingJobService(jobRepository, assetRepository, config);
+        config.setDispatchBatchSize(10);
+        service = new TranscodingJobService(jobRepository, assetRepository, config, dispatchPort);
 
         // Default: save returns the same job
         when(jobRepository.save(any(TranscodingJob.class)))
@@ -363,6 +367,122 @@ class TranscodingJobServiceTest {
             Optional<TranscodingJob> result = service.failJob("no-job", "error");
 
             assertTrue(result.isEmpty());
+        }
+    }
+
+    // ─── dispatchPendingJobs ──────────────────────────────────
+
+    @Nested
+    class DispatchPendingJobs {
+
+        @Test
+        void noPendingJobs_returnsZero() {
+            when(jobRepository.findByStatus(TranscodingJobStatus.PENDING, 10))
+                    .thenReturn(Collections.emptyList());
+
+            int dispatched = service.dispatchPendingJobs();
+
+            assertEquals(0, dispatched);
+            verify(dispatchPort, never()).dispatch(any());
+        }
+
+        @Test
+        void oneJob_dispatchesAndUpdatesStatus() {
+            TranscodingJob job = staleJob(TranscodingJobStatus.PENDING, 0, 3);
+            when(jobRepository.findByStatus(TranscodingJobStatus.PENDING, 10))
+                    .thenReturn(List.of(job));
+
+            int dispatched = service.dispatchPendingJobs();
+
+            assertEquals(1, dispatched);
+            verify(dispatchPort).dispatch(job);
+            assertEquals(TranscodingJobStatus.DISPATCHED, job.getStatus());
+            assertNotNull(job.getDispatchedAt());
+            assertNotNull(job.getLastHeartbeat());
+            verify(jobRepository).save(job);
+        }
+
+        @Test
+        void dispatchFails_logsAndContinues() {
+            TranscodingJob job1 = staleJob(TranscodingJobStatus.PENDING, 0, 3);
+            job1.setId("job-fail");
+            TranscodingJob job2 = staleJob(TranscodingJobStatus.PENDING, 0, 3);
+            job2.setId("job-ok");
+
+            when(jobRepository.findByStatus(TranscodingJobStatus.PENDING, 10))
+                    .thenReturn(List.of(job1, job2));
+            doThrow(new RuntimeException("Cloud Run unavailable"))
+                    .when(dispatchPort).dispatch(job1);
+
+            int dispatched = service.dispatchPendingJobs();
+
+            assertEquals(1, dispatched);
+            // job1 was NOT saved (dispatch failed)
+            assertEquals(TranscodingJobStatus.PENDING, job1.getStatus());
+            // job2 was dispatched successfully
+            assertEquals(TranscodingJobStatus.DISPATCHED, job2.getStatus());
+            verify(dispatchPort).dispatch(job1);
+            verify(dispatchPort).dispatch(job2);
+        }
+
+        @Test
+        void multipleJobs_allDispatched() {
+            TranscodingJob job1 = staleJob(TranscodingJobStatus.PENDING, 0, 3);
+            job1.setId("job-a");
+            TranscodingJob job2 = staleJob(TranscodingJobStatus.PENDING, 1, 3);
+            job2.setId("job-b");
+
+            when(jobRepository.findByStatus(TranscodingJobStatus.PENDING, 10))
+                    .thenReturn(List.of(job1, job2));
+
+            int dispatched = service.dispatchPendingJobs();
+
+            assertEquals(2, dispatched);
+            verify(dispatchPort, times(2)).dispatch(any());
+            verify(jobRepository, times(2)).save(any());
+        }
+    }
+
+    // ─── heartbeat ──────────────────────────────────────────────
+
+    @Nested
+    class Heartbeat {
+
+        @Test
+        void dispatchedJob_transitionsToProcessing() {
+            TranscodingJob job = staleJob(TranscodingJobStatus.DISPATCHED, 0, 3);
+            when(jobRepository.findById("job-1")).thenReturn(Optional.of(job));
+
+            service.heartbeat("job-1");
+
+            assertEquals(TranscodingJobStatus.PROCESSING, job.getStatus());
+            assertNotNull(job.getProcessingStartedAt());
+            assertNotNull(job.getLastHeartbeat());
+            verify(jobRepository).save(job);
+        }
+
+        @Test
+        void processingJob_updatesHeartbeatOnly() {
+            TranscodingJob job = staleJob(TranscodingJobStatus.PROCESSING, 0, 3);
+            job.setProcessingStartedAt(LocalDateTime.now().minusMinutes(5));
+            LocalDateTime oldProcessingStart = job.getProcessingStartedAt();
+            when(jobRepository.findById("job-1")).thenReturn(Optional.of(job));
+
+            service.heartbeat("job-1");
+
+            assertEquals(TranscodingJobStatus.PROCESSING, job.getStatus());
+            assertEquals(oldProcessingStart, job.getProcessingStartedAt());
+            assertNotNull(job.getLastHeartbeat());
+            verify(jobRepository).save(job);
+        }
+
+        @Test
+        void unknownJob_noErrorNoSave() {
+            when(jobRepository.findById("no-such-job")).thenReturn(Optional.empty());
+
+            service.heartbeat("no-such-job");
+
+            verify(jobRepository, never()).save(any());
         }
     }
 

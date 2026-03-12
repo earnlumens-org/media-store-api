@@ -2,6 +2,7 @@ package org.earnlumens.mediastore.web.internal;
 
 import org.earnlumens.mediastore.application.media.TranscodingJobService;
 import org.earnlumens.mediastore.domain.media.dto.request.TranscodingCallbackRequest;
+import org.earnlumens.mediastore.domain.media.dto.request.TranscodingHeartbeatRequest;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJob;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -86,5 +87,25 @@ public class TranscodingCallbackController {
             default -> ResponseEntity.badRequest().body(
                     Map.of("error", "Invalid status: must be COMPLETED or FAILED"));
         };
+    }
+
+    /**
+     * POST /api/internal/transcoding/heartbeat
+     * <p>
+     * Called periodically by the Cloud Run worker to prove it's still alive.
+     * The first heartbeat transitions the job from DISPATCHED → PROCESSING.
+     */
+    @PostMapping("/transcoding/heartbeat")
+    public ResponseEntity<?> heartbeat(
+            @RequestHeader(value = "X-Transcoding-Secret", required = false) String secret,
+            @RequestBody TranscodingHeartbeatRequest request
+    ) {
+        if (secret == null || !transcodingSecret.equals(secret)) {
+            logger.warn("Transcoding heartbeat: rejected — invalid or missing X-Transcoding-Secret");
+            return ResponseEntity.status(403).body(Map.of("error", "Forbidden"));
+        }
+
+        transcodingJobService.heartbeat(request.jobId());
+        return ResponseEntity.ok(Map.of("status", "ok"));
     }
 }

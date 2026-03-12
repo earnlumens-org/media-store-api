@@ -2,6 +2,7 @@ package org.earnlumens.mediastore.web.internal;
 
 import org.earnlumens.mediastore.application.media.TranscodingJobService;
 import org.earnlumens.mediastore.domain.media.dto.request.TranscodingCallbackRequest;
+import org.earnlumens.mediastore.domain.media.dto.request.TranscodingHeartbeatRequest;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJob;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus;
 import org.junit.jupiter.api.BeforeEach;
@@ -224,5 +225,41 @@ class TranscodingCallbackControllerTest {
 
         assertEquals(200, resp.getStatusCode().value());
         verify(jobService).completeJob("job-1", "prefix/");
+    }
+
+    // ─── Heartbeat ──────────────────────────────────────────────
+
+    @Nested
+    class HeartbeatEndpoint {
+
+        @Test
+        void validSecret_returns200() {
+            TranscodingHeartbeatRequest req = new TranscodingHeartbeatRequest("job-1");
+
+            ResponseEntity<?> resp = controller.heartbeat(SECRET, req);
+
+            assertEquals(200, resp.getStatusCode().value());
+            verify(jobService).heartbeat("job-1");
+        }
+
+        @Test
+        void missingSecret_returns403() {
+            TranscodingHeartbeatRequest req = new TranscodingHeartbeatRequest("job-1");
+
+            ResponseEntity<?> resp = controller.heartbeat(null, req);
+
+            assertEquals(403, resp.getStatusCode().value());
+            verifyNoInteractions(jobService);
+        }
+
+        @Test
+        void wrongSecret_returns403() {
+            TranscodingHeartbeatRequest req = new TranscodingHeartbeatRequest("job-1");
+
+            ResponseEntity<?> resp = controller.heartbeat("wrong-secret", req);
+
+            assertEquals(403, resp.getStatusCode().value());
+            verifyNoInteractions(jobService);
+        }
     }
 }

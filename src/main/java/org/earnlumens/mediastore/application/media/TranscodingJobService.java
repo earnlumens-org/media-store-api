@@ -4,6 +4,7 @@ import org.earnlumens.mediastore.domain.media.model.Asset;
 import org.earnlumens.mediastore.domain.media.model.AssetStatus;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJob;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus;
+import org.earnlumens.mediastore.domain.media.port.TranscodingDispatchPort;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.TranscodingJobRepository;
 import org.earnlumens.mediastore.infrastructure.config.TranscodingConfig;
@@ -41,13 +42,16 @@ public class TranscodingJobService {
     private final TranscodingJobRepository jobRepository;
     private final AssetRepository assetRepository;
     private final TranscodingConfig config;
+    private final TranscodingDispatchPort dispatchPort;
 
     public TranscodingJobService(TranscodingJobRepository jobRepository,
                                   AssetRepository assetRepository,
-                                  TranscodingConfig config) {
+                                  TranscodingConfig config,
+                                  TranscodingDispatchPort dispatchPort) {
         this.jobRepository = jobRepository;
         this.assetRepository = assetRepository;
         this.config = config;
+        this.dispatchPort = dispatchPort;
     }
 
     // ─── Job creation (called by EntryUploadService) ───────────
@@ -63,6 +67,80 @@ public class TranscodingJobService {
         logger.info("Created transcoding job: id={}, asset={}, entry={}, tenant={}",
                 saved.getId(), saved.getAssetId(), saved.getEntryId(), saved.getTenantId());
         return saved;
+    }
+
+    // ─── Dispatch (called by TranscodingDispatcher) ────────────
+
+    /**
+     * Picks up PENDING jobs and dispatches them to the Cloud Run worker.
+     *
+     * @return number of jobs successfully dispatched
+     */
+    public int dispatchPendingJobs() {
+        List<TranscodingJob> pending = jobRepository.findByStatus(
+                TranscodingJobStatus.PENDING, config.getDispatchBatchSize());
+
+        if (pending.isEmpty()) {
+            return 0;
+        }
+
+        int dispatched = 0;
+        for (TranscodingJob job : pending) {
+            try {
+                dispatchJob(job);
+                dispatched++;
+            } catch (Exception e) {
+                logger.error("Failed to dispatch job id={}, asset={}: {}",
+                        job.getId(), job.getAssetId(), e.getMessage(), e);
+            }
+        }
+
+        if (dispatched > 0) {
+            logger.info("Dispatched {}/{} pending transcoding job(s)", dispatched, pending.size());
+        }
+        return dispatched;
+    }
+
+    /**
+     * Dispatches a single job to the Cloud Run worker and updates its status.
+     */
+    private void dispatchJob(TranscodingJob job) {
+        dispatchPort.dispatch(job);
+
+        job.setStatus(TranscodingJobStatus.DISPATCHED);
+        job.setDispatchedAt(LocalDateTime.now());
+        job.setLastHeartbeat(LocalDateTime.now());
+        jobRepository.save(job);
+
+        logger.info("Job dispatched: id={}, asset={}, entry={}, tenant={}",
+                job.getId(), job.getAssetId(), job.getEntryId(), job.getTenantId());
+    }
+
+    // ─── Heartbeat (called by TranscodingCallbackController) ───
+
+    /**
+     * Updates the heartbeat timestamp for a running job.
+     * The first heartbeat from the worker transitions DISPATCHED → PROCESSING.
+     *
+     * @param jobId the transcoding job ID
+     */
+    public void heartbeat(String jobId) {
+        Optional<TranscodingJob> opt = jobRepository.findById(jobId);
+        if (opt.isEmpty()) {
+            logger.warn("heartbeat: job not found id={}", jobId);
+            return;
+        }
+
+        TranscodingJob job = opt.get();
+
+        if (job.getStatus() == TranscodingJobStatus.DISPATCHED) {
+            job.setStatus(TranscodingJobStatus.PROCESSING);
+            job.setProcessingStartedAt(LocalDateTime.now());
+            logger.info("heartbeat: job {} transitioned DISPATCHED → PROCESSING", jobId);
+        }
+
+        job.setLastHeartbeat(LocalDateTime.now());
+        jobRepository.save(job);
     }
 
     // ─── Stale-job recovery (called by Watchdog) ───────────────
