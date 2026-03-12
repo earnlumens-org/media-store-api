@@ -21,6 +21,8 @@ import org.earnlumens.mediastore.domain.media.model.OrderStatus;
 import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
 import org.earnlumens.mediastore.domain.media.model.PriceCurrency;
 import org.earnlumens.mediastore.domain.media.model.SplitRole;
+import org.earnlumens.mediastore.domain.media.model.TranscodingJob;
+import org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
@@ -62,6 +64,7 @@ public class EntryUploadService {
     private final OrderRepository orderRepository;
     private final R2PresignedUrlService r2PresignedUrlService;
     private final PlatformConfig platformConfig;
+    private final TranscodingJobService transcodingJobService;
 
     public EntryUploadService(
             EntryRepository entryRepository,
@@ -69,7 +72,8 @@ public class EntryUploadService {
             UserRepository userRepository,
             OrderRepository orderRepository,
             R2PresignedUrlService r2PresignedUrlService,
-            PlatformConfig platformConfig
+            PlatformConfig platformConfig,
+            TranscodingJobService transcodingJobService
     ) {
         this.entryRepository = entryRepository;
         this.assetRepository = assetRepository;
@@ -77,6 +81,7 @@ public class EntryUploadService {
         this.orderRepository = orderRepository;
         this.r2PresignedUrlService = r2PresignedUrlService;
         this.platformConfig = platformConfig;
+        this.transcodingJobService = transcodingJobService;
     }
 
     /**
@@ -258,12 +263,27 @@ public class EntryUploadService {
         asset.setCodecAudio(request.codecAudio());
         asset.setBitrateBps(request.bitrateBps());
 
-        // No transcoding pipeline yet — files are uploaded directly to R2 and ready to serve.
-        // When HLS transcoding is added, FULL assets should start as UPLOADED and transition
-        // to READY via a webhook/callback after processing completes.
-        asset.setStatus(AssetStatus.READY);
+        // Videos uploaded as FULL need HLS transcoding — start as UPLOADED.
+        // Non-video FULL assets and THUMBNAIL/PREVIEW are immediately READY.
+        boolean needsTranscoding = kind == MediaKind.FULL && entry.getType() == EntryType.VIDEO;
+        asset.setStatus(needsTranscoding ? AssetStatus.UPLOADED : AssetStatus.READY);
 
         Asset saved = assetRepository.save(asset);
+
+        // Create a transcoding job for videos so the pipeline picks it up
+        if (needsTranscoding) {
+            TranscodingJob job = new TranscodingJob();
+            job.setTenantId(tenantId);
+            job.setEntryId(request.entryId());
+            job.setAssetId(saved.getId());
+            job.setSourceR2Key(request.r2Key());
+            job.setStatus(TranscodingJobStatus.PENDING);
+            job.setRetryCount(0);
+            job.setMaxRetries(transcodingJobService.getMaxRetries());
+            transcodingJobService.createJob(job);
+            logger.info("finalizeUpload: created transcoding job for video asset={}, entry={}",
+                    saved.getId(), request.entryId());
+        }
 
         // If a THUMBNAIL was finalized, denormalize its R2 key onto the entry for fast reads
         if (kind == MediaKind.THUMBNAIL) {

@@ -13,6 +13,7 @@ import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
+import org.earnlumens.mediastore.domain.media.model.TranscodingJob;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
@@ -48,6 +49,7 @@ class EntryUploadServiceTest {
     private OrderRepository orderRepository;
     private R2PresignedUrlService r2PresignedUrlService;
     private PlatformConfig platformConfig;
+    private TranscodingJobService transcodingJobService;
     private EntryUploadService service;
 
     @BeforeEach
@@ -57,11 +59,15 @@ class EntryUploadServiceTest {
         userRepository = mock(UserRepository.class);
         orderRepository = mock(OrderRepository.class);
         r2PresignedUrlService = mock(R2PresignedUrlService.class);
+        transcodingJobService = mock(TranscodingJobService.class);
         platformConfig = new PlatformConfig();
         platformConfig.setWallet(PLATFORM_WALLET);
         platformConfig.setFeePercent(new BigDecimal("10.00"));
-        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, r2PresignedUrlService, platformConfig);
+        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, r2PresignedUrlService, platformConfig, transcodingJobService);
         when(userRepository.findAllById(any())).thenReturn(java.util.List.of());
+        when(transcodingJobService.getMaxRetries()).thenReturn(3);
+        when(transcodingJobService.createJob(any(TranscodingJob.class)))
+                .thenAnswer(inv -> { TranscodingJob j = inv.getArgument(0); j.setId("job-1"); return j; });
     }
 
     private Entry draftEntry() {
@@ -219,8 +225,10 @@ class EntryUploadServiceTest {
 
         assertTrue(result.isPresent());
         assertEquals("asset-001", result.get().assetId());
-        assertEquals("READY", result.get().status());
+        // VIDEO FULL assets start as UPLOADED (pending transcoding)
+        assertEquals("UPLOADED", result.get().status());
         verify(assetRepository).save(any(Asset.class));
+        verify(transcodingJobService).createJob(any(TranscodingJob.class));
     }
 
     @Test
@@ -340,5 +348,113 @@ class EntryUploadServiceTest {
 
         assertFalse(result);
         verify(entryRepository, never()).save(any());
+    }
+
+    // ─── finalizeUpload: transcoding ───────────────────────────
+
+    @Test
+    void finalizeUpload_videoFull_createsTranscodingJob() {
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
+                .thenReturn(Optional.of(draftEntry()));
+        when(assetRepository.save(any(Asset.class))).thenAnswer(invocation -> {
+            Asset a = invocation.getArgument(0);
+            a.setId("asset-v1");
+            assertEquals(AssetStatus.UPLOADED, a.getStatus());
+            return a;
+        });
+
+        FinalizeUploadRequest request = new FinalizeUploadRequest(
+                "uid", ENTRY_ID, "private/media/entry-abc/full/uuid-video.mp4",
+                "video/mp4", "video.mp4", 50_000_000L, "FULL",
+                1920, 1080, 300, null, null, null);
+
+        Optional<FinalizeUploadResponse> result = service.finalizeUpload(TENANT, USER_ID, request);
+
+        assertTrue(result.isPresent());
+        assertEquals("UPLOADED", result.get().status());
+
+        // Verify transcoding job was created with correct fields
+        verify(transcodingJobService).createJob(argThat(job -> {
+            assertEquals(TENANT, job.getTenantId());
+            assertEquals(ENTRY_ID, job.getEntryId());
+            assertEquals("asset-v1", job.getAssetId());
+            assertEquals("private/media/entry-abc/full/uuid-video.mp4", job.getSourceR2Key());
+            assertEquals(org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus.PENDING, job.getStatus());
+            assertEquals(0, job.getRetryCount());
+            assertEquals(3, job.getMaxRetries());
+            return true;
+        }));
+    }
+
+    @Test
+    void finalizeUpload_audioFull_noTranscodingJob() {
+        Entry audioEntry = draftEntry();
+        audioEntry.setType(EntryType.AUDIO);
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
+                .thenReturn(Optional.of(audioEntry));
+        when(assetRepository.save(any(Asset.class))).thenAnswer(invocation -> {
+            Asset a = invocation.getArgument(0);
+            a.setId("asset-a1");
+            return a;
+        });
+
+        FinalizeUploadRequest request = new FinalizeUploadRequest(
+                "uid", ENTRY_ID, "private/media/entry-abc/full/uuid-track.mp3",
+                "audio/mpeg", "track.mp3", 5_000_000L, "FULL",
+                null, null, 180, null, null, null);
+
+        Optional<FinalizeUploadResponse> result = service.finalizeUpload(TENANT, USER_ID, request);
+
+        assertTrue(result.isPresent());
+        assertEquals("READY", result.get().status());
+        verify(transcodingJobService, never()).createJob(any());
+    }
+
+    @Test
+    void finalizeUpload_imageFull_noTranscodingJob() {
+        Entry imageEntry = draftEntry();
+        imageEntry.setType(EntryType.IMAGE);
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
+                .thenReturn(Optional.of(imageEntry));
+        when(assetRepository.save(any(Asset.class))).thenAnswer(invocation -> {
+            Asset a = invocation.getArgument(0);
+            a.setId("asset-i1");
+            return a;
+        });
+
+        FinalizeUploadRequest request = new FinalizeUploadRequest(
+                "uid", ENTRY_ID, "private/media/entry-abc/full/uuid-photo.jpg",
+                "image/jpeg", "photo.jpg", 2_000_000L, "FULL",
+                3840, 2160, null, null, null, null);
+
+        Optional<FinalizeUploadResponse> result = service.finalizeUpload(TENANT, USER_ID, request);
+
+        assertTrue(result.isPresent());
+        assertEquals("READY", result.get().status());
+        verify(transcodingJobService, never()).createJob(any());
+    }
+
+    @Test
+    void finalizeUpload_videoThumbnail_noTranscodingJob() {
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
+                .thenReturn(Optional.of(draftEntry()));
+        when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(assetRepository.save(any(Asset.class))).thenAnswer(invocation -> {
+            Asset a = invocation.getArgument(0);
+            a.setId("asset-t1");
+            assertEquals(AssetStatus.READY, a.getStatus());
+            return a;
+        });
+
+        FinalizeUploadRequest request = new FinalizeUploadRequest(
+                "uid", ENTRY_ID, "public/media/entry-abc/thumbnail/uuid-thumb.jpg",
+                "image/jpeg", "thumb.jpg", 50_000L, "THUMBNAIL",
+                800, 450, null, null, null, null);
+
+        Optional<FinalizeUploadResponse> result = service.finalizeUpload(TENANT, USER_ID, request);
+
+        assertTrue(result.isPresent());
+        assertEquals("READY", result.get().status());
+        verify(transcodingJobService, never()).createJob(any());
     }
 }

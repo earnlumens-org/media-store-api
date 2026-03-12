@@ -43,6 +43,21 @@ public class TranscodingJobService {
         this.config = config;
     }
 
+    // ─── Job creation (called by EntryUploadService) ───────────
+
+    /**
+     * Persists a new transcoding job. The job must be PENDING.
+     *
+     * @param job the job to create (status must be PENDING)
+     * @return the saved job with generated ID
+     */
+    public TranscodingJob createJob(TranscodingJob job) {
+        TranscodingJob saved = jobRepository.save(job);
+        logger.info("Created transcoding job: id={}, asset={}, entry={}, tenant={}",
+                saved.getId(), saved.getAssetId(), saved.getEntryId(), saved.getTenantId());
+        return saved;
+    }
+
     // ─── Stale-job recovery (called by Watchdog) ───────────────
 
     /**
