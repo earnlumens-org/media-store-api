@@ -41,6 +41,7 @@ public class XlmUsdPriceService {
     private static final BigDecimal SPIKE_THRESHOLD = new BigDecimal("0.03"); // 3%
 
     private final List<XlmUsdPriceSource> sources;
+    private final SdexXlmPriceSource sdexSource;
     private final Duration cacheTtl;
     private final AtomicInteger rotationIndex = new AtomicInteger(0);
     private final ReentrantLock refreshLock = new ReentrantLock();
@@ -48,16 +49,22 @@ public class XlmUsdPriceService {
 
     /** Production constructor — injected by Spring with 60 s cache TTL. */
     @Autowired
-    public XlmUsdPriceService(List<XlmUsdPriceSource> sources) {
-        this(sources, Duration.ofSeconds(60));
+    public XlmUsdPriceService(List<XlmUsdPriceSource> sources, SdexXlmPriceSource sdexSource) {
+        this(sources, sdexSource, Duration.ofSeconds(60));
     }
 
     /** Package-private constructor for tests — allows custom cache TTL. */
     XlmUsdPriceService(List<XlmUsdPriceSource> sources, Duration cacheTtl) {
+        this(sources, null, cacheTtl);
+    }
+
+    /** Package-private constructor for tests — allows custom cache TTL and optional SDEX source. */
+    XlmUsdPriceService(List<XlmUsdPriceSource> sources, SdexXlmPriceSource sdexSource, Duration cacheTtl) {
         if (sources == null || sources.isEmpty()) {
             throw new IllegalArgumentException("At least one price source is required");
         }
         this.sources = List.copyOf(sources);
+        this.sdexSource = sdexSource;
         this.cacheTtl = cacheTtl;
     }
 
@@ -127,7 +134,18 @@ public class XlmUsdPriceService {
     // ─── Initial load ──────────────────────────────────────────
 
     private PriceSnapshot performInitialLoad() {
-        logger.info("XLM/USD performing initial load from all {} sources", sources.size());
+        // ── Try SDEX first ──
+        Optional<BigDecimal> sdexPrice = fetchSdex();
+        if (sdexPrice.isPresent()) {
+            PriceSnapshot snapshot = new PriceSnapshot(
+                    sdexPrice.get(), Instant.now(), "sdex", PriceUpdateMode.INITIAL_LOAD);
+            currentSnapshot = snapshot;
+            logger.info("XLM/USD initial load from SDEX: price={}", sdexPrice.get().toPlainString());
+            return snapshot;
+        }
+
+        // ── SDEX unavailable — fall back to CEX median ──
+        logger.info("XLM/USD SDEX unavailable on initial load, falling back to {} CEX sources", sources.size());
 
         List<BigDecimal> prices = fetchAllSources();
         List<BigDecimal> valid = prices.stream().filter(Objects::nonNull).toList();
@@ -156,6 +174,19 @@ public class XlmUsdPriceService {
     // ─── Incremental update ────────────────────────────────────
 
     private PriceSnapshot performIncrementalUpdate(PriceSnapshot previous) {
+        // ── Try SDEX first ──
+        Optional<BigDecimal> sdexPrice = fetchSdex();
+        if (sdexPrice.isPresent()) {
+            PriceSnapshot updated = new PriceSnapshot(
+                    sdexPrice.get(), Instant.now(), "sdex", PriceUpdateMode.DIRECT_UPDATE);
+            currentSnapshot = updated;
+            logger.info("XLM/USD update from SDEX: price={}", sdexPrice.get().toPlainString());
+            return updated;
+        }
+
+        // ── SDEX unavailable — fall back to CEX round-robin ──
+        logger.info("XLM/USD SDEX unavailable, falling back to CEX rotation");
+
         // Pick the next source in round-robin rotation
         int idx = rotationIndex.getAndUpdate(i -> (i + 1) % sources.size());
         XlmUsdPriceSource primarySource = sources.get(idx);
@@ -214,6 +245,16 @@ public class XlmUsdPriceService {
     }
 
     // ─── Helpers ───────────────────────────────────────────────
+
+    private Optional<BigDecimal> fetchSdex() {
+        if (sdexSource == null) return Optional.empty();
+        try {
+            return sdexSource.fetchPrice();
+        } catch (Exception e) {
+            logger.error("[sdex] {} — unexpected error: {}", Instant.now(), e.getMessage(), e);
+            return Optional.empty();
+        }
+    }
 
     private List<BigDecimal> fetchAllSources() {
         List<BigDecimal> prices = new ArrayList<>();
