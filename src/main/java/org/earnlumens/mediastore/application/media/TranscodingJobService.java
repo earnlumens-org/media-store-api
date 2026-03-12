@@ -1,7 +1,10 @@
 package org.earnlumens.mediastore.application.media;
 
+import org.earnlumens.mediastore.domain.media.model.Asset;
+import org.earnlumens.mediastore.domain.media.model.AssetStatus;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJob;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus;
+import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.TranscodingJobRepository;
 import org.earnlumens.mediastore.infrastructure.config.TranscodingConfig;
 import org.slf4j.Logger;
@@ -10,6 +13,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Application service for managing transcoding job lifecycle.
@@ -35,11 +39,14 @@ public class TranscodingJobService {
     private static final Logger logger = LoggerFactory.getLogger(TranscodingJobService.class);
 
     private final TranscodingJobRepository jobRepository;
+    private final AssetRepository assetRepository;
     private final TranscodingConfig config;
 
     public TranscodingJobService(TranscodingJobRepository jobRepository,
+                                  AssetRepository assetRepository,
                                   TranscodingConfig config) {
         this.jobRepository = jobRepository;
+        this.assetRepository = assetRepository;
         this.config = config;
     }
 
@@ -155,5 +162,87 @@ public class TranscodingJobService {
 
     public int getMaxRetries() {
         return config.getMaxRetries();
+    }
+
+    // ─── Callback handlers (called by TranscodingCallbackController) ─
+
+    /**
+     * Marks a job as COMPLETED and transitions the asset to READY.
+     *
+     * @param jobId       the transcoding job ID
+     * @param hlsR2Prefix the R2 prefix where HLS segments were written
+     * @return the updated job, or empty if the job was not found
+     * @throws IllegalStateException if the asset cannot be found
+     */
+    public Optional<TranscodingJob> completeJob(String jobId, String hlsR2Prefix) {
+        Optional<TranscodingJob> opt = jobRepository.findById(jobId);
+        if (opt.isEmpty()) {
+            logger.warn("completeJob: job not found id={}", jobId);
+            return Optional.empty();
+        }
+
+        TranscodingJob job = opt.get();
+        job.setStatus(TranscodingJobStatus.COMPLETED);
+        job.setHlsR2Prefix(hlsR2Prefix);
+        job.setCompletedAt(LocalDateTime.now());
+        jobRepository.save(job);
+
+        // Transition the asset to READY
+        List<Asset> assets = assetRepository.findByTenantIdAndEntryId(
+                job.getTenantId(), job.getEntryId());
+        assets.stream()
+                .filter(a -> a.getId().equals(job.getAssetId()))
+                .findFirst()
+                .ifPresentOrElse(
+                        asset -> {
+                            asset.setStatus(AssetStatus.READY);
+                            assetRepository.save(asset);
+                            logger.info("completeJob: asset READY — job={}, asset={}, entry={}",
+                                    jobId, asset.getId(), job.getEntryId());
+                        },
+                        () -> logger.error("completeJob: asset not found — job={}, assetId={}, entry={}",
+                                jobId, job.getAssetId(), job.getEntryId())
+                );
+
+        logger.info("completeJob: job COMPLETED — id={}, hlsPrefix={}, entry={}",
+                jobId, hlsR2Prefix, job.getEntryId());
+        return Optional.of(job);
+    }
+
+    /**
+     * Handles a FAILED callback from the worker.
+     * If retries remain, resets to PENDING. Otherwise marks DEAD.
+     *
+     * @param jobId        the transcoding job ID
+     * @param errorMessage error description from the worker
+     * @return the updated job, or empty if the job was not found
+     */
+    public Optional<TranscodingJob> failJob(String jobId, String errorMessage) {
+        Optional<TranscodingJob> opt = jobRepository.findById(jobId);
+        if (opt.isEmpty()) {
+            logger.warn("failJob: job not found id={}", jobId);
+            return Optional.empty();
+        }
+
+        TranscodingJob job = opt.get();
+
+        if (job.getRetryCount() < job.getMaxRetries()) {
+            retryJob(job, errorMessage);
+        } else {
+            // Mark asset as FAILED so the user sees the error
+            List<Asset> assets = assetRepository.findByTenantIdAndEntryId(
+                    job.getTenantId(), job.getEntryId());
+            assets.stream()
+                    .filter(a -> a.getId().equals(job.getAssetId()))
+                    .findFirst()
+                    .ifPresent(asset -> {
+                        asset.setStatus(AssetStatus.FAILED);
+                        assetRepository.save(asset);
+                    });
+
+            killJob(job, errorMessage);
+        }
+
+        return Optional.of(job);
     }
 }

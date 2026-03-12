@@ -1,7 +1,10 @@
 package org.earnlumens.mediastore.application.media;
 
+import org.earnlumens.mediastore.domain.media.model.Asset;
+import org.earnlumens.mediastore.domain.media.model.AssetStatus;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJob;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus;
+import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.TranscodingJobRepository;
 import org.earnlumens.mediastore.infrastructure.config.TranscodingConfig;
 import org.junit.jupiter.api.BeforeEach;
@@ -11,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -23,20 +27,24 @@ import static org.mockito.Mockito.*;
 class TranscodingJobServiceTest {
 
     private TranscodingJobRepository jobRepository;
+    private AssetRepository assetRepository;
     private TranscodingConfig config;
     private TranscodingJobService service;
 
     @BeforeEach
     void setUp() {
         jobRepository = mock(TranscodingJobRepository.class);
+        assetRepository = mock(AssetRepository.class);
         config = new TranscodingConfig();
         config.setMaxRetries(3);
         config.setHeartbeatTimeoutSeconds(120);
         config.setStaleBatchSize(50);
-        service = new TranscodingJobService(jobRepository, config);
+        service = new TranscodingJobService(jobRepository, assetRepository, config);
 
         // Default: save returns the same job
         when(jobRepository.save(any(TranscodingJob.class)))
+                .thenAnswer(inv -> inv.getArgument(0));
+        when(assetRepository.save(any(Asset.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
     }
 
@@ -263,5 +271,109 @@ class TranscodingJobServiceTest {
 
         config.setMaxRetries(5);
         assertEquals(5, service.getMaxRetries());
+    }
+
+    // ─── completeJob ────────────────────────────────────────────
+
+    @Nested
+    class CompleteJob {
+
+        @Test
+        void completesJobAndTransitionsAssetToReady() {
+            TranscodingJob job = staleJob(TranscodingJobStatus.PROCESSING, 0, 3);
+            Asset asset = testAsset("asset-1");
+            when(jobRepository.findById("job-1")).thenReturn(Optional.of(job));
+            when(assetRepository.findByTenantIdAndEntryId("earnlumens", "entry-1"))
+                    .thenReturn(List.of(asset));
+
+            Optional<TranscodingJob> result = service.completeJob("job-1", "public/media/entry-1/hls/");
+
+            assertTrue(result.isPresent());
+            assertEquals(TranscodingJobStatus.COMPLETED, result.get().getStatus());
+            assertEquals("public/media/entry-1/hls/", result.get().getHlsR2Prefix());
+            assertNotNull(result.get().getCompletedAt());
+            assertEquals(AssetStatus.READY, asset.getStatus());
+            verify(assetRepository).save(asset);
+        }
+
+        @Test
+        void jobNotFound_returnsEmpty() {
+            when(jobRepository.findById("no-job")).thenReturn(Optional.empty());
+
+            Optional<TranscodingJob> result = service.completeJob("no-job", "prefix/");
+
+            assertTrue(result.isEmpty());
+            verify(assetRepository, never()).save(any());
+        }
+
+        @Test
+        void assetNotFound_stillCompletesJob() {
+            TranscodingJob job = staleJob(TranscodingJobStatus.PROCESSING, 0, 3);
+            when(jobRepository.findById("job-1")).thenReturn(Optional.of(job));
+            when(assetRepository.findByTenantIdAndEntryId("earnlumens", "entry-1"))
+                    .thenReturn(Collections.emptyList());
+
+            Optional<TranscodingJob> result = service.completeJob("job-1", "prefix/");
+
+            assertTrue(result.isPresent());
+            assertEquals(TranscodingJobStatus.COMPLETED, result.get().getStatus());
+            verify(assetRepository, never()).save(any());
+        }
+    }
+
+    // ─── failJob ────────────────────────────────────────────────
+
+    @Nested
+    class FailJob {
+
+        @Test
+        void withinRetryLimit_retriesJob() {
+            TranscodingJob job = staleJob(TranscodingJobStatus.PROCESSING, 1, 3);
+            when(jobRepository.findById("job-1")).thenReturn(Optional.of(job));
+
+            Optional<TranscodingJob> result = service.failJob("job-1", "FFmpeg segfault");
+
+            assertTrue(result.isPresent());
+            assertEquals(TranscodingJobStatus.PENDING, result.get().getStatus());
+            assertEquals(2, result.get().getRetryCount());
+            assertEquals("FFmpeg segfault", result.get().getErrorMessage());
+            verify(assetRepository, never()).save(any());
+        }
+
+        @Test
+        void retriesExhausted_killsJobAndFailsAsset() {
+            TranscodingJob job = staleJob(TranscodingJobStatus.PROCESSING, 3, 3);
+            Asset asset = testAsset("asset-1");
+            when(jobRepository.findById("job-1")).thenReturn(Optional.of(job));
+            when(assetRepository.findByTenantIdAndEntryId("earnlumens", "entry-1"))
+                    .thenReturn(List.of(asset));
+
+            Optional<TranscodingJob> result = service.failJob("job-1", "Unsupported codec");
+
+            assertTrue(result.isPresent());
+            assertEquals(TranscodingJobStatus.DEAD, result.get().getStatus());
+            assertEquals(AssetStatus.FAILED, asset.getStatus());
+            verify(assetRepository).save(asset);
+        }
+
+        @Test
+        void jobNotFound_returnsEmpty() {
+            when(jobRepository.findById("no-job")).thenReturn(Optional.empty());
+
+            Optional<TranscodingJob> result = service.failJob("no-job", "error");
+
+            assertTrue(result.isEmpty());
+        }
+    }
+
+    // ─── Helper ─────────────────────────────────────────────────
+
+    private Asset testAsset(String assetId) {
+        Asset a = new Asset();
+        a.setId(assetId);
+        a.setTenantId("earnlumens");
+        a.setEntryId("entry-1");
+        a.setStatus(AssetStatus.UPLOADED);
+        return a;
     }
 }
