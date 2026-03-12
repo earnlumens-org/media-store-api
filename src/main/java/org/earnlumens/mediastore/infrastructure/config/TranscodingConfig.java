@@ -15,7 +15,7 @@ import org.springframework.context.annotation.Configuration;
  *   mediastore.transcoding.dispatch-interval-ms=10000
  *   mediastore.transcoding.stale-batch-size=50
  *   mediastore.transcoding.cloud-run-project-id=...
- *   mediastore.transcoding.cloud-run-region=us-central1
+ *   mediastore.transcoding.cloud-run-region=europe-west1
  *   mediastore.transcoding.cloud-run-job-name=transcode-video
  *   mediastore.transcoding.callback-base-url=https://api.earnlumens.org
  * </pre>
@@ -46,7 +46,7 @@ public class TranscodingConfig {
     private String cloudRunProjectId = "";
 
     /** Google Cloud region for Cloud Run Jobs. */
-    private String cloudRunRegion = "us-central1";
+    private String cloudRunRegion = "europe-west1";
 
     /** Name of the Cloud Run Job that runs the FFmpeg transcoder. */
     private String cloudRunJobName = "";
