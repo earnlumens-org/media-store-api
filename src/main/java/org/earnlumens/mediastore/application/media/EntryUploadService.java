@@ -532,7 +532,10 @@ public class EntryUploadService {
         }
 
         List<OwnerEntryResponse> content = entryPage.getContent().stream()
-                .map(this::toOwnerResponse)
+                .map(entry -> {
+                    String transcodingStatus = resolveTranscodingStatus(tenantId, entry);
+                    return toOwnerResponse(entry, transcodingStatus);
+                })
                 .toList();
 
         return new OwnerEntryPageResponse(
@@ -544,7 +547,21 @@ public class EntryUploadService {
         );
     }
 
-    private OwnerEntryResponse toOwnerResponse(Entry entry) {
+    /**
+     * Resolves the transcoding status for a video entry.
+     * Returns the active job status (PENDING/DISPATCHED/PROCESSING) if one exists,
+     * or null for non-video entries and completed transcoding.
+     */
+    private String resolveTranscodingStatus(String tenantId, Entry entry) {
+        if (entry.getType() != EntryType.VIDEO) {
+            return null;
+        }
+        return transcodingJobService.findLatestByTenantIdAndEntryId(tenantId, entry.getId())
+                .map(job -> job.getStatus().name())
+                .orElse(null);
+    }
+
+    private OwnerEntryResponse toOwnerResponse(Entry entry, String transcodingStatus) {
         java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME;
         return new OwnerEntryResponse(
                 entry.getId(),
@@ -563,7 +580,8 @@ public class EntryUploadService {
                 entry.getViewCount(),
                 entry.getCreatedAt() != null ? entry.getCreatedAt().format(fmt) : null,
                 entry.getUpdatedAt() != null ? entry.getUpdatedAt().format(fmt) : null,
-                entry.getPublishedAt() != null ? entry.getPublishedAt().format(fmt) : null
+                entry.getPublishedAt() != null ? entry.getPublishedAt().format(fmt) : null,
+                transcodingStatus
         );
     }
 

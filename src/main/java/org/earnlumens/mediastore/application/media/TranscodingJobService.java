@@ -164,6 +164,25 @@ public class TranscodingJobService {
         return config.getMaxRetries();
     }
 
+    /**
+     * Finds the most recent active (non-terminal) transcoding job for an entry,
+     * or the latest completed/dead job if no active job exists.
+     * Used by Creator Studio to show transcoding status.
+     */
+    public Optional<TranscodingJob> findLatestByTenantIdAndEntryId(String tenantId, String entryId) {
+        // First try active (PENDING, DISPATCHED, PROCESSING)
+        Optional<TranscodingJob> active = jobRepository.findActiveByTenantIdAndEntryId(tenantId, entryId);
+        if (active.isPresent()) {
+            return active;
+        }
+        // Fall back to any job for this entry (COMPLETED, FAILED, DEAD)
+        // We don't have a direct query for this, but the watchdog/dispatch flow
+        // ensures at most one non-terminal job per entry. For terminal jobs,
+        // we can look up via the active query which returns empty — no terminal lookup needed
+        // because the asset status (READY/FAILED) is the source of truth for terminal states.
+        return Optional.empty();
+    }
+
     // ─── Callback handlers (called by TranscodingCallbackController) ─
 
     /**

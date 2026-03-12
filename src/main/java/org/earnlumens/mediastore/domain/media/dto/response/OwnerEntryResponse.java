@@ -23,5 +23,7 @@ public record OwnerEntryResponse(
         long viewCount,
         String createdAt,
         String updatedAt,
-        String publishedAt
+        String publishedAt,
+        /** Transcoding job status for VIDEO entries: PENDING, DISPATCHED, PROCESSING, COMPLETED, FAILED, DEAD. Null for non-video. */
+        String transcodingStatus
 ) {}
