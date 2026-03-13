@@ -85,6 +85,9 @@ public class EntryEntity {
 
     private Integer durationSec;
 
+    /** True when HLS transcoding has completed. */
+    private boolean hlsReady;
+
     private long viewCount;
 
     @CreatedDate
@@ -165,6 +168,9 @@ public class EntryEntity {
 
     public Integer getDurationSec() { return durationSec; }
     public void setDurationSec(Integer durationSec) { this.durationSec = durationSec; }
+
+    public boolean isHlsReady() { return hlsReady; }
+    public void setHlsReady(boolean hlsReady) { this.hlsReady = hlsReady; }
 
     public long getViewCount() { return viewCount; }
     public void setViewCount(long viewCount) { this.viewCount = viewCount; }

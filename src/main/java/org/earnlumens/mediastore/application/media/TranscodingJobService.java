@@ -274,14 +274,20 @@ public class TranscodingJobService {
                 continue;
             }
 
+            // Skip if HLS is already ready (transcoded previously)
+            if (entry.isHlsReady()) {
+                logger.debug("Batch transcode: skipping entry={} — hlsReady=true", entry.getId());
+                continue;
+            }
+
             // Find the FULL asset — we need its r2Key as the transcoding source
+            // Pre-pipeline videos have READY assets; new ones have UPLOADED
             var optAsset = assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
-                    tenantId, entry.getId(), MediaKind.FULL, AssetStatus.READY);
+                    tenantId, entry.getId(), MediaKind.FULL, AssetStatus.UPLOADED);
 
             if (optAsset.isEmpty()) {
-                // Try UPLOADED status (never transcoded)
                 optAsset = assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
-                        tenantId, entry.getId(), MediaKind.FULL, AssetStatus.UPLOADED);
+                        tenantId, entry.getId(), MediaKind.FULL, AssetStatus.READY);
             }
 
             if (optAsset.isEmpty()) {
@@ -290,12 +296,6 @@ public class TranscodingJobService {
             }
 
             Asset asset = optAsset.get();
-
-            // If asset is already READY and has a completed job, skip
-            if (asset.getStatus() == AssetStatus.READY) {
-                logger.debug("Batch transcode: skipping entry={} — asset already READY", entry.getId());
-                continue;
-            }
 
             TranscodingJob job = new TranscodingJob();
             job.setTenantId(tenantId);
@@ -380,16 +380,15 @@ public class TranscodingJobService {
                                 jobId, job.getAssetId(), job.getEntryId())
                 );
 
-        // Denormalize ffprobe metadata onto the Entry for feed display
-        if (durationSec != null && durationSec > 0) {
-            entryRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId())
-                    .ifPresent(entry -> {
-                        entry.setDurationSec(durationSec);
-                        entryRepository.save(entry);
-                        logger.info("completeJob: set durationSec={} on entry={}",
-                                durationSec, job.getEntryId());
-                    });
-        }
+        // Denormalize ffprobe metadata + hlsReady onto the Entry for feed/player display
+        entryRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId())
+                .ifPresent(entry -> {
+                    entry.setHlsReady(true);
+                    if (durationSec != null && durationSec > 0) entry.setDurationSec(durationSec);
+                    entryRepository.save(entry);
+                    logger.info("completeJob: set hlsReady=true, durationSec={} on entry={}",
+                            durationSec, job.getEntryId());
+                });
 
         logger.info("completeJob: job COMPLETED — id={}, hlsPrefix={}, entry={}, duration={}s, {}x{}",
                 jobId, hlsR2Prefix, job.getEntryId(), durationSec, widthPx, heightPx);

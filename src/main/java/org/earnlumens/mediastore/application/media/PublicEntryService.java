@@ -105,8 +105,8 @@ public class PublicEntryService {
                 ? entry.getPublishedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
                 : null;
 
-        // HLS is ready when the video entry has a READY asset (transcoding completed)
-        boolean hlsReady = entry.getType() == EntryType.VIDEO && assetInfo != null;
+        // HLS is ready when the transcoding pipeline has completed for this entry
+        boolean hlsReady = entry.isHlsReady();
 
         return new PublicEntryResponse(
                 entry.getId(),

@@ -40,6 +40,8 @@ public class Entry {
     /** ISO 639-1 language code of the content (e.g. "es", "en"). Nullable for legacy entries. */
     private String contentLanguage;
     private Integer durationSec;
+    /** True when HLS transcoding has completed and the master.m3u8 is available on CDN. */
+    private boolean hlsReady;
     private long viewCount;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -115,6 +117,9 @@ public class Entry {
 
     public Integer getDurationSec() { return durationSec; }
     public void setDurationSec(Integer durationSec) { this.durationSec = durationSec; }
+
+    public boolean isHlsReady() { return hlsReady; }
+    public void setHlsReady(boolean hlsReady) { this.hlsReady = hlsReady; }
 
     public long getViewCount() { return viewCount; }
     public void setViewCount(long viewCount) { this.viewCount = viewCount; }
