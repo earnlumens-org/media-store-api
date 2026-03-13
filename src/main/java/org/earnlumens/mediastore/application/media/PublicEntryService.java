@@ -105,6 +105,9 @@ public class PublicEntryService {
                 ? entry.getPublishedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
                 : null;
 
+        // HLS is ready when the video entry has a READY asset (transcoding completed)
+        boolean hlsReady = entry.getType() == EntryType.VIDEO && assetInfo != null;
+
         return new PublicEntryResponse(
                 entry.getId(),
                 mapType(entry.getType()),
@@ -125,7 +128,8 @@ public class PublicEntryService {
                 entry.getPriceCurrency() != null ? entry.getPriceCurrency().name() : null,
                 entry.getContentLanguage(),
                 entry.getTags(),
-                assetInfo
+                assetInfo,
+                hlsReady
         );
     }
 

@@ -27,5 +27,7 @@ public record PublicEntryResponse(
         String priceCurrency,
         String contentLanguage,
         List<String> tags,
-        AssetInfo asset
+        AssetInfo asset,
+        /** True when HLS transcoding is complete and the adaptive stream is available. */
+        boolean hlsReady
 ) {}
