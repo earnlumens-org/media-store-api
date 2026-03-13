@@ -250,6 +250,11 @@ public class TranscodingJobService {
         return config.getMaxRetries();
     }
 
+    /** Returns jobs in a given status (max 100). Used for monitoring. */
+    public List<TranscodingJob> findByStatus(TranscodingJobStatus status) {
+        return jobRepository.findByStatus(status, 100);
+    }
+
     // ─── Batch operations (called by internal endpoints) ────────
 
     /**

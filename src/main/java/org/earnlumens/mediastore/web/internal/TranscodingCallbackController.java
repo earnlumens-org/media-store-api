@@ -9,6 +9,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -17,6 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
@@ -175,6 +177,40 @@ public class TranscodingCallbackController {
         return ResponseEntity.ok(Map.of(
                 "status", "ok",
                 "entriesUpdated", updated
+        ));
+    }
+
+    /**
+     * GET /api/internal/transcoding/status
+     * <p>
+     * Returns a summary of transcoding jobs by status.
+     * Useful for monitoring the batch transcode progress.
+     */
+    @GetMapping("/transcoding/status")
+    public ResponseEntity<?> jobStatus(
+            @RequestHeader(value = "X-Transcoding-Secret", required = false) String secret
+    ) {
+        if (secret == null || !transcodingSecret.equals(secret)) {
+            return ResponseEntity.status(403).body(Map.of("error", "Forbidden"));
+        }
+
+        var pending = transcodingJobService.findByStatus(
+                org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus.PENDING);
+        var dispatched = transcodingJobService.findByStatus(
+                org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus.DISPATCHED);
+        var processing = transcodingJobService.findByStatus(
+                org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus.PROCESSING);
+        var completed = transcodingJobService.findByStatus(
+                org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus.COMPLETED);
+        var dead = transcodingJobService.findByStatus(
+                org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus.DEAD);
+
+        return ResponseEntity.ok(Map.of(
+                "PENDING", pending.size(),
+                "DISPATCHED", dispatched.size(),
+                "PROCESSING", processing.size(),
+                "COMPLETED", completed.size(),
+                "DEAD", dead.size()
         ));
     }
 }
