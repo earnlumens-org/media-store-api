@@ -6,6 +6,7 @@ import org.earnlumens.mediastore.domain.media.model.TranscodingJob;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus;
 import org.earnlumens.mediastore.domain.media.port.TranscodingDispatchPort;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
+import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.TranscodingJobRepository;
 import org.earnlumens.mediastore.infrastructure.config.TranscodingConfig;
 import org.junit.jupiter.api.BeforeEach;
@@ -29,6 +30,7 @@ class TranscodingJobServiceTest {
 
     private TranscodingJobRepository jobRepository;
     private AssetRepository assetRepository;
+    private EntryRepository entryRepository;
     private TranscodingConfig config;
     private TranscodingDispatchPort dispatchPort;
     private TranscodingJobService service;
@@ -37,13 +39,14 @@ class TranscodingJobServiceTest {
     void setUp() {
         jobRepository = mock(TranscodingJobRepository.class);
         assetRepository = mock(AssetRepository.class);
+        entryRepository = mock(EntryRepository.class);
         dispatchPort = mock(TranscodingDispatchPort.class);
         config = new TranscodingConfig();
         config.setMaxRetries(3);
         config.setHeartbeatTimeoutSeconds(120);
         config.setStaleBatchSize(50);
         config.setDispatchBatchSize(10);
-        service = new TranscodingJobService(jobRepository, assetRepository, config, dispatchPort);
+        service = new TranscodingJobService(jobRepository, assetRepository, entryRepository, config, dispatchPort);
 
         // Default: save returns the same job
         when(jobRepository.save(any(TranscodingJob.class)))
@@ -290,7 +293,7 @@ class TranscodingJobServiceTest {
             when(assetRepository.findByTenantIdAndEntryId("earnlumens", "entry-1"))
                     .thenReturn(List.of(asset));
 
-            Optional<TranscodingJob> result = service.completeJob("job-1", "public/media/entry-1/hls/");
+            Optional<TranscodingJob> result = service.completeJob("job-1", "public/media/entry-1/hls/", null, null, null);
 
             assertTrue(result.isPresent());
             assertEquals(TranscodingJobStatus.COMPLETED, result.get().getStatus());
@@ -304,7 +307,7 @@ class TranscodingJobServiceTest {
         void jobNotFound_returnsEmpty() {
             when(jobRepository.findById("no-job")).thenReturn(Optional.empty());
 
-            Optional<TranscodingJob> result = service.completeJob("no-job", "prefix/");
+            Optional<TranscodingJob> result = service.completeJob("no-job", "prefix/", null, null, null);
 
             assertTrue(result.isEmpty());
             verify(assetRepository, never()).save(any());
@@ -317,7 +320,7 @@ class TranscodingJobServiceTest {
             when(assetRepository.findByTenantIdAndEntryId("earnlumens", "entry-1"))
                     .thenReturn(Collections.emptyList());
 
-            Optional<TranscodingJob> result = service.completeJob("job-1", "prefix/");
+            Optional<TranscodingJob> result = service.completeJob("job-1", "prefix/", null, null, null);
 
             assertTrue(result.isPresent());
             assertEquals(TranscodingJobStatus.COMPLETED, result.get().getStatus());

@@ -111,6 +111,14 @@ public class EntryRepositoryImpl implements EntryRepository {
     }
 
     @Override
+    public List<Entry> findByTenantIdAndStatusAndType(String tenantId, EntryStatus status, EntryType type) {
+        return entryMongoRepository.findByTenantIdAndStatusAndType(tenantId, status.name(), type.name())
+                .stream()
+                .map(entryMapper::toModel)
+                .toList();
+    }
+
+    @Override
     public void incrementViewCount(String entryId) {
         entryMongoRepository.incrementViewCount(entryId);
     }

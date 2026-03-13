@@ -38,6 +38,9 @@ public interface EntryRepository {
 
     List<Entry> findByStatusAndCreatedAtBefore(EntryStatus status, LocalDateTime cutoff);
 
+    /** Finds all entries matching the given tenant, status and type. Used by batch operations. */
+    List<Entry> findByTenantIdAndStatusAndType(String tenantId, EntryStatus status, EntryType type);
+
     /** Atomically increments the view counter on an entry. */
     void incrementViewCount(String entryId);
 

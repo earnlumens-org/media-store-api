@@ -2,10 +2,15 @@ package org.earnlumens.mediastore.application.media;
 
 import org.earnlumens.mediastore.domain.media.model.Asset;
 import org.earnlumens.mediastore.domain.media.model.AssetStatus;
+import org.earnlumens.mediastore.domain.media.model.Entry;
+import org.earnlumens.mediastore.domain.media.model.EntryStatus;
+import org.earnlumens.mediastore.domain.media.model.EntryType;
+import org.earnlumens.mediastore.domain.media.model.MediaKind;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJob;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus;
 import org.earnlumens.mediastore.domain.media.port.TranscodingDispatchPort;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
+import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.TranscodingJobRepository;
 import org.earnlumens.mediastore.infrastructure.config.TranscodingConfig;
 import org.slf4j.Logger;
@@ -41,15 +46,18 @@ public class TranscodingJobService {
 
     private final TranscodingJobRepository jobRepository;
     private final AssetRepository assetRepository;
+    private final EntryRepository entryRepository;
     private final TranscodingConfig config;
     private final TranscodingDispatchPort dispatchPort;
 
     public TranscodingJobService(TranscodingJobRepository jobRepository,
                                   AssetRepository assetRepository,
+                                  EntryRepository entryRepository,
                                   TranscodingConfig config,
                                   TranscodingDispatchPort dispatchPort) {
         this.jobRepository = jobRepository;
         this.assetRepository = assetRepository;
+        this.entryRepository = entryRepository;
         this.config = config;
         this.dispatchPort = dispatchPort;
     }
@@ -242,6 +250,70 @@ public class TranscodingJobService {
         return config.getMaxRetries();
     }
 
+    // ─── Batch operations (called by internal endpoints) ────────
+
+    /**
+     * Creates PENDING transcoding jobs for all published VIDEO entries
+     * that don't already have an active or completed transcoding job.
+     *
+     * @param tenantId the tenant to operate on
+     * @return number of jobs created
+     */
+    public int batchTranscodeExistingVideos(String tenantId) {
+        List<Entry> videoEntries = entryRepository.findByTenantIdAndStatusAndType(
+                tenantId, EntryStatus.PUBLISHED, EntryType.VIDEO);
+
+        logger.info("Batch transcode: found {} published VIDEO entries for tenant={}",
+                videoEntries.size(), tenantId);
+
+        int created = 0;
+        for (Entry entry : videoEntries) {
+            // Skip if there's already an active job (PENDING/DISPATCHED/PROCESSING)
+            if (jobRepository.findActiveByTenantIdAndEntryId(tenantId, entry.getId()).isPresent()) {
+                logger.debug("Batch transcode: skipping entry={} — active job exists", entry.getId());
+                continue;
+            }
+
+            // Find the FULL asset — we need its r2Key as the transcoding source
+            var optAsset = assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
+                    tenantId, entry.getId(), MediaKind.FULL, AssetStatus.READY);
+
+            if (optAsset.isEmpty()) {
+                // Try UPLOADED status (never transcoded)
+                optAsset = assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
+                        tenantId, entry.getId(), MediaKind.FULL, AssetStatus.UPLOADED);
+            }
+
+            if (optAsset.isEmpty()) {
+                logger.warn("Batch transcode: skipping entry={} — no FULL asset found", entry.getId());
+                continue;
+            }
+
+            Asset asset = optAsset.get();
+
+            // If asset is already READY and has a completed job, skip
+            if (asset.getStatus() == AssetStatus.READY) {
+                logger.debug("Batch transcode: skipping entry={} — asset already READY", entry.getId());
+                continue;
+            }
+
+            TranscodingJob job = new TranscodingJob();
+            job.setTenantId(tenantId);
+            job.setEntryId(entry.getId());
+            job.setAssetId(asset.getId());
+            job.setSourceR2Key(asset.getR2Key());
+            job.setStatus(TranscodingJobStatus.PENDING);
+            job.setRetryCount(0);
+            job.setMaxRetries(config.getMaxRetries());
+            createJob(job);
+            created++;
+        }
+
+        logger.info("Batch transcode: created {} new transcoding jobs for tenant={}",
+                created, tenantId);
+        return created;
+    }
+
     /**
      * Finds the most recent active (non-terminal) transcoding job for an entry,
      * or the latest completed/dead job if no active job exists.
@@ -265,13 +337,17 @@ public class TranscodingJobService {
 
     /**
      * Marks a job as COMPLETED and transitions the asset to READY.
+     * Also denormalizes server-side ffprobe metadata onto the Entry.
      *
      * @param jobId       the transcoding job ID
      * @param hlsR2Prefix the R2 prefix where HLS segments were written
+     * @param durationSec video duration in seconds (from ffprobe, nullable)
+     * @param widthPx     video width in pixels (from ffprobe, nullable)
+     * @param heightPx    video height in pixels (from ffprobe, nullable)
      * @return the updated job, or empty if the job was not found
-     * @throws IllegalStateException if the asset cannot be found
      */
-    public Optional<TranscodingJob> completeJob(String jobId, String hlsR2Prefix) {
+    public Optional<TranscodingJob> completeJob(String jobId, String hlsR2Prefix,
+                                                 Integer durationSec, Integer widthPx, Integer heightPx) {
         Optional<TranscodingJob> opt = jobRepository.findById(jobId);
         if (opt.isEmpty()) {
             logger.warn("completeJob: job not found id={}", jobId);
@@ -284,7 +360,7 @@ public class TranscodingJobService {
         job.setCompletedAt(LocalDateTime.now());
         jobRepository.save(job);
 
-        // Transition the asset to READY
+        // Transition the asset to READY and save ffprobe metadata
         List<Asset> assets = assetRepository.findByTenantIdAndEntryId(
                 job.getTenantId(), job.getEntryId());
         assets.stream()
@@ -293,6 +369,9 @@ public class TranscodingJobService {
                 .ifPresentOrElse(
                         asset -> {
                             asset.setStatus(AssetStatus.READY);
+                            if (durationSec != null && durationSec > 0) asset.setDurationSec(durationSec);
+                            if (widthPx != null && widthPx > 0) asset.setWidthPx(widthPx);
+                            if (heightPx != null && heightPx > 0) asset.setHeightPx(heightPx);
                             assetRepository.save(asset);
                             logger.info("completeJob: asset READY — job={}, asset={}, entry={}",
                                     jobId, asset.getId(), job.getEntryId());
@@ -301,8 +380,19 @@ public class TranscodingJobService {
                                 jobId, job.getAssetId(), job.getEntryId())
                 );
 
-        logger.info("completeJob: job COMPLETED — id={}, hlsPrefix={}, entry={}",
-                jobId, hlsR2Prefix, job.getEntryId());
+        // Denormalize ffprobe metadata onto the Entry for feed display
+        if (durationSec != null && durationSec > 0) {
+            entryRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId())
+                    .ifPresent(entry -> {
+                        entry.setDurationSec(durationSec);
+                        entryRepository.save(entry);
+                        logger.info("completeJob: set durationSec={} on entry={}",
+                                durationSec, job.getEntryId());
+                    });
+        }
+
+        logger.info("completeJob: job COMPLETED — id={}, hlsPrefix={}, entry={}, duration={}s, {}x{}",
+                jobId, hlsR2Prefix, job.getEntryId(), durationSec, widthPx, heightPx);
         return Optional.of(job);
     }
 
@@ -341,5 +431,47 @@ public class TranscodingJobService {
         }
 
         return Optional.of(job);
+    }
+
+    /**
+     * Fills missing durationSec on published VIDEO entries by copying from
+     * the FULL asset (client-reported metadata). Useful for videos that were
+     * uploaded with client metadata but whose Entry never got durationSec set.
+     *
+     * @return number of entries updated
+     */
+    public int batchFillMissingDuration(String tenantId) {
+        List<Entry> entries = entryRepository.findByTenantIdAndStatusAndType(
+                tenantId, EntryStatus.PUBLISHED, EntryType.VIDEO);
+
+        int updated = 0;
+        for (Entry entry : entries) {
+            if (entry.getDurationSec() != null && entry.getDurationSec() > 0) {
+                continue; // already has duration
+            }
+
+            // Look for a FULL asset with duration metadata
+            var optAsset = assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
+                    tenantId, entry.getId(), MediaKind.FULL, AssetStatus.READY);
+            if (optAsset.isEmpty()) {
+                optAsset = assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
+                        tenantId, entry.getId(), MediaKind.FULL, AssetStatus.UPLOADED);
+            }
+            if (optAsset.isEmpty()) {
+                continue;
+            }
+
+            Asset asset = optAsset.get();
+            if (asset.getDurationSec() != null && asset.getDurationSec() > 0) {
+                entry.setDurationSec(asset.getDurationSec());
+                entryRepository.save(entry);
+                updated++;
+                logger.info("Batch metadata: set durationSec={} on entry={} from asset={}",
+                        asset.getDurationSec(), entry.getId(), asset.getId());
+            }
+        }
+
+        logger.info("Batch metadata: updated {} entries for tenant={}", updated, tenantId);
+        return updated;
     }
 }

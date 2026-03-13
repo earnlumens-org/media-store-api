@@ -36,4 +36,6 @@ public interface EntryMongoRepository extends MongoRepository<EntryEntity, Strin
     List<EntryEntity> findByStatus(String status);
 
     List<EntryEntity> findByStatusAndCreatedAtBefore(String status, LocalDateTime cutoff);
+
+    List<EntryEntity> findByTenantIdAndStatusAndType(String tenantId, String status, String type);
 }
