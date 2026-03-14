@@ -7,12 +7,13 @@ This document explains the layered architecture implemented in `media-store-api`
 1. [High-Level View](#high-level-view)
 2. [Package Layout](#package-layout)
 3. [Architecture Layers](#architecture-layers)
-4. [Feature-First Organization (waitlist, user, ...)](#feature-first-organization-waitlist-user-)
-5. [End-to-End Example: User](#end-to-end-example-user)
-6. [Cross-Cutting Services (External Integrations, Shared Infrastructure)](#cross-cutting-services-external-integrations-shared-infrastructure)
-7. [How to Implement a New Feature](#how-to-implement-a-new-feature)
-8. [Naming Conventions](#naming-conventions)
-9. [Request Flow Cheatsheet](#request-flow-cheatsheet)
+4. [Tenant Isolation (**CRITICAL**)](#tenant-isolation-critical)
+5. [Feature-First Organization (waitlist, user, ...)](#feature-first-organization-waitlist-user-)
+6. [End-to-End Example: User](#end-to-end-example-user)
+7. [Cross-Cutting Services (External Integrations, Shared Infrastructure)](#cross-cutting-services-external-integrations-shared-infrastructure)
+8. [How to Implement a New Feature](#how-to-implement-a-new-feature)
+9. [Naming Conventions](#naming-conventions)
+10. [Request Flow Cheatsheet](#request-flow-cheatsheet)
 
 ---
 
@@ -68,6 +69,12 @@ src/main/java/org/earnlumens/mediastore/
 │       └── WaitlistService.java
 │
 ├── infrastructure/                              # INFRASTRUCTURE (adapters)
+│   ├── tenant/                                  # ★ Tenant isolation (CRITICAL)
+│   │   ├── TenantContext.java                   #   ThreadLocal tenant holder
+│   │   ├── TenantFilter.java                    #   Servlet filter (highest precedence)
+│   │   ├── TenantResolver.java                  #   Host → tenantId resolution
+│   │   └── MissingTenantException.java          #   Fail-fast on missing tenant
+│   │
 │   ├── persistence/
 │   │   ├── user/
 │   │   │   ├── entity/
@@ -170,6 +177,30 @@ Controllers should not:
 
 - Access Mongo repositories directly
 - Contain core business rules
+
+---
+
+## Tenant Isolation (**CRITICAL**)
+
+This project is multi-tenant: all tenant-scoped MongoDB collections share a `tenantId` field. **Every repository query must be filtered by `tenantId`.** A violation means one customer can access another customer's data.
+
+The system enforces isolation through three layers:
+
+1. **`TenantFilter`** — highest-precedence servlet filter that resolves the tenant from the Host header on every HTTP request and stores it in `TenantContext`.
+2. **`TenantContext.require()`** — the only way application code should obtain the current tenant. Throws `MissingTenantException` if the context is not set.
+3. **`TenantIsolationArchTest`** — build-time architecture test that scans every `*Repository` interface and fails if any method lacks a `tenantId` parameter.
+
+Key files:
+
+```
+infrastructure/tenant/
+├── TenantContext.java           # ThreadLocal holder, require() / set() / clear()
+├── TenantFilter.java            # Servlet filter (HIGHEST_PRECEDENCE)
+├── TenantResolver.java          # Host → tenantId mapping
+└── MissingTenantException.java  # Thrown when tenant context is missing
+```
+
+> **Full implementation details, developer guide, and rules are in [TENANT-ISOLATION.md](TENANT-ISOLATION.md).** Read it before adding any new feature or repository method.
 
 ---
 
@@ -315,6 +346,8 @@ web/video/
 - Application depends on domain interfaces, not infrastructure classes
 - Infrastructure implements domain interfaces
 - Web depends on Application services
+- **Every repository query/delete/count method includes `tenantId` as the first parameter** (see [TENANT-ISOLATION.md](TENANT-ISOLATION.md))
+- **`TenantIsolationArchTest` passes** (`./gradlew test`)
 
 ---
 
@@ -335,9 +368,11 @@ web/video/
 
 ### Method naming
 
-- `findBy{Field}()`
-- `existsBy{Field}()`
-- `save()`
+- `findByTenantIdAnd{Field}()` — tenant-scoped queries (required for all tenant-scoped repos)
+- `deleteByTenantIdAnd{Field}()` — tenant-scoped deletes
+- `existsByTenantIdAnd{Field}()` — tenant-scoped existence checks
+- `findAll{Criteria}()` — cross-tenant queries (must be in `CROSS_TENANT_ALLOWLIST`)
+- `save()` — entity carries `tenantId`
 - Mapper: `toModel()` / `toEntity()`
 
 ---
