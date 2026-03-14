@@ -108,7 +108,7 @@ class SubscriptionServiceTest {
         boolean result = subscriptionService.unsubscribe(TENANT, SUBSCRIBER_ID, TARGET_ID);
 
         assertTrue(result);
-        verify(subscriptionRepository).deleteById("sub-123");
+        verify(subscriptionRepository).deleteByTenantIdAndId(TENANT, "sub-123");
     }
 
     @Test
@@ -119,7 +119,7 @@ class SubscriptionServiceTest {
         boolean result = subscriptionService.unsubscribe(TENANT, SUBSCRIBER_ID, TARGET_ID);
 
         assertFalse(result);
-        verify(subscriptionRepository, never()).deleteById(any());
+        verify(subscriptionRepository, never()).deleteByTenantIdAndId(any(), any());
     }
 
     @Test

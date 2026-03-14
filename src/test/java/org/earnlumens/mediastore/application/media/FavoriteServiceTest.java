@@ -114,7 +114,7 @@ class FavoriteServiceTest {
                         && ENTRY_ID.equals(fav.getItemId())
                         && fav.getItemType() == FavoriteItemType.ENTRY
         ));
-        verify(favoriteRepository, never()).deleteById(any());
+        verify(favoriteRepository, never()).deleteByTenantIdAndId(any(), any());
     }
 
     @Test
@@ -126,7 +126,7 @@ class FavoriteServiceTest {
         boolean result = service.toggleFavorite(TENANT_A, USER_ID, ENTRY_ID, FavoriteItemType.ENTRY);
 
         assertFalse(result, "Should return false when removing");
-        verify(favoriteRepository).deleteById("fav-" + ENTRY_ID);
+        verify(favoriteRepository).deleteByTenantIdAndId(TENANT_A, "fav-" + ENTRY_ID);
         verify(favoriteRepository, never()).save(any());
     }
 
@@ -149,7 +149,7 @@ class FavoriteServiceTest {
 
         assertTrue(result, "Should add in TENANT_B since it doesn't exist there");
         verify(favoriteRepository).save(argThat(fav -> TENANT_B.equals(fav.getTenantId())));
-        verify(favoriteRepository, never()).deleteById(any());
+        verify(favoriteRepository, never()).deleteByTenantIdAndId(any(), any());
     }
 
     // ── isFavorite ────────────────────────────────────────────
@@ -242,7 +242,7 @@ class FavoriteServiceTest {
 
         assertTrue(response.content().isEmpty());
         // The orphan should be deleted
-        verify(favoriteRepository).deleteById("fav-" + ENTRY_ID);
+        verify(favoriteRepository).deleteByTenantIdAndId(TENANT_A, "fav-" + ENTRY_ID);
     }
 
     @Test
@@ -259,7 +259,7 @@ class FavoriteServiceTest {
         FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, 0, 24);
 
         assertTrue(response.content().isEmpty());
-        verify(favoriteRepository).deleteById("fav-" + COLLECTION_ID);
+        verify(favoriteRepository).deleteByTenantIdAndId(TENANT_A, "fav-" + COLLECTION_ID);
     }
 
     // ── listFavorites — tenant-isolated batch loads ───────────

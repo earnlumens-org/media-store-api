@@ -32,8 +32,10 @@ public class TranscodingJobRepositoryImpl implements TranscodingJobRepository {
     }
 
     @Override
-    public Optional<TranscodingJob> findById(String id) {
-        return mongoRepository.findById(id).map(mapper::toModel);
+    public Optional<TranscodingJob> findByTenantIdAndId(String tenantId, String id) {
+        return mongoRepository.findById(id)
+                .filter(entity -> tenantId.equals(entity.getTenantId()))
+                .map(mapper::toModel);
     }
 
     @Override
@@ -42,7 +44,15 @@ public class TranscodingJobRepositoryImpl implements TranscodingJobRepository {
     }
 
     @Override
-    public List<TranscodingJob> findByStatus(TranscodingJobStatus status, int limit) {
+    public List<TranscodingJob> findByTenantIdAndStatus(String tenantId, TranscodingJobStatus status, int limit) {
+        return mongoRepository.findByTenantIdAndStatusOrderByCreatedAtAsc(tenantId, status.name(), PageRequest.of(0, limit))
+                .stream()
+                .map(mapper::toModel)
+                .toList();
+    }
+
+    @Override
+    public List<TranscodingJob> findAllByStatus(TranscodingJobStatus status, int limit) {
         return mongoRepository.findByStatusOrderByCreatedAtAsc(status.name(), PageRequest.of(0, limit))
                 .stream()
                 .map(mapper::toModel)
@@ -50,7 +60,7 @@ public class TranscodingJobRepositoryImpl implements TranscodingJobRepository {
     }
 
     @Override
-    public List<TranscodingJob> findStaleJobs(LocalDateTime heartbeatBefore, int limit) {
+    public List<TranscodingJob> findAllStaleJobs(LocalDateTime heartbeatBefore, int limit) {
         return mongoRepository.findStaleJobs(heartbeatBefore, PageRequest.of(0, limit))
                 .stream()
                 .map(mapper::toModel)

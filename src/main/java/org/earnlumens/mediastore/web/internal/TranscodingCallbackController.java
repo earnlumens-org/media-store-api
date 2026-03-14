@@ -80,7 +80,7 @@ public class TranscodingCallbackController {
                             Map.of("error", "hlsR2Prefix is required when status=COMPLETED"));
                 }
                 Optional<TranscodingJob> job = transcodingJobService.completeJob(
-                        request.jobId(), request.hlsR2Prefix(),
+                        request.tenantId(), request.jobId(), request.hlsR2Prefix(),
                         request.durationSec(), request.widthPx(), request.heightPx());
                 yield job.isPresent()
                         ? ResponseEntity.ok(Map.of("status", "COMPLETED", "jobId", request.jobId()))
@@ -88,7 +88,7 @@ public class TranscodingCallbackController {
             }
             case "FAILED" -> {
                 Optional<TranscodingJob> job = transcodingJobService.failJob(
-                        request.jobId(), request.errorMessage());
+                        request.tenantId(), request.jobId(), request.errorMessage());
                 yield job.isPresent()
                         ? ResponseEntity.ok(Map.of(
                                 "status", job.get().getStatus().name(),
@@ -116,7 +116,7 @@ public class TranscodingCallbackController {
             return ResponseEntity.status(403).body(Map.of("error", "Forbidden"));
         }
 
-        transcodingJobService.heartbeat(request.jobId());
+        transcodingJobService.heartbeat(request.jobId(), request.tenantId());
         return ResponseEntity.ok(Map.of("status", "ok"));
     }
 

@@ -1,5 +1,6 @@
 package org.earnlumens.mediastore.application.media;
 
+import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -35,13 +36,15 @@ public class TranscodingJobWatchdog {
     @Scheduled(fixedDelayString = "${mediastore.transcoding.watchdog-interval-ms:30000}",
                initialDelayString = "${mediastore.transcoding.watchdog-interval-ms:30000}")
     public void run() {
-        try {
-            int recovered = jobService.recoverStaleJobs();
-            if (recovered > 0) {
-                logger.info("Watchdog cycle complete: recovered {} stale job(s)", recovered);
+        TenantContext.runWithoutTenant(() -> {
+            try {
+                int recovered = jobService.recoverStaleJobs();
+                if (recovered > 0) {
+                    logger.info("Watchdog cycle complete: recovered {} stale job(s)", recovered);
+                }
+            } catch (Exception e) {
+                logger.error("Watchdog cycle failed: {}", e.getMessage(), e);
             }
-        } catch (Exception e) {
-            logger.error("Watchdog cycle failed: {}", e.getMessage(), e);
-        }
+        });
     }
 }

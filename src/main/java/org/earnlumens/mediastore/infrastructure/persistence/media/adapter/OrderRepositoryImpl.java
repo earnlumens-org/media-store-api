@@ -32,14 +32,14 @@ public class OrderRepositoryImpl implements OrderRepository {
     }
 
     @Override
-    public Optional<Order> findById(String id) {
-        return orderMongoRepository.findById(id)
+    public Optional<Order> findByTenantIdAndId(String tenantId, String id) {
+        return orderMongoRepository.findByTenantIdAndId(tenantId, id)
                 .map(orderMapper::toModel);
     }
 
     @Override
-    public List<Order> findByStatusAndExpiresAtBefore(OrderStatus status, LocalDateTime cutoff) {
-        return orderMongoRepository.findByStatusAndExpiresAtBefore(status.name(), cutoff)
+    public List<Order> findByTenantIdAndStatusAndExpiresAtBefore(String tenantId, OrderStatus status, LocalDateTime cutoff) {
+        return orderMongoRepository.findByTenantIdAndStatusAndExpiresAtBefore(tenantId, status.name(), cutoff)
                 .stream()
                 .map(orderMapper::toModel)
                 .toList();

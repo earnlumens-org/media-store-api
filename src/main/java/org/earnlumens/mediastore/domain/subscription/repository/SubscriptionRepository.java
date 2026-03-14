@@ -38,5 +38,5 @@ public interface SubscriptionRepository {
 
     Subscription save(Subscription subscription);
 
-    void deleteById(String id);
+    void deleteByTenantIdAndId(String tenantId, String id);
 }

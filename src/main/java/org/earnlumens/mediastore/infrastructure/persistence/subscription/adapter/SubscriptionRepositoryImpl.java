@@ -75,7 +75,7 @@ public class SubscriptionRepositoryImpl implements SubscriptionRepository {
     }
 
     @Override
-    public void deleteById(String id) {
-        mongoRepository.deleteById(id);
+    public void deleteByTenantIdAndId(String tenantId, String id) {
+        mongoRepository.deleteByTenantIdAndId(tenantId, id);
     }
 }

@@ -3,6 +3,8 @@ package org.earnlumens.mediastore.application.auth;
 import org.earnlumens.mediastore.application.user.UserService;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.user.model.User;
+import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.security.core.Authentication;
@@ -27,6 +29,12 @@ class AuthServiceTempUuidTest {
         userService = mock(UserService.class);
         entryRepository = mock(EntryRepository.class);
         authService = new AuthService(userService, entryRepository);
+        TenantContext.set("earnlumens");
+    }
+
+    @AfterEach
+    void tearDown() {
+        TenantContext.clear();
     }
 
     @Test

@@ -89,7 +89,7 @@ public class SubscriptionService {
             return false;
         }
 
-        subscriptionRepository.deleteById(existing.get().getId());
+        subscriptionRepository.deleteByTenantIdAndId(tenantId, existing.get().getId());
         logger.info("User {} unsubscribed from {}", subscriberId, targetUserId);
         return true;
     }

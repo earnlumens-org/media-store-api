@@ -5,6 +5,7 @@ import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
+import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -42,11 +43,12 @@ public class DraftCleanupService {
      */
     public CleanupResult cleanOrphanedDrafts() {
         long start = System.currentTimeMillis();
+        String tenantId = TenantContext.require();
         LocalDateTime cutoff = LocalDateTime.now().minusHours(ORPHAN_THRESHOLD_HOURS);
 
-        List<Entry> staleDrafts = entryRepository.findByStatusAndCreatedAtBefore(EntryStatus.DRAFT, cutoff);
+        List<Entry> staleDrafts = entryRepository.findByTenantIdAndStatusAndCreatedAtBefore(tenantId, EntryStatus.DRAFT, cutoff);
 
-        logger.info("Cleanup: found {} stale DRAFT entries older than {}", staleDrafts.size(), cutoff);
+        logger.info("Cleanup: found {} stale DRAFT entries older than {} for tenant={}", staleDrafts.size(), cutoff, tenantId);
 
         Map<String, Integer> byType = new HashMap<>();
         int deleted = 0;
@@ -57,7 +59,7 @@ public class DraftCleanupService {
                     .isEmpty();
 
             if (!hasAssets) {
-                entryRepository.deleteById(entry.getId());
+                entryRepository.deleteByTenantIdAndId(entry.getTenantId(), entry.getId());
                 byType.merge(entry.getType().name(), 1, Integer::sum);
                 deleted++;
                 logger.debug("Cleanup: deleted orphaned entry id={}, type={}, tenant={}, createdAt={}",

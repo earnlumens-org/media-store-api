@@ -6,4 +6,4 @@ package org.earnlumens.mediastore.domain.media.dto.request;
  *
  * <p>The first heartbeat also transitions the job from DISPATCHED → PROCESSING.
  */
-public record TranscodingHeartbeatRequest(String jobId) {}
+public record TranscodingHeartbeatRequest(String jobId, String tenantId) {}

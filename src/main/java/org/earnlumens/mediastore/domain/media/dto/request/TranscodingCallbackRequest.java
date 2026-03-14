@@ -21,6 +21,10 @@ public record TranscodingCallbackRequest(
         @NotBlank
         String status,
 
+        /** Tenant ID for scoping the job lookup. */
+        @NotBlank
+        String tenantId,
+
         /** R2 prefix for HLS output, e.g. "public/media/{entryId}/hls/" */
         String hlsR2Prefix,
 

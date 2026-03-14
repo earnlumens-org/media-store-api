@@ -95,16 +95,16 @@ public class EntryRepositoryImpl implements EntryRepository {
     }
 
     @Override
-    public List<Entry> findByStatus(EntryStatus status) {
-        return entryMongoRepository.findByStatus(status.name())
+    public List<Entry> findByTenantIdAndStatus(String tenantId, EntryStatus status) {
+        return entryMongoRepository.findByTenantIdAndStatus(tenantId, status.name())
                 .stream()
                 .map(entryMapper::toModel)
                 .toList();
     }
 
     @Override
-    public List<Entry> findByStatusAndCreatedAtBefore(EntryStatus status, LocalDateTime cutoff) {
-        return entryMongoRepository.findByStatusAndCreatedAtBefore(status.name(), cutoff)
+    public List<Entry> findByTenantIdAndStatusAndCreatedAtBefore(String tenantId, EntryStatus status, LocalDateTime cutoff) {
+        return entryMongoRepository.findByTenantIdAndStatusAndCreatedAtBefore(tenantId, status.name(), cutoff)
                 .stream()
                 .map(entryMapper::toModel)
                 .toList();
@@ -119,8 +119,8 @@ public class EntryRepositoryImpl implements EntryRepository {
     }
 
     @Override
-    public void incrementViewCount(String entryId) {
-        entryMongoRepository.incrementViewCount(entryId);
+    public void incrementViewCount(String tenantId, String entryId) {
+        entryMongoRepository.incrementViewCount(tenantId, entryId);
     }
 
     @Override
@@ -136,12 +136,13 @@ public class EntryRepositoryImpl implements EntryRepository {
     }
 
     @Override
-    public void deleteById(String id) {
-        entryMongoRepository.deleteById(id);
+    public void deleteByTenantIdAndId(String tenantId, String id) {
+        entryMongoRepository.findByTenantIdAndId(tenantId, id)
+                .ifPresent(entity -> entryMongoRepository.deleteById(entity.getId()));
     }
 
     @Override
-    public long updateAuthorInfoByUserId(String userId, String newUsername, String newAvatarUrl) {
-        return entryMongoRepository.updateAuthorInfoByUserId(userId, newUsername, newAvatarUrl);
+    public long updateAuthorInfoByUserId(String tenantId, String userId, String newUsername, String newAvatarUrl) {
+        return entryMongoRepository.updateAuthorInfoByUserId(tenantId, userId, newUsername, newAvatarUrl);
     }
 }

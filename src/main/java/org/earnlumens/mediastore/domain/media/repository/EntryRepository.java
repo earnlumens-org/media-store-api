@@ -34,26 +34,26 @@ public interface EntryRepository {
 
     List<Entry> findByTenantIdAndIdIn(String tenantId, List<String> ids);
 
-    List<Entry> findByStatus(EntryStatus status);
+    List<Entry> findByTenantIdAndStatus(String tenantId, EntryStatus status);
 
-    List<Entry> findByStatusAndCreatedAtBefore(EntryStatus status, LocalDateTime cutoff);
+    List<Entry> findByTenantIdAndStatusAndCreatedAtBefore(String tenantId, EntryStatus status, LocalDateTime cutoff);
 
     /** Finds all entries matching the given tenant, status and type. Used by batch operations. */
     List<Entry> findByTenantIdAndStatusAndType(String tenantId, EntryStatus status, EntryType type);
 
-    /** Atomically increments the view counter on an entry. */
-    void incrementViewCount(String entryId);
+    /** Atomically increments the view counter on an entry within a tenant. */
+    void incrementViewCount(String tenantId, String entryId);
 
     /** Aggregated stats for the owner dashboard (counts by status + total views). */
     java.util.Map<String, Long> getOwnerStats(String tenantId, String userId);
 
     Entry save(Entry entry);
 
-    void deleteById(String id);
+    void deleteByTenantIdAndId(String tenantId, String id);
 
     /**
-     * Bulk-updates authorUsername and authorAvatarUrl on all entries belonging to a user.
+     * Bulk-updates authorUsername and authorAvatarUrl on all entries belonging to a user within a tenant.
      * Called when a user's profile info changes (e.g. username change on X/Twitter).
      */
-    long updateAuthorInfoByUserId(String userId, String newUsername, String newAvatarUrl);
+    long updateAuthorInfoByUserId(String tenantId, String userId, String newUsername, String newAvatarUrl);
 }

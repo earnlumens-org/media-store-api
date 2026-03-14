@@ -13,6 +13,7 @@ import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.TranscodingJobRepository;
 import org.earnlumens.mediastore.infrastructure.config.TranscodingConfig;
+import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -85,7 +86,7 @@ public class TranscodingJobService {
      * @return number of jobs successfully dispatched
      */
     public int dispatchPendingJobs() {
-        List<TranscodingJob> pending = jobRepository.findByStatus(
+        List<TranscodingJob> pending = jobRepository.findAllByStatus(
                 TranscodingJobStatus.PENDING, config.getDispatchBatchSize());
 
         if (pending.isEmpty()) {
@@ -132,8 +133,8 @@ public class TranscodingJobService {
      *
      * @param jobId the transcoding job ID
      */
-    public void heartbeat(String jobId) {
-        Optional<TranscodingJob> opt = jobRepository.findById(jobId);
+    public void heartbeat(String jobId, String tenantId) {
+        Optional<TranscodingJob> opt = jobRepository.findByTenantIdAndId(tenantId, jobId);
         if (opt.isEmpty()) {
             logger.warn("heartbeat: job not found id={}", jobId);
             return;
@@ -164,7 +165,7 @@ public class TranscodingJobService {
         LocalDateTime cutoff = LocalDateTime.now()
                 .minusSeconds(config.getHeartbeatTimeoutSeconds());
 
-        List<TranscodingJob> staleJobs = jobRepository.findStaleJobs(
+        List<TranscodingJob> staleJobs = jobRepository.findAllStaleJobs(
                 cutoff, config.getStaleBatchSize());
 
         if (staleJobs.isEmpty()) {
@@ -252,7 +253,7 @@ public class TranscodingJobService {
 
     /** Returns jobs in a given status (max 100). Used for monitoring. */
     public List<TranscodingJob> findByStatus(TranscodingJobStatus status) {
-        return jobRepository.findByStatus(status, 100);
+        return jobRepository.findAllByStatus(status, 100);
     }
 
     // ─── Batch operations (called by internal endpoints) ────────
@@ -351,9 +352,9 @@ public class TranscodingJobService {
      * @param heightPx    video height in pixels (from ffprobe, nullable)
      * @return the updated job, or empty if the job was not found
      */
-    public Optional<TranscodingJob> completeJob(String jobId, String hlsR2Prefix,
+    public Optional<TranscodingJob> completeJob(String tenantId, String jobId, String hlsR2Prefix,
                                                  Integer durationSec, Integer widthPx, Integer heightPx) {
-        Optional<TranscodingJob> opt = jobRepository.findById(jobId);
+        Optional<TranscodingJob> opt = jobRepository.findByTenantIdAndId(tenantId, jobId);
         if (opt.isEmpty()) {
             logger.warn("completeJob: job not found id={}", jobId);
             return Optional.empty();
@@ -408,8 +409,8 @@ public class TranscodingJobService {
      * @param errorMessage error description from the worker
      * @return the updated job, or empty if the job was not found
      */
-    public Optional<TranscodingJob> failJob(String jobId, String errorMessage) {
-        Optional<TranscodingJob> opt = jobRepository.findById(jobId);
+    public Optional<TranscodingJob> failJob(String tenantId, String jobId, String errorMessage) {
+        Optional<TranscodingJob> opt = jobRepository.findByTenantIdAndId(tenantId, jobId);
         if (opt.isEmpty()) {
             logger.warn("failJob: job not found id={}", jobId);
             return Optional.empty();

@@ -20,6 +20,7 @@ package org.earnlumens.mediastore.web.media;
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
+import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -66,11 +67,12 @@ public class TempAutoApproveController {
      */
     @PostMapping("/approve-all")
     public ResponseEntity<?> approveAll() {
-        // ⚠️ TEMPORARY — no auth, no tenant check, approves everything
+        // ⚠️ TEMPORARY — no auth, but now tenant-scoped via TenantContext
+        String tenantId = TenantContext.require();
 
-        List<Entry> drafts = entryRepository.findByStatus(EntryStatus.DRAFT);
-        List<Entry> inReview = entryRepository.findByStatus(EntryStatus.IN_REVIEW);
-        List<Entry> approved = entryRepository.findByStatus(EntryStatus.APPROVED);
+        List<Entry> drafts = entryRepository.findByTenantIdAndStatus(tenantId, EntryStatus.DRAFT);
+        List<Entry> inReview = entryRepository.findByTenantIdAndStatus(tenantId, EntryStatus.IN_REVIEW);
+        List<Entry> approved = entryRepository.findByTenantIdAndStatus(tenantId, EntryStatus.APPROVED);
 
         List<Entry> toPublish = new ArrayList<>();
         toPublish.addAll(drafts);

@@ -25,8 +25,8 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
     }
 
     @Override
-    public void incrementViewCount(String entryId) {
-        Query query = new Query(Criteria.where("_id").is(entryId));
+    public void incrementViewCount(String tenantId, String entryId) {
+        Query query = new Query(Criteria.where("tenantId").is(tenantId).and("_id").is(entryId));
         Update update = new Update().inc("viewCount", 1);
         mongoTemplate.updateFirst(query, update, EntryEntity.class);
     }
@@ -93,8 +93,8 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
     }
 
     @Override
-    public long updateAuthorInfoByUserId(String userId, String newUsername, String newAvatarUrl) {
-        Query query = new Query(Criteria.where("userId").is(userId));
+    public long updateAuthorInfoByUserId(String tenantId, String userId, String newUsername, String newAvatarUrl) {
+        Query query = new Query(Criteria.where("tenantId").is(tenantId).and("userId").is(userId));
         Update update = new Update()
                 .set("authorUsername", newUsername)
                 .set("authorAvatarUrl", newAvatarUrl);

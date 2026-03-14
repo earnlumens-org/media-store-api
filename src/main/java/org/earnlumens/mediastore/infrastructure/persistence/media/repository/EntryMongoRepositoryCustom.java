@@ -6,21 +6,22 @@ package org.earnlumens.mediastore.infrastructure.persistence.media.repository;
 public interface EntryMongoRepositoryCustom {
 
     /**
-     * Bulk-updates authorUsername and authorAvatarUrl on all entries belonging to a given user.
+     * Bulk-updates authorUsername and authorAvatarUrl on all entries belonging to a given user within a tenant.
      * Used when a user's profile info changes (e.g. username change on X/Twitter).
      *
+     * @param tenantId       the tenant scope
      * @param userId         the stable OAuth user ID (e.g. Twitter numeric ID)
      * @param newUsername     the updated username
      * @param newAvatarUrl   the updated avatar URL
      * @return number of entries updated
      */
-    long updateAuthorInfoByUserId(String userId, String newUsername, String newAvatarUrl);
+    long updateAuthorInfoByUserId(String tenantId, String userId, String newUsername, String newAvatarUrl);
 
     /**
-     * Atomically increments the viewCount field on a single entry.
+     * Atomically increments the viewCount field on a single entry within a tenant.
      * Uses MongoDB $inc for thread-safe, lock-free counting.
      */
-    void incrementViewCount(String entryId);
+    void incrementViewCount(String tenantId, String entryId);
 
     /**
      * Aggregates owner stats: count by status + sum of viewCount.

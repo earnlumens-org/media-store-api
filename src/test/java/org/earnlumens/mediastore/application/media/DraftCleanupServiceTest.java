@@ -10,6 +10,8 @@ import org.earnlumens.mediastore.domain.media.model.MediaKind;
 import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
+import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -38,6 +40,12 @@ class DraftCleanupServiceTest {
         entryRepository = mock(EntryRepository.class);
         assetRepository = mock(AssetRepository.class);
         service = new DraftCleanupService(entryRepository, assetRepository);
+        TenantContext.set(TENANT);
+    }
+
+    @AfterEach
+    void tearDown() {
+        TenantContext.clear();
     }
 
     private Entry orphanedDraft(String id, EntryType type) {
@@ -71,14 +79,14 @@ class DraftCleanupServiceTest {
 
     @Test
     void noStaleDrafts_deletesNothing() {
-        when(entryRepository.findByStatusAndCreatedAtBefore(eq(EntryStatus.DRAFT), any()))
+        when(entryRepository.findByTenantIdAndStatusAndCreatedAtBefore(eq(TENANT), eq(EntryStatus.DRAFT), any()))
                 .thenReturn(Collections.emptyList());
 
         CleanupResult result = service.cleanOrphanedDrafts();
 
         assertEquals(0, result.deletedCount());
         assertTrue(result.byType().isEmpty());
-        verify(entryRepository, never()).deleteById(any());
+        verify(entryRepository, never()).deleteByTenantIdAndId(any(), any());
     }
 
     // ─── Orphaned drafts with no assets → deleted ─────────────
@@ -89,7 +97,7 @@ class DraftCleanupServiceTest {
         Entry image = orphanedDraft("entry-2", EntryType.IMAGE);
         Entry audio = orphanedDraft("entry-3", EntryType.AUDIO);
 
-        when(entryRepository.findByStatusAndCreatedAtBefore(eq(EntryStatus.DRAFT), any()))
+        when(entryRepository.findByTenantIdAndStatusAndCreatedAtBefore(eq(TENANT), eq(EntryStatus.DRAFT), any()))
                 .thenReturn(List.of(video, image, audio));
         when(assetRepository.findByTenantIdAndEntryId(eq(TENANT), any()))
                 .thenReturn(Collections.emptyList());
@@ -100,7 +108,7 @@ class DraftCleanupServiceTest {
         assertEquals(1, result.byType().get("VIDEO"));
         assertEquals(1, result.byType().get("IMAGE"));
         assertEquals(1, result.byType().get("AUDIO"));
-        verify(entryRepository, times(3)).deleteById(any());
+        verify(entryRepository, times(3)).deleteByTenantIdAndId(any(), any());
     }
 
     // ─── Draft with assets → NOT deleted ──────────────────────
@@ -109,7 +117,7 @@ class DraftCleanupServiceTest {
     void draftWithAssets_isNotDeleted() {
         Entry entry = orphanedDraft("entry-1", EntryType.VIDEO);
 
-        when(entryRepository.findByStatusAndCreatedAtBefore(eq(EntryStatus.DRAFT), any()))
+        when(entryRepository.findByTenantIdAndStatusAndCreatedAtBefore(eq(TENANT), eq(EntryStatus.DRAFT), any()))
                 .thenReturn(List.of(entry));
         when(assetRepository.findByTenantIdAndEntryId(TENANT, "entry-1"))
                 .thenReturn(List.of(someAsset("entry-1")));
@@ -118,7 +126,7 @@ class DraftCleanupServiceTest {
 
         assertEquals(0, result.deletedCount());
         assertTrue(result.byType().isEmpty());
-        verify(entryRepository, never()).deleteById(any());
+        verify(entryRepository, never()).deleteByTenantIdAndId(any(), any());
     }
 
     // ─── Mixed: some with assets, some without ────────────────
@@ -128,7 +136,7 @@ class DraftCleanupServiceTest {
         Entry orphan = orphanedDraft("entry-1", EntryType.IMAGE);
         Entry withAsset = orphanedDraft("entry-2", EntryType.VIDEO);
 
-        when(entryRepository.findByStatusAndCreatedAtBefore(eq(EntryStatus.DRAFT), any()))
+        when(entryRepository.findByTenantIdAndStatusAndCreatedAtBefore(eq(TENANT), eq(EntryStatus.DRAFT), any()))
                 .thenReturn(List.of(orphan, withAsset));
         when(assetRepository.findByTenantIdAndEntryId(TENANT, "entry-1"))
                 .thenReturn(Collections.emptyList());
@@ -140,8 +148,8 @@ class DraftCleanupServiceTest {
         assertEquals(1, result.deletedCount());
         assertEquals(1, result.byType().get("IMAGE"));
         assertNull(result.byType().get("VIDEO"));
-        verify(entryRepository).deleteById("entry-1");
-        verify(entryRepository, never()).deleteById("entry-2");
+        verify(entryRepository).deleteByTenantIdAndId(TENANT, "entry-1");
+        verify(entryRepository, never()).deleteByTenantIdAndId(eq(TENANT), eq("entry-2"));
     }
 
     // ─── Multiple orphans of same type → count aggregated ─────
@@ -152,7 +160,7 @@ class DraftCleanupServiceTest {
         Entry img2 = orphanedDraft("entry-2", EntryType.IMAGE);
         Entry img3 = orphanedDraft("entry-3", EntryType.IMAGE);
 
-        when(entryRepository.findByStatusAndCreatedAtBefore(eq(EntryStatus.DRAFT), any()))
+        when(entryRepository.findByTenantIdAndStatusAndCreatedAtBefore(eq(TENANT), eq(EntryStatus.DRAFT), any()))
                 .thenReturn(List.of(img1, img2, img3));
         when(assetRepository.findByTenantIdAndEntryId(eq(TENANT), any()))
                 .thenReturn(Collections.emptyList());
@@ -167,7 +175,7 @@ class DraftCleanupServiceTest {
 
     @Test
     void result_includesCutoffAndDuration() {
-        when(entryRepository.findByStatusAndCreatedAtBefore(eq(EntryStatus.DRAFT), any()))
+        when(entryRepository.findByTenantIdAndStatusAndCreatedAtBefore(eq(TENANT), eq(EntryStatus.DRAFT), any()))
                 .thenReturn(Collections.emptyList());
 
         CleanupResult result = service.cleanOrphanedDrafts();

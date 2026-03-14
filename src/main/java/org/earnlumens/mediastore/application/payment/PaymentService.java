@@ -191,12 +191,9 @@ public class PaymentService {
         String signedXdr = request.signedXdr();
 
         // 1. Load and validate order
-        Order order = orderRepository.findById(orderId)
+        Order order = orderRepository.findByTenantIdAndId(tenantId, orderId)
                 .orElseThrow(() -> new IllegalArgumentException("Order not found"));
 
-        if (!order.getTenantId().equals(tenantId)) {
-            throw new IllegalArgumentException("Order not found");
-        }
         if (!order.getUserId().equals(userId)) {
             throw new IllegalArgumentException("Order does not belong to this user");
         }

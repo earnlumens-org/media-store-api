@@ -33,9 +33,9 @@ public interface EntryMongoRepository extends MongoRepository<EntryEntity, Strin
 
     Page<EntryEntity> findByTenantIdAndUserIdAndStatusAndTypeOrderByCreatedAtDesc(String tenantId, String userId, String status, String type, Pageable pageable);
 
-    List<EntryEntity> findByStatus(String status);
+    List<EntryEntity> findByTenantIdAndStatus(String tenantId, String status);
 
-    List<EntryEntity> findByStatusAndCreatedAtBefore(String status, LocalDateTime cutoff);
+    List<EntryEntity> findByTenantIdAndStatusAndCreatedAtBefore(String tenantId, String status, LocalDateTime cutoff);
 
     List<EntryEntity> findByTenantIdAndStatusAndType(String tenantId, String status, String type);
 }

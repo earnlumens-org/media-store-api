@@ -49,7 +49,9 @@ public class FavoriteRepositoryImpl implements FavoriteRepository {
     }
 
     @Override
-    public void deleteById(String id) {
-        favoriteMongoRepository.deleteById(id);
+    public void deleteByTenantIdAndId(String tenantId, String id) {
+        favoriteMongoRepository.findById(id)
+                .filter(entity -> tenantId.equals(entity.getTenantId()))
+                .ifPresent(entity -> favoriteMongoRepository.deleteById(entity.getId()));
     }
 }

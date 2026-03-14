@@ -77,7 +77,7 @@ class TranscodingJobServiceTest {
 
         @Test
         void noStaleJobs_returnsZero() {
-            when(jobRepository.findStaleJobs(any(), anyInt()))
+            when(jobRepository.findAllStaleJobs(any(), anyInt()))
                     .thenReturn(Collections.emptyList());
 
             int recovered = service.recoverStaleJobs();
@@ -89,7 +89,7 @@ class TranscodingJobServiceTest {
         @Test
         void staleDispatchedJob_withinRetryLimit_isRetried() {
             TranscodingJob job = staleJob(TranscodingJobStatus.DISPATCHED, 0, 3);
-            when(jobRepository.findStaleJobs(any(), anyInt()))
+            when(jobRepository.findAllStaleJobs(any(), anyInt()))
                     .thenReturn(List.of(job));
 
             int recovered = service.recoverStaleJobs();
@@ -108,7 +108,7 @@ class TranscodingJobServiceTest {
         void staleProcessingJob_withinRetryLimit_isRetried() {
             TranscodingJob job = staleJob(TranscodingJobStatus.PROCESSING, 1, 3);
             job.setProcessingStartedAt(LocalDateTime.now().minusMinutes(8));
-            when(jobRepository.findStaleJobs(any(), anyInt()))
+            when(jobRepository.findAllStaleJobs(any(), anyInt()))
                     .thenReturn(List.of(job));
 
             int recovered = service.recoverStaleJobs();
@@ -121,7 +121,7 @@ class TranscodingJobServiceTest {
         @Test
         void staleJob_retriesExhausted_isMarkedDead() {
             TranscodingJob job = staleJob(TranscodingJobStatus.PROCESSING, 3, 3);
-            when(jobRepository.findStaleJobs(any(), anyInt()))
+            when(jobRepository.findAllStaleJobs(any(), anyInt()))
                     .thenReturn(List.of(job));
 
             int recovered = service.recoverStaleJobs();
@@ -141,7 +141,7 @@ class TranscodingJobServiceTest {
             TranscodingJob dead = staleJob(TranscodingJobStatus.PROCESSING, 3, 3);
             dead.setId("job-dead");
 
-            when(jobRepository.findStaleJobs(any(), anyInt()))
+            when(jobRepository.findAllStaleJobs(any(), anyInt()))
                     .thenReturn(List.of(retryable, dead));
 
             int recovered = service.recoverStaleJobs();
@@ -160,7 +160,7 @@ class TranscodingJobServiceTest {
             TranscodingJob healthy = staleJob(TranscodingJobStatus.DISPATCHED, 1, 3);
             healthy.setId("job-ok");
 
-            when(jobRepository.findStaleJobs(any(), anyInt()))
+            when(jobRepository.findAllStaleJobs(any(), anyInt()))
                     .thenReturn(List.of(failing, healthy));
 
             // First save throws, second succeeds
@@ -289,11 +289,11 @@ class TranscodingJobServiceTest {
         void completesJobAndTransitionsAssetToReady() {
             TranscodingJob job = staleJob(TranscodingJobStatus.PROCESSING, 0, 3);
             Asset asset = testAsset("asset-1");
-            when(jobRepository.findById("job-1")).thenReturn(Optional.of(job));
+            when(jobRepository.findByTenantIdAndId("earnlumens", "job-1")).thenReturn(Optional.of(job));
             when(assetRepository.findByTenantIdAndEntryId("earnlumens", "entry-1"))
                     .thenReturn(List.of(asset));
 
-            Optional<TranscodingJob> result = service.completeJob("job-1", "public/media/entry-1/hls/", null, null, null);
+            Optional<TranscodingJob> result = service.completeJob("earnlumens", "job-1", "public/media/entry-1/hls/", null, null, null);
 
             assertTrue(result.isPresent());
             assertEquals(TranscodingJobStatus.COMPLETED, result.get().getStatus());
@@ -305,9 +305,9 @@ class TranscodingJobServiceTest {
 
         @Test
         void jobNotFound_returnsEmpty() {
-            when(jobRepository.findById("no-job")).thenReturn(Optional.empty());
+            when(jobRepository.findByTenantIdAndId("earnlumens", "no-job")).thenReturn(Optional.empty());
 
-            Optional<TranscodingJob> result = service.completeJob("no-job", "prefix/", null, null, null);
+            Optional<TranscodingJob> result = service.completeJob("earnlumens", "no-job", "prefix/", null, null, null);
 
             assertTrue(result.isEmpty());
             verify(assetRepository, never()).save(any());
@@ -316,11 +316,11 @@ class TranscodingJobServiceTest {
         @Test
         void assetNotFound_stillCompletesJob() {
             TranscodingJob job = staleJob(TranscodingJobStatus.PROCESSING, 0, 3);
-            when(jobRepository.findById("job-1")).thenReturn(Optional.of(job));
+            when(jobRepository.findByTenantIdAndId("earnlumens", "job-1")).thenReturn(Optional.of(job));
             when(assetRepository.findByTenantIdAndEntryId("earnlumens", "entry-1"))
                     .thenReturn(Collections.emptyList());
 
-            Optional<TranscodingJob> result = service.completeJob("job-1", "prefix/", null, null, null);
+            Optional<TranscodingJob> result = service.completeJob("earnlumens", "job-1", "prefix/", null, null, null);
 
             assertTrue(result.isPresent());
             assertEquals(TranscodingJobStatus.COMPLETED, result.get().getStatus());
@@ -336,9 +336,9 @@ class TranscodingJobServiceTest {
         @Test
         void withinRetryLimit_retriesJob() {
             TranscodingJob job = staleJob(TranscodingJobStatus.PROCESSING, 1, 3);
-            when(jobRepository.findById("job-1")).thenReturn(Optional.of(job));
+            when(jobRepository.findByTenantIdAndId("earnlumens", "job-1")).thenReturn(Optional.of(job));
 
-            Optional<TranscodingJob> result = service.failJob("job-1", "FFmpeg segfault");
+            Optional<TranscodingJob> result = service.failJob("earnlumens", "job-1", "FFmpeg segfault");
 
             assertTrue(result.isPresent());
             assertEquals(TranscodingJobStatus.PENDING, result.get().getStatus());
@@ -351,11 +351,11 @@ class TranscodingJobServiceTest {
         void retriesExhausted_killsJobAndFailsAsset() {
             TranscodingJob job = staleJob(TranscodingJobStatus.PROCESSING, 3, 3);
             Asset asset = testAsset("asset-1");
-            when(jobRepository.findById("job-1")).thenReturn(Optional.of(job));
+            when(jobRepository.findByTenantIdAndId("earnlumens", "job-1")).thenReturn(Optional.of(job));
             when(assetRepository.findByTenantIdAndEntryId("earnlumens", "entry-1"))
                     .thenReturn(List.of(asset));
 
-            Optional<TranscodingJob> result = service.failJob("job-1", "Unsupported codec");
+            Optional<TranscodingJob> result = service.failJob("earnlumens", "job-1", "Unsupported codec");
 
             assertTrue(result.isPresent());
             assertEquals(TranscodingJobStatus.DEAD, result.get().getStatus());
@@ -365,9 +365,9 @@ class TranscodingJobServiceTest {
 
         @Test
         void jobNotFound_returnsEmpty() {
-            when(jobRepository.findById("no-job")).thenReturn(Optional.empty());
+            when(jobRepository.findByTenantIdAndId("earnlumens", "no-job")).thenReturn(Optional.empty());
 
-            Optional<TranscodingJob> result = service.failJob("no-job", "error");
+            Optional<TranscodingJob> result = service.failJob("earnlumens", "no-job", "error");
 
             assertTrue(result.isEmpty());
         }
@@ -380,7 +380,7 @@ class TranscodingJobServiceTest {
 
         @Test
         void noPendingJobs_returnsZero() {
-            when(jobRepository.findByStatus(TranscodingJobStatus.PENDING, 10))
+            when(jobRepository.findAllByStatus(TranscodingJobStatus.PENDING, 10))
                     .thenReturn(Collections.emptyList());
 
             int dispatched = service.dispatchPendingJobs();
@@ -392,7 +392,7 @@ class TranscodingJobServiceTest {
         @Test
         void oneJob_dispatchesAndUpdatesStatus() {
             TranscodingJob job = staleJob(TranscodingJobStatus.PENDING, 0, 3);
-            when(jobRepository.findByStatus(TranscodingJobStatus.PENDING, 10))
+            when(jobRepository.findAllByStatus(TranscodingJobStatus.PENDING, 10))
                     .thenReturn(List.of(job));
 
             int dispatched = service.dispatchPendingJobs();
@@ -412,7 +412,7 @@ class TranscodingJobServiceTest {
             TranscodingJob job2 = staleJob(TranscodingJobStatus.PENDING, 0, 3);
             job2.setId("job-ok");
 
-            when(jobRepository.findByStatus(TranscodingJobStatus.PENDING, 10))
+            when(jobRepository.findAllByStatus(TranscodingJobStatus.PENDING, 10))
                     .thenReturn(List.of(job1, job2));
             doThrow(new RuntimeException("Cloud Run unavailable"))
                     .when(dispatchPort).dispatch(job1);
@@ -435,7 +435,7 @@ class TranscodingJobServiceTest {
             TranscodingJob job2 = staleJob(TranscodingJobStatus.PENDING, 1, 3);
             job2.setId("job-b");
 
-            when(jobRepository.findByStatus(TranscodingJobStatus.PENDING, 10))
+            when(jobRepository.findAllByStatus(TranscodingJobStatus.PENDING, 10))
                     .thenReturn(List.of(job1, job2));
 
             int dispatched = service.dispatchPendingJobs();
@@ -454,9 +454,9 @@ class TranscodingJobServiceTest {
         @Test
         void dispatchedJob_transitionsToProcessing() {
             TranscodingJob job = staleJob(TranscodingJobStatus.DISPATCHED, 0, 3);
-            when(jobRepository.findById("job-1")).thenReturn(Optional.of(job));
+            when(jobRepository.findByTenantIdAndId("earnlumens", "job-1")).thenReturn(Optional.of(job));
 
-            service.heartbeat("job-1");
+            service.heartbeat("job-1", "earnlumens");
 
             assertEquals(TranscodingJobStatus.PROCESSING, job.getStatus());
             assertNotNull(job.getProcessingStartedAt());
@@ -469,9 +469,9 @@ class TranscodingJobServiceTest {
             TranscodingJob job = staleJob(TranscodingJobStatus.PROCESSING, 0, 3);
             job.setProcessingStartedAt(LocalDateTime.now().minusMinutes(5));
             LocalDateTime oldProcessingStart = job.getProcessingStartedAt();
-            when(jobRepository.findById("job-1")).thenReturn(Optional.of(job));
+            when(jobRepository.findByTenantIdAndId("earnlumens", "job-1")).thenReturn(Optional.of(job));
 
-            service.heartbeat("job-1");
+            service.heartbeat("job-1", "earnlumens");
 
             assertEquals(TranscodingJobStatus.PROCESSING, job.getStatus());
             assertEquals(oldProcessingStart, job.getProcessingStartedAt());
@@ -481,9 +481,9 @@ class TranscodingJobServiceTest {
 
         @Test
         void unknownJob_noErrorNoSave() {
-            when(jobRepository.findById("no-such-job")).thenReturn(Optional.empty());
+            when(jobRepository.findByTenantIdAndId("earnlumens", "no-such-job")).thenReturn(Optional.empty());
 
-            service.heartbeat("no-such-job");
+            service.heartbeat("no-such-job", "earnlumens");
 
             verify(jobRepository, never()).save(any());
         }

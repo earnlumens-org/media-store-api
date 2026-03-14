@@ -5,6 +5,7 @@ import org.earnlumens.mediastore.infrastructure.security.jwt.AuthTokenFilter;
 import org.earnlumens.mediastore.infrastructure.security.jwt.RefreshCookieAuthFilter;
 import org.earnlumens.mediastore.infrastructure.security.oauth2.OAuth2AuthenticationFailureHandler;
 import org.earnlumens.mediastore.infrastructure.security.oauth2.OAuth2AuthenticationSuccessHandler;
+import org.earnlumens.mediastore.infrastructure.tenant.TenantFilter;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
@@ -37,15 +38,18 @@ public class WebSecurityConfig {
     private final AuthEntryPointJwt authEntryPointJwt;
     private final OAuth2AuthenticationFailureHandler oAuth2AuthenticationFailureHandler;
     private final OAuth2AuthenticationSuccessHandler oAuth2AuthenticationSuccessHandler;
+    private final TenantFilter tenantFilter;
 
     public WebSecurityConfig(
             AuthEntryPointJwt authEntryPointJwt,
             OAuth2AuthenticationFailureHandler oAuth2AuthenticationFailureHandler,
-            OAuth2AuthenticationSuccessHandler oAuth2AuthenticationSuccessHandler
+            OAuth2AuthenticationSuccessHandler oAuth2AuthenticationSuccessHandler,
+            TenantFilter tenantFilter
     ) {
         this.authEntryPointJwt = authEntryPointJwt;
         this.oAuth2AuthenticationFailureHandler = oAuth2AuthenticationFailureHandler;
         this.oAuth2AuthenticationSuccessHandler = oAuth2AuthenticationSuccessHandler;
+        this.tenantFilter = tenantFilter;
     }
 
     @Bean
@@ -93,6 +97,7 @@ public class WebSecurityConfig {
                         .successHandler(oAuth2AuthenticationSuccessHandler)
                         .failureHandler(oAuth2AuthenticationFailureHandler)
                 )
+                .addFilterBefore(tenantFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(refreshCookieAuthFilter(), UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(authenticationJwtTokenFilter(), UsernamePasswordAuthenticationFilter.class);
 

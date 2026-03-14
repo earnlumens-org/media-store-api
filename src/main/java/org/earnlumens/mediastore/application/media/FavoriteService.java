@@ -63,7 +63,7 @@ public class FavoriteService {
         Optional<Favorite> existing = favoriteRepository.findByTenantIdAndUserIdAndItemId(tenantId, userId, itemId);
 
         if (existing.isPresent()) {
-            favoriteRepository.deleteById(existing.get().getId());
+            favoriteRepository.deleteByTenantIdAndId(tenantId, existing.get().getId());
             logger.debug("Removed favorite itemId={} for userId={}", itemId, userId);
             return false;
         }
@@ -167,7 +167,7 @@ public class FavoriteService {
         // Lazy cleanup: remove orphaned favorites
         for (String orphanId : orphanIds) {
             try {
-                favoriteRepository.deleteById(orphanId);
+                favoriteRepository.deleteByTenantIdAndId(tenantId, orphanId);
                 logger.info("Removed orphaned favorite id={}", orphanId);
             } catch (Exception e) {
                 logger.warn("Failed to clean up orphaned favorite id={}: {}", orphanId, e.getMessage());

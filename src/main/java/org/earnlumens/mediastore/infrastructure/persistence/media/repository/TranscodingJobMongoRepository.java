@@ -15,6 +15,8 @@ public interface TranscodingJobMongoRepository extends MongoRepository<Transcodi
 
     List<TranscodingJobEntity> findByStatusOrderByCreatedAtAsc(String status, Pageable pageable);
 
+    List<TranscodingJobEntity> findByTenantIdAndStatusOrderByCreatedAtAsc(String tenantId, String status, Pageable pageable);
+
     /**
      * Find jobs whose status is DISPATCHED or PROCESSING and whose lastHeartbeat
      * is older than the given threshold — these are stuck/crashed workers.

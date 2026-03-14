@@ -23,4 +23,6 @@ public interface SubscriptionMongoRepository extends MongoRepository<Subscriptio
     long countByTenantIdAndSubscriberId(String tenantId, String subscriberId);
 
     List<SubscriptionEntity> findByTenantIdAndSubscriberIdAndTargetUserIdIn(String tenantId, String subscriberId, List<String> targetUserIds);
+
+    void deleteByTenantIdAndId(String tenantId, String id);
 }

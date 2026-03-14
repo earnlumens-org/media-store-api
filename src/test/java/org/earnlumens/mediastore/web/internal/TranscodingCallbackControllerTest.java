@@ -64,7 +64,7 @@ class TranscodingCallbackControllerTest {
         @Test
         void missingSecret_returns403() {
             TranscodingCallbackRequest req = new TranscodingCallbackRequest(
-                    "job-1", "COMPLETED", "prefix/", null, null, null, null);
+                    "job-1", "COMPLETED", "earnlumens", "prefix/", null, null, null, null);
 
             ResponseEntity<?> resp = controller.handleCallback(null, req);
 
@@ -75,7 +75,7 @@ class TranscodingCallbackControllerTest {
         @Test
         void wrongSecret_returns403() {
             TranscodingCallbackRequest req = new TranscodingCallbackRequest(
-                    "job-1", "COMPLETED", "prefix/", null, null, null, null);
+                    "job-1", "COMPLETED", "earnlumens", "prefix/", null, null, null, null);
 
             ResponseEntity<?> resp = controller.handleCallback("wrong-secret", req);
 
@@ -85,11 +85,11 @@ class TranscodingCallbackControllerTest {
 
         @Test
         void correctSecret_proceeds() {
-            when(jobService.completeJob("job-1", "prefix/", null, null, null))
+            when(jobService.completeJob("earnlumens", "job-1", "prefix/", null, null, null))
                     .thenReturn(Optional.of(completedJob()));
 
             TranscodingCallbackRequest req = new TranscodingCallbackRequest(
-                    "job-1", "COMPLETED", "prefix/", null, null, null, null);
+                    "job-1", "COMPLETED", "earnlumens", "prefix/", null, null, null, null);
 
             ResponseEntity<?> resp = controller.handleCallback(SECRET, req);
 
@@ -104,22 +104,22 @@ class TranscodingCallbackControllerTest {
 
         @Test
         void validCompletion_returns200() {
-            when(jobService.completeJob("job-1", "public/media/e1/hls/", null, null, null))
+            when(jobService.completeJob("earnlumens", "job-1", "public/media/e1/hls/", null, null, null))
                     .thenReturn(Optional.of(completedJob()));
 
             TranscodingCallbackRequest req = new TranscodingCallbackRequest(
-                    "job-1", "COMPLETED", "public/media/e1/hls/", null, null, null, null);
+                    "job-1", "COMPLETED", "earnlumens", "public/media/e1/hls/", null, null, null, null);
 
             ResponseEntity<?> resp = controller.handleCallback(SECRET, req);
 
             assertEquals(200, resp.getStatusCode().value());
-            verify(jobService).completeJob("job-1", "public/media/e1/hls/", null, null, null);
+            verify(jobService).completeJob("earnlumens", "job-1", "public/media/e1/hls/", null, null, null);
         }
 
         @Test
         void missingHlsPrefix_returns400() {
             TranscodingCallbackRequest req = new TranscodingCallbackRequest(
-                    "job-1", "COMPLETED", null, null, null, null, null);
+                    "job-1", "COMPLETED", "earnlumens", null, null, null, null, null);
 
             ResponseEntity<?> resp = controller.handleCallback(SECRET, req);
 
@@ -130,7 +130,7 @@ class TranscodingCallbackControllerTest {
         @Test
         void blankHlsPrefix_returns400() {
             TranscodingCallbackRequest req = new TranscodingCallbackRequest(
-                    "job-1", "COMPLETED", "  ", null, null, null, null);
+                    "job-1", "COMPLETED", "earnlumens", "  ", null, null, null, null);
 
             ResponseEntity<?> resp = controller.handleCallback(SECRET, req);
 
@@ -140,11 +140,11 @@ class TranscodingCallbackControllerTest {
 
         @Test
         void jobNotFound_returns404() {
-            when(jobService.completeJob("no-job", "prefix/", null, null, null))
+            when(jobService.completeJob("earnlumens", "no-job", "prefix/", null, null, null))
                     .thenReturn(Optional.empty());
 
             TranscodingCallbackRequest req = new TranscodingCallbackRequest(
-                    "no-job", "COMPLETED", "prefix/", null, null, null, null);
+                    "no-job", "COMPLETED", "earnlumens", "prefix/", null, null, null, null);
 
             ResponseEntity<?> resp = controller.handleCallback(SECRET, req);
 
@@ -159,11 +159,11 @@ class TranscodingCallbackControllerTest {
 
         @Test
         void failedWithRetry_returns200WithPendingStatus() {
-            when(jobService.failJob("job-1", "FFmpeg crash"))
+            when(jobService.failJob("earnlumens", "job-1", "FFmpeg crash"))
                     .thenReturn(Optional.of(retriedJob()));
 
             TranscodingCallbackRequest req = new TranscodingCallbackRequest(
-                    "job-1", "FAILED", null, "FFmpeg crash", null, null, null);
+                    "job-1", "FAILED", "earnlumens", null, "FFmpeg crash", null, null, null);
 
             ResponseEntity<?> resp = controller.handleCallback(SECRET, req);
 
@@ -175,11 +175,11 @@ class TranscodingCallbackControllerTest {
 
         @Test
         void failedRetriesExhausted_returns200WithDeadStatus() {
-            when(jobService.failJob("job-1", "Corrupt file"))
+            when(jobService.failJob("earnlumens", "job-1", "Corrupt file"))
                     .thenReturn(Optional.of(deadJob()));
 
             TranscodingCallbackRequest req = new TranscodingCallbackRequest(
-                    "job-1", "FAILED", null, "Corrupt file", null, null, null);
+                    "job-1", "FAILED", "earnlumens", null, "Corrupt file", null, null, null);
 
             ResponseEntity<?> resp = controller.handleCallback(SECRET, req);
 
@@ -191,11 +191,11 @@ class TranscodingCallbackControllerTest {
 
         @Test
         void jobNotFound_returns404() {
-            when(jobService.failJob("no-job", "error"))
+            when(jobService.failJob("earnlumens", "no-job", "error"))
                     .thenReturn(Optional.empty());
 
             TranscodingCallbackRequest req = new TranscodingCallbackRequest(
-                    "no-job", "FAILED", null, "error", null, null, null);
+                    "no-job", "FAILED", "earnlumens", null, "error", null, null, null);
 
             ResponseEntity<?> resp = controller.handleCallback(SECRET, req);
 
@@ -208,7 +208,7 @@ class TranscodingCallbackControllerTest {
     @Test
     void invalidStatus_returns400() {
         TranscodingCallbackRequest req = new TranscodingCallbackRequest(
-                    "job-1", "CANCELED", null, null, null, null, null);
+                    "job-1", "CANCELED", "earnlumens", null, null, null, null, null);
 
         ResponseEntity<?> resp = controller.handleCallback(SECRET, req);
 
@@ -218,16 +218,16 @@ class TranscodingCallbackControllerTest {
 
     @Test
     void statusIsCaseInsensitive() {
-        when(jobService.completeJob("job-1", "prefix/", null, null, null))
+        when(jobService.completeJob("earnlumens", "job-1", "prefix/", null, null, null))
                 .thenReturn(Optional.of(completedJob()));
 
         TranscodingCallbackRequest req = new TranscodingCallbackRequest(
-                    "job-1", "completed", "prefix/", null, null, null, null);
+                    "job-1", "completed", "earnlumens", "prefix/", null, null, null, null);
 
         ResponseEntity<?> resp = controller.handleCallback(SECRET, req);
 
         assertEquals(200, resp.getStatusCode().value());
-        verify(jobService).completeJob("job-1", "prefix/", null, null, null);
+        verify(jobService).completeJob("earnlumens", "job-1", "prefix/", null, null, null);
     }
 
     // ─── Heartbeat ──────────────────────────────────────────────
@@ -237,17 +237,17 @@ class TranscodingCallbackControllerTest {
 
         @Test
         void validSecret_returns200() {
-            TranscodingHeartbeatRequest req = new TranscodingHeartbeatRequest("job-1");
+            TranscodingHeartbeatRequest req = new TranscodingHeartbeatRequest("job-1", "earnlumens");
 
             ResponseEntity<?> resp = controller.heartbeat(SECRET, req);
 
             assertEquals(200, resp.getStatusCode().value());
-            verify(jobService).heartbeat("job-1");
+            verify(jobService).heartbeat("job-1", "earnlumens");
         }
 
         @Test
         void missingSecret_returns403() {
-            TranscodingHeartbeatRequest req = new TranscodingHeartbeatRequest("job-1");
+            TranscodingHeartbeatRequest req = new TranscodingHeartbeatRequest("job-1", "earnlumens");
 
             ResponseEntity<?> resp = controller.heartbeat(null, req);
 
@@ -257,7 +257,7 @@ class TranscodingCallbackControllerTest {
 
         @Test
         void wrongSecret_returns403() {
-            TranscodingHeartbeatRequest req = new TranscodingHeartbeatRequest("job-1");
+            TranscodingHeartbeatRequest req = new TranscodingHeartbeatRequest("job-1", "earnlumens");
 
             ResponseEntity<?> resp = controller.heartbeat("wrong-secret", req);
 

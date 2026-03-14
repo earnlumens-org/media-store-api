@@ -42,7 +42,7 @@ public class PublicEntryService {
                 .filter(entry -> entry.getStatus() == EntryStatus.PUBLISHED || entry.getStatus() == EntryStatus.UNLISTED)
                 .map(entry -> {
                     // Atomically increment view count (fire-and-forget)
-                    entryRepository.incrementViewCount(entryId);
+                    entryRepository.incrementViewCount(tenantId, entryId);
 
                     // For detail view: include FULL asset metadata if available
                     AssetInfo assetInfo = assetRepository

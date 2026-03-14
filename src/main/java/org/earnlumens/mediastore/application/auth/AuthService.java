@@ -3,6 +3,7 @@ package org.earnlumens.mediastore.application.auth;
 import org.earnlumens.mediastore.application.user.UserService;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.user.model.User;
+import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.core.Authentication;
@@ -75,9 +76,10 @@ public class AuthService {
 
             // Sync denormalized author info on all entries when username or avatar changes
             if (usernameChanged || avatarChanged) {
-                long updated = entryRepository.updateAuthorInfoByUserId(oauthUserId, username, profileImageUrl);
-                log.info("User {} changed profile info (username={}, avatar={}). Updated {} entries.",
-                        oauthUserId, usernameChanged, avatarChanged, updated);
+                String tenantId = TenantContext.require();
+                long updated = entryRepository.updateAuthorInfoByUserId(tenantId, oauthUserId, username, profileImageUrl);
+                log.info("User {} changed profile info (username={}, avatar={}). Updated {} entries in tenant={}.",
+                        oauthUserId, usernameChanged, avatarChanged, updated, tenantId);
             }
         } else {
             User newUser = new User();

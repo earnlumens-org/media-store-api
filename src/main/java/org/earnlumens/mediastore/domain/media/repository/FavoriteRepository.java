@@ -32,7 +32,7 @@ public interface FavoriteRepository {
     Favorite save(Favorite favorite);
 
     /**
-     * Delete a favorite by its ID.
+     * Delete a favorite by tenant and ID.
      */
-    void deleteById(String id);
+    void deleteByTenantIdAndId(String tenantId, String id);
 }
