@@ -39,17 +39,20 @@ public class WebSecurityConfig {
     private final OAuth2AuthenticationFailureHandler oAuth2AuthenticationFailureHandler;
     private final OAuth2AuthenticationSuccessHandler oAuth2AuthenticationSuccessHandler;
     private final TenantFilter tenantFilter;
+    private final RateLimitFilter rateLimitFilter;
 
     public WebSecurityConfig(
             AuthEntryPointJwt authEntryPointJwt,
             OAuth2AuthenticationFailureHandler oAuth2AuthenticationFailureHandler,
             OAuth2AuthenticationSuccessHandler oAuth2AuthenticationSuccessHandler,
-            TenantFilter tenantFilter
+            TenantFilter tenantFilter,
+            RateLimitFilter rateLimitFilter
     ) {
         this.authEntryPointJwt = authEntryPointJwt;
         this.oAuth2AuthenticationFailureHandler = oAuth2AuthenticationFailureHandler;
         this.oAuth2AuthenticationSuccessHandler = oAuth2AuthenticationSuccessHandler;
         this.tenantFilter = tenantFilter;
+        this.rateLimitFilter = rateLimitFilter;
     }
 
     @Bean
@@ -97,6 +100,7 @@ public class WebSecurityConfig {
                         .successHandler(oAuth2AuthenticationSuccessHandler)
                         .failureHandler(oAuth2AuthenticationFailureHandler)
                 )
+                .addFilterBefore(rateLimitFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(tenantFilter, UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(refreshCookieAuthFilter(), UsernamePasswordAuthenticationFilter.class)
                 .addFilterBefore(authenticationJwtTokenFilter(), UsernamePasswordAuthenticationFilter.class);
