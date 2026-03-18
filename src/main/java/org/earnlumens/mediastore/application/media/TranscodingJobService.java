@@ -390,6 +390,7 @@ public class TranscodingJobService {
         entryRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId())
                 .ifPresent(entry -> {
                     entry.setHlsReady(true);
+                    entry.setHlsR2Prefix(hlsR2Prefix);
                     if (durationSec != null && durationSec > 0) entry.setDurationSec(durationSec);
                     entryRepository.save(entry);
                     logger.info("completeJob: set hlsReady=true, durationSec={} on entry={}",

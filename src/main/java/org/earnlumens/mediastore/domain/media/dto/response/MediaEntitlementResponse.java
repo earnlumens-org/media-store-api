@@ -5,5 +5,6 @@ public record MediaEntitlementResponse(
         String r2Key,
         String contentType,
         String contentDisposition,
-        String fileName
+        String fileName,
+        String hlsR2Prefix
 ) {}

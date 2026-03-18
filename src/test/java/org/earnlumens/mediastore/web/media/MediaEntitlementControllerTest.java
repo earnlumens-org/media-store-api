@@ -98,7 +98,8 @@ class MediaEntitlementControllerTest {
                 "private/media/entry-abc-456/video.mp4",
                 "video/mp4",
                 "inline; filename=\"video.mp4\"",
-                "video.mp4"
+                "video.mp4",
+                null
         );
     }
 

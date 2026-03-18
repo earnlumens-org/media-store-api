@@ -59,13 +59,13 @@ public class MediaEntitlementService {
         // Owner always has access
         if (userId.equals(entry.getUserId())) {
             logger.debug("Access granted (owner): userId={}, entryId={}", userId, entryId);
-            return buildAssetResponse(tenantId, entryId);
+            return buildAssetResponse(tenantId, entry);
         }
 
         // Free content is accessible to any authenticated user
         if (!entry.isPaid()) {
             logger.debug("Access granted (free content): userId={}, entryId={}", userId, entryId);
-            return buildAssetResponse(tenantId, entryId);
+            return buildAssetResponse(tenantId, entry);
         }
 
         // Paid content requires an active entitlement (purchase)
@@ -78,10 +78,11 @@ public class MediaEntitlementService {
         }
 
         logger.debug("Access granted (entitlement): userId={}, entryId={}", userId, entryId);
-        return buildAssetResponse(tenantId, entryId);
+        return buildAssetResponse(tenantId, entry);
     }
 
-    private Optional<MediaEntitlementResponse> buildAssetResponse(String tenantId, String entryId) {
+    private Optional<MediaEntitlementResponse> buildAssetResponse(String tenantId, Entry entry) {
+        String entryId = entry.getId();
         Optional<Asset> optAsset = assetRepository
                 .findByTenantIdAndEntryIdAndKindAndStatus(tenantId, entryId, MediaKind.FULL, AssetStatus.READY);
 
@@ -91,12 +92,23 @@ public class MediaEntitlementService {
         }
 
         Asset asset = optAsset.get();
+
+        // Resolve HLS R2 prefix: stored on entry for new transcodes,
+        // computed for legacy entries that have hlsReady but no stored prefix
+        String hlsPrefix = null;
+        if (entry.isHlsReady()) {
+            hlsPrefix = entry.getHlsR2Prefix() != null
+                    ? entry.getHlsR2Prefix()
+                    : "public/media/" + entryId + "/hls";
+        }
+
         return Optional.of(new MediaEntitlementResponse(
                 true,
                 asset.getR2Key(),
                 asset.getContentType(),
                 computeContentDisposition(asset),
-                asset.getFileName()
+                asset.getFileName(),
+                hlsPrefix
         ));
     }
 

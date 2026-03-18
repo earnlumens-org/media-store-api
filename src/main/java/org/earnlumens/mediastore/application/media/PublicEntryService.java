@@ -108,12 +108,15 @@ public class PublicEntryService {
         // HLS is ready when the transcoding pipeline has completed for this entry
         boolean hlsReady = entry.isHlsReady();
 
+        // Paid entries: hide the full article body — served only via authenticated endpoint
+        String resourceContent = entry.isPaid() ? null : entry.getResourceContent();
+
         return new PublicEntryResponse(
                 entry.getId(),
                 mapType(entry.getType()),
                 entry.getTitle(),
                 entry.getDescription(),
-                entry.getResourceContent(),
+                resourceContent,
                 entry.getUserId(),
                 entry.getAuthorUsername() != null ? entry.getAuthorUsername() : entry.getUserId(),
                 entry.getAuthorAvatarUrl(),

@@ -89,6 +89,9 @@ public class EntryEntity {
     /** True when HLS transcoding has completed. */
     private boolean hlsReady;
 
+    /** R2 key prefix where HLS segments live. */
+    private String hlsR2Prefix;
+
     private long viewCount;
 
     @CreatedDate
@@ -172,6 +175,9 @@ public class EntryEntity {
 
     public boolean isHlsReady() { return hlsReady; }
     public void setHlsReady(boolean hlsReady) { this.hlsReady = hlsReady; }
+
+    public String getHlsR2Prefix() { return hlsR2Prefix; }
+    public void setHlsR2Prefix(String hlsR2Prefix) { this.hlsR2Prefix = hlsR2Prefix; }
 
     public long getViewCount() { return viewCount; }
     public void setViewCount(long viewCount) { this.viewCount = viewCount; }

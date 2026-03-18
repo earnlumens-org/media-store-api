@@ -43,6 +43,8 @@ public class Entry {
     private Integer durationSec;
     /** True when HLS transcoding has completed and the master.m3u8 is available on CDN. */
     private boolean hlsReady;
+    /** R2 key prefix where HLS segments live (e.g. "private/media/{id}/hls"). */
+    private String hlsR2Prefix;
     private long viewCount;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -121,6 +123,9 @@ public class Entry {
 
     public boolean isHlsReady() { return hlsReady; }
     public void setHlsReady(boolean hlsReady) { this.hlsReady = hlsReady; }
+
+    public String getHlsR2Prefix() { return hlsR2Prefix; }
+    public void setHlsR2Prefix(String hlsR2Prefix) { this.hlsR2Prefix = hlsR2Prefix; }
 
     public long getViewCount() { return viewCount; }
     public void setViewCount(long viewCount) { this.viewCount = viewCount; }
