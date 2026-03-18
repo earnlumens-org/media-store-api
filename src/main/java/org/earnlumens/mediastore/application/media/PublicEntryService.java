@@ -108,8 +108,9 @@ public class PublicEntryService {
         // HLS is ready when the transcoding pipeline has completed for this entry
         boolean hlsReady = entry.isHlsReady();
 
-        // Paid entries: hide the full article body — served only via authenticated endpoint
-        String resourceContent = entry.isPaid() ? null : entry.getResourceContent();
+        // resourceContent is returned for all entries; access control is enforced
+        // by the frontend (entitlement check) and the CDN worker (media downloads).
+        String resourceContent = entry.getResourceContent();
 
         return new PublicEntryResponse(
                 entry.getId(),
