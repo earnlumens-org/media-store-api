@@ -8,7 +8,10 @@ import java.math.BigDecimal;
  * Embedded inside Entry.paymentSplits as a list of sub-documents in MongoDB.
  * Each split defines a wallet, a role, and a percentage of the total price.
  * <p>
- * The sum of all split percentages for a given Entry must equal exactly 100.00.
+ * Only non-platform splits (SELLER, COLLABORATOR) are stored in the entry.
+ * The PLATFORM split is applied dynamically at payment time from environment
+ * config (PLATFORM_WALLET, PLATFORM_FEE_PERCENT).
+ * <p>
  * BigDecimal is used for all monetary/percentage calculations to avoid
  * floating-point precision issues.
  */

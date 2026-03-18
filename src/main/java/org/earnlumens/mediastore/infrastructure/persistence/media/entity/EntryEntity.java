@@ -68,8 +68,9 @@ public class EntryEntity {
     private String sellerWallet;
 
     /**
-     * Payment distribution splits. Embedded sub-documents.
-     * Currently: PLATFORM (10%) + SELLER (90%).
+     * Payment distribution splits (non-platform only). Embedded sub-documents.
+     * Currently: SELLER (90%). The PLATFORM split is applied dynamically
+     * at payment time from environment config.
      * Future: up to 100 recipients.
      */
     private List<PaymentSplitEntity> paymentSplits = new ArrayList<>();

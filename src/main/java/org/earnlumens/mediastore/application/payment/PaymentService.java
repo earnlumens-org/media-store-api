@@ -14,11 +14,14 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import org.earnlumens.mediastore.infrastructure.config.PlatformConfig;
+
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -38,11 +41,14 @@ public class PaymentService {
 
     private static final Logger logger = LoggerFactory.getLogger(PaymentService.class);
 
+    private static final BigDecimal ONE_HUNDRED = new BigDecimal("100.00");
+
     private final EntryRepository entryRepository;
     private final OrderRepository orderRepository;
     private final EntitlementRepository entitlementRepository;
     private final StellarTransactionService stellarTxService;
     private final StellarConfig stellarConfig;
+    private final PlatformConfig platformConfig;
     private final XlmUsdPriceService xlmUsdPriceService;
 
     public PaymentService(EntryRepository entryRepository,
@@ -50,12 +56,14 @@ public class PaymentService {
                           EntitlementRepository entitlementRepository,
                           StellarTransactionService stellarTxService,
                           StellarConfig stellarConfig,
+                          PlatformConfig platformConfig,
                           XlmUsdPriceService xlmUsdPriceService) {
         this.entryRepository = entryRepository;
         this.orderRepository = orderRepository;
         this.entitlementRepository = entitlementRepository;
         this.stellarTxService = stellarTxService;
         this.stellarConfig = stellarConfig;
+        this.platformConfig = platformConfig;
         this.xlmUsdPriceService = xlmUsdPriceService;
     }
 
@@ -113,10 +121,13 @@ public class PaymentService {
             }
         }
 
-        List<PaymentSplit> splits = entry.getPaymentSplits();
-        if (splits == null || splits.isEmpty()) {
+        // Build the full payment splits dynamically: platform split from env config + entry's non-platform splits.
+        // This ensures changes to PLATFORM_WALLET or PLATFORM_FEE_PERCENT take effect immediately.
+        List<PaymentSplit> entrySplits = entry.getPaymentSplits();
+        if (entrySplits == null || entrySplits.isEmpty()) {
             throw new IllegalArgumentException("Entry has no payment splits configured");
         }
+        List<PaymentSplit> splits = buildFullSplits(entrySplits);
 
         // 2. Check for existing orders (idempotency + duplicate handling)
         List<Order> existingOrders = orderRepository.findAllByTenantIdAndUserIdAndEntryId(tenantId, userId, entryId);
@@ -221,7 +232,12 @@ public class PaymentService {
             order.setCompletedAt(LocalDateTime.now(ZoneOffset.UTC));
             orderRepository.save(order);
 
-            // 5. Create entitlement
+            // 5. Expire all other PENDING orders for this buyer.
+            // A successful submission changes the buyer's on-chain sequence number,
+            // which invalidates the XDR in any previously prepared orders (tx_bad_seq).
+            expireStalePendingOrders(order.getTenantId(), order.getUserId(), order.getId());
+
+            // 6. Create entitlement
             createEntitlement(order);
 
             logger.info("Payment completed: orderId={}, txHash={}, entryId={}",
@@ -259,6 +275,59 @@ public class PaymentService {
         entitlementRepository.save(entitlement);
         logger.info("Entitlement created: userId={}, entryId={}, orderId={}",
                 order.getUserId(), order.getEntryId(), order.getId());
+    }
+
+    /**
+     * Expires all other PENDING orders for the same buyer.
+     * After a successful Stellar submission the buyer's on-chain sequence number
+     * has been incremented, so any previously built XDR is no longer valid (tx_bad_seq).
+     * Expiring them forces a fresh prepare on retry.
+     */
+    private void expireStalePendingOrders(String tenantId, String userId, String completedOrderId) {
+        List<Order> pendingOrders = orderRepository.findAllByTenantIdAndUserIdAndStatus(
+                tenantId, userId, OrderStatus.PENDING);
+
+        int expired = 0;
+        for (Order pending : pendingOrders) {
+            if (pending.getId().equals(completedOrderId)) continue;
+            pending.setStatus(OrderStatus.EXPIRED);
+            orderRepository.save(pending);
+            expired++;
+        }
+
+        if (expired > 0) {
+            logger.info("Expired {} stale PENDING orders for buyer userId={} after successful payment",
+                    expired, userId);
+        }
+    }
+
+    /**
+     * Builds the full payment split list by combining the platform split (from env config)
+     * with the entry's non-platform splits (SELLER, COLLABORATOR).
+     * The platform fee% comes from PLATFORM_FEE_PERCENT and the platform wallet from PLATFORM_WALLET.
+     * Non-platform splits are re-scaled so that all splits (platform + others) sum to 100%.
+     */
+    private List<PaymentSplit> buildFullSplits(List<PaymentSplit> entrySplits) {
+        BigDecimal platformPercent = platformConfig.getFeePercent();
+        BigDecimal nonPlatformTotal = ONE_HUNDRED.subtract(platformPercent);
+
+        // Sum of entry split percentages (should be ~nonPlatformTotal, but normalize just in case)
+        BigDecimal entryTotal = entrySplits.stream()
+                .map(PaymentSplit::getPercent)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        List<PaymentSplit> fullSplits = new ArrayList<>();
+        fullSplits.add(new PaymentSplit(platformConfig.getWallet(), SplitRole.PLATFORM, platformPercent));
+
+        for (PaymentSplit split : entrySplits) {
+            // Normalize: if entry splits don't sum to nonPlatformTotal, scale proportionally
+            BigDecimal normalizedPercent = split.getPercent()
+                    .multiply(nonPlatformTotal)
+                    .divide(entryTotal, 2, RoundingMode.HALF_UP);
+            fullSplits.add(new PaymentSplit(split.getWallet(), split.getRole(), normalizedPercent));
+        }
+
+        return fullSplits;
     }
 
     private PreparePaymentResponse toResponse(Order order) {

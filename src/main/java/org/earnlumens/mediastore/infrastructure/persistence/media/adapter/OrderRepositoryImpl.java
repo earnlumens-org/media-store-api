@@ -46,6 +46,14 @@ public class OrderRepositoryImpl implements OrderRepository {
     }
 
     @Override
+    public List<Order> findAllByTenantIdAndUserIdAndStatus(String tenantId, String userId, OrderStatus status) {
+        return orderMongoRepository.findByTenantIdAndUserIdAndStatus(tenantId, userId, status.name())
+                .stream()
+                .map(orderMapper::toModel)
+                .toList();
+    }
+
+    @Override
     public long countByTenantIdAndSellerIdAndStatus(String tenantId, String sellerId, OrderStatus status) {
         return orderMongoRepository.countByTenantIdAndSellerIdAndStatus(tenantId, sellerId, status.name());
     }

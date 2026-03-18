@@ -28,8 +28,9 @@ public class Entry {
     /** Stellar public key of the seller at the time of publishing. Required for paid content. */
     private String sellerWallet;
     /**
-     * Payment distribution splits for this entry.
-     * Currently: PLATFORM (10%) + SELLER (90%).
+     * Payment distribution splits for this entry (non-platform only).
+     * Currently: SELLER (90%). The PLATFORM split is applied dynamically
+     * at payment time from environment config (PLATFORM_WALLET, PLATFORM_FEE_PERCENT).
      * Future: up to 100 recipients (collaborators).
      * Stored as embedded sub-documents in MongoDB.
      */

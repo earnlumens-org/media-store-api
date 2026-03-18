@@ -88,9 +88,9 @@ public class EntryUploadService {
      * Creates a new DRAFT entry owned by the given user.
      * <p>
      * For paid content, a valid Stellar wallet (sellerWallet) is required.
-     * The backend auto-generates the default payment splits:
-     *   - PLATFORM: platform.fee-percent (from config)
-     *   - SELLER: 100 - platform.fee-percent
+     * The entry stores only non-platform splits (SELLER, COLLABORATOR).
+     * The platform wallet and fee are applied dynamically at payment time
+     * from environment config (PLATFORM_WALLET, PLATFORM_FEE_PERCENT).
      * <p>
      * Future: sellers will be able to add COLLABORATOR splits manually.
      */
@@ -139,10 +139,12 @@ public class EntryUploadService {
         entry.setPriceCurrency(currency);
         entry.setContentLanguage(request.contentLanguage());
 
-        // Set seller wallet and generate payment splits for paid content
+        // Set seller wallet and generate payment splits for paid content.
+        // Only non-platform splits are stored in the entry. The platform split
+        // (wallet + fee%) is applied dynamically at payment time from env config.
         if (isPaid) {
             entry.setSellerWallet(request.sellerWallet());
-            entry.setPaymentSplits(buildDefaultSplits(request.sellerWallet()));
+            entry.setPaymentSplits(buildSellerSplits(request.sellerWallet()));
             logger.info("Paid entry: sellerWallet={}, splits={}", request.sellerWallet(),
                     entry.getPaymentSplits().size());
         }
@@ -168,19 +170,21 @@ public class EntryUploadService {
     }
 
     /**
-     * Builds the default payment splits: PLATFORM + SELLER.
-     * Uses BigDecimal to guarantee exact decimal arithmetic.
+     * Builds the non-platform payment splits for an entry.
+     * Only the SELLER split is stored in the entry. The PLATFORM split
+     * (wallet + fee%) is resolved dynamically at payment time from environment config.
+     * <p>
+     * Splits represent how to divide the non-platform portion among recipients.
+     * A single seller gets 100.00 (= 100% of the seller portion).
+     * Future collaborators would split this (e.g. SELLER 80 + COLLABORATOR 20).
+     * At payment time, these are scaled to (100 - platformFee)% of the total.
      *
      * @param sellerWallet the seller's Stellar public key
-     * @return list with exactly 2 splits summing to 100.00%
+     * @return list with the SELLER split at 100% of the non-platform portion
      */
-    private List<PaymentSplit> buildDefaultSplits(String sellerWallet) {
-        BigDecimal platformPercent = platformConfig.getFeePercent();
-        BigDecimal sellerPercent = ONE_HUNDRED.subtract(platformPercent);
-
+    private List<PaymentSplit> buildSellerSplits(String sellerWallet) {
         List<PaymentSplit> splits = new ArrayList<>();
-        splits.add(new PaymentSplit(platformConfig.getWallet(), SplitRole.PLATFORM, platformPercent));
-        splits.add(new PaymentSplit(sellerWallet, SplitRole.SELLER, sellerPercent));
+        splits.add(new PaymentSplit(sellerWallet, SplitRole.SELLER, ONE_HUNDRED));
         return splits;
     }
 
