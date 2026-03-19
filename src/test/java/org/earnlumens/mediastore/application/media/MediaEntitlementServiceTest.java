@@ -240,18 +240,79 @@ class MediaEntitlementServiceTest {
         assertTrue(resp.contentDisposition().contains("archive.zip"));
     }
 
-    // ─── Owner allowed but no READY FULL asset → empty ────────
+    // ─── Owner allowed but no READY FULL asset (non-RESOURCE) → empty ──
 
     @Test
     void owner_allowed_butNoReadyAsset_returnsEmpty() {
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
-                .thenReturn(Optional.of(paidEntry()));
+                .thenReturn(Optional.of(paidEntry()));   // VIDEO type
         when(assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
                 TENANT, ENTRY_ID, MediaKind.FULL, AssetStatus.READY))
                 .thenReturn(Optional.empty());
 
         Optional<MediaEntitlementResponse> result =
                 service.checkEntitlement(TENANT, OWNER_ID, ENTRY_ID);
+
+        assertTrue(result.isEmpty());
+    }
+
+    // ─── Text-only RESOURCE entry without FULL asset → allowed ──
+
+    @Test
+    void textOnlyResource_owner_isAllowed_withoutFullAsset() {
+        Entry resource = paidEntry();
+        resource.setType(EntryType.RESOURCE);
+
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
+                .thenReturn(Optional.of(resource));
+        when(assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
+                TENANT, ENTRY_ID, MediaKind.FULL, AssetStatus.READY))
+                .thenReturn(Optional.empty());
+
+        Optional<MediaEntitlementResponse> result =
+                service.checkEntitlement(TENANT, OWNER_ID, ENTRY_ID);
+
+        assertTrue(result.isPresent());
+        assertTrue(result.get().allowed());
+        assertNull(result.get().r2Key());
+        verifyNoInteractions(entitlementRepository);
+    }
+
+    @Test
+    void textOnlyResource_buyer_isAllowed_withActiveEntitlement() {
+        Entry resource = paidEntry();
+        resource.setType(EntryType.RESOURCE);
+
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
+                .thenReturn(Optional.of(resource));
+        when(entitlementRepository.existsByTenantIdAndUserIdAndEntryIdAndStatus(
+                TENANT, BUYER_ID, ENTRY_ID, EntitlementStatus.ACTIVE))
+                .thenReturn(true);
+        when(assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
+                TENANT, ENTRY_ID, MediaKind.FULL, AssetStatus.READY))
+                .thenReturn(Optional.empty());
+
+        Optional<MediaEntitlementResponse> result =
+                service.checkEntitlement(TENANT, BUYER_ID, ENTRY_ID);
+
+        assertTrue(result.isPresent());
+        assertTrue(result.get().allowed());
+        assertNull(result.get().r2Key());
+    }
+
+    @Test
+    void textOnlyResource_stranger_isDenied_withoutEntitlement() {
+        Entry resource = paidEntry();
+        resource.setType(EntryType.RESOURCE);
+
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
+                .thenReturn(Optional.of(resource));
+        when(entitlementRepository.existsByTenantIdAndUserIdAndEntryIdAndStatus(
+                TENANT, STRANGER_ID, ENTRY_ID, EntitlementStatus.ACTIVE))
+                .thenReturn(false);
+
+        Optional<MediaEntitlementResponse> result =
+                service.checkEntitlement(TENANT, STRANGER_ID, ENTRY_ID);
 
         assertTrue(result.isEmpty());
     }

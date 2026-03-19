@@ -5,6 +5,7 @@ import org.earnlumens.mediastore.domain.media.model.Asset;
 import org.earnlumens.mediastore.domain.media.model.AssetStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
+import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.model.MediaKind;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
@@ -87,6 +88,12 @@ public class MediaEntitlementService {
                 .findByTenantIdAndEntryIdAndKindAndStatus(tenantId, entryId, MediaKind.FULL, AssetStatus.READY);
 
         if (optAsset.isEmpty()) {
+            // RESOURCE entries can be text-only (no file upload).
+            // Grant access so the frontend can render resourceContent.
+            if (entry.getType() == EntryType.RESOURCE) {
+                logger.debug("Text-only RESOURCE entry, granting access: tenantId={}, entryId={}", tenantId, entryId);
+                return Optional.of(new MediaEntitlementResponse(true, null, null, null, null, null));
+            }
             logger.warn("No READY FULL asset found: tenantId={}, entryId={}", tenantId, entryId);
             return Optional.empty();
         }
