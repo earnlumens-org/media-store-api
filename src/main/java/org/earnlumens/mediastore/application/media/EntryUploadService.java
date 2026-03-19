@@ -358,6 +358,19 @@ public class EntryUploadService {
                     entry.setPriceXlm(request.priceXlm());
                     entry.setPriceUsd(null);
                 }
+                // Set seller wallet when switching to paid (required if entry has no wallet yet)
+                if (request.sellerWallet() != null && !request.sellerWallet().isBlank()) {
+                    if (!STELLAR_PUBLIC_KEY.matcher(request.sellerWallet()).matches()) {
+                        throw new IllegalArgumentException("Invalid Stellar public key");
+                    }
+                    if (request.sellerWallet().equals(platformConfig.getWallet())) {
+                        throw new IllegalArgumentException("Seller wallet cannot be the platform wallet");
+                    }
+                    entry.setSellerWallet(request.sellerWallet());
+                    entry.setPaymentSplits(buildSellerSplits(request.sellerWallet()));
+                } else if (entry.getSellerWallet() == null || entry.getSellerWallet().isBlank()) {
+                    throw new IllegalArgumentException("A connected wallet is required for paid content");
+                }
             } else if (Boolean.FALSE.equals(request.isPaid())) {
                 entry.setPriceXlm(null);
                 entry.setPriceUsd(null);
@@ -585,7 +598,8 @@ public class EntryUploadService {
                 entry.getCreatedAt() != null ? entry.getCreatedAt().format(fmt) : null,
                 entry.getUpdatedAt() != null ? entry.getUpdatedAt().format(fmt) : null,
                 entry.getPublishedAt() != null ? entry.getPublishedAt().format(fmt) : null,
-                transcodingStatus
+                transcodingStatus,
+                entry.getSellerWallet()
         );
     }
 
