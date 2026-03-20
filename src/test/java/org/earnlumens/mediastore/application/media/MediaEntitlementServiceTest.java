@@ -347,4 +347,32 @@ class MediaEntitlementServiceTest {
         assertTrue(result.get().allowed());
         verifyNoInteractions(entitlementRepository);
     }
+
+    // ─── Unauthenticated (null userId) ────────────────────────
+
+    @Test
+    void unauthenticated_canAccessFreeContent() {
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
+                .thenReturn(Optional.of(freeEntry()));
+        configureFullAsset();
+
+        Optional<MediaEntitlementResponse> result =
+                service.checkEntitlement(TENANT, null, ENTRY_ID);
+
+        assertTrue(result.isPresent());
+        assertTrue(result.get().allowed());
+        verifyNoInteractions(entitlementRepository);
+    }
+
+    @Test
+    void unauthenticated_isDenied_forPaidContent() {
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
+                .thenReturn(Optional.of(paidEntry()));
+
+        Optional<MediaEntitlementResponse> result =
+                service.checkEntitlement(TENANT, null, ENTRY_ID);
+
+        assertTrue(result.isEmpty());
+        verifyNoInteractions(entitlementRepository);
+    }
 }

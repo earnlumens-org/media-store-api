@@ -88,6 +88,7 @@ public class WebSecurityConfig {
                                 "/api/auth/logout",
                                 "/api/user/by-username/**",
                                 "/api/user/exists/**",
+                                "/api/media/entitlements/**",
                                 "/oauth2/authorization/**",
                                 "/login/oauth2/**",
                                 "/error"

@@ -38,13 +38,13 @@ public class MediaEntitlementService {
      * <p>
      * Access rules (evaluated in order):
      * <ol>
+     *   <li>Free content ({@code isPaid = false}) is accessible to anyone (including unauthenticated)</li>
      *   <li>Owner always has access</li>
-     *   <li>Free content ({@code isPaid = false}) is accessible to any authenticated user</li>
      *   <li>Paid content requires an ACTIVE entitlement (purchase)</li>
      * </ol>
      *
      * @param tenantId the tenant identifier
-     * @param userId   the requesting user's OAuth user ID (JWT subject)
+     * @param userId   the requesting user's OAuth user ID (JWT subject), or {@code null} if unauthenticated
      * @param entryId  the entry identifier
      * @return the entitlement response if allowed, empty otherwise
      */
@@ -57,15 +57,21 @@ public class MediaEntitlementService {
 
         Entry entry = optEntry.get();
 
-        // Owner always has access
-        if (userId.equals(entry.getUserId())) {
-            logger.debug("Access granted (owner): userId={}, entryId={}", userId, entryId);
+        // Free content is accessible to anyone (including unauthenticated users)
+        if (!entry.isPaid()) {
+            logger.debug("Access granted (free content): userId={}, entryId={}", userId, entryId);
             return buildAssetResponse(tenantId, entry);
         }
 
-        // Free content is accessible to any authenticated user
-        if (!entry.isPaid()) {
-            logger.debug("Access granted (free content): userId={}, entryId={}", userId, entryId);
+        // Paid content requires authentication
+        if (userId == null) {
+            logger.debug("Access denied (unauthenticated, paid content): entryId={}", entryId);
+            return Optional.empty();
+        }
+
+        // Owner always has access
+        if (userId.equals(entry.getUserId())) {
+            logger.debug("Access granted (owner): userId={}, entryId={}", userId, entryId);
             return buildAssetResponse(tenantId, entry);
         }
 

@@ -23,10 +23,10 @@ import java.util.Optional;
  * <p>
  * Authentication is handled by {@link org.earnlumens.mediastore.infrastructure.security.jwt.RefreshCookieAuthFilter}
  * which validates the refresh-cookie session and populates the {@link SecurityContextHolder}.
- * Spring Security's {@code .anyRequest().authenticated()} rule ensures unauthenticated
- * requests are rejected with 401 before reaching this controller.
  * <p>
- * The defensive null-check on the principal below is a safety net only.
+ * This endpoint is accessible without authentication (permitAll) so that free
+ * content can be served to unauthenticated users. The service layer enforces
+ * that paid content still requires a valid session.
  */
 @RestController
 @RequestMapping("/api/media")
@@ -51,17 +51,15 @@ public class MediaEntitlementController {
             HttpServletRequest request
     ) {
         // 1. Extract userId from SecurityContext (set by RefreshCookieAuthFilter)
+        //    userId is null for unauthenticated requests — free content is still accessible.
+        String userId = null;
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
-        if (auth == null || !(auth.getPrincipal() instanceof OAuth2User principal)) {
-            // Defence-in-depth: Spring Security should have blocked this already
-            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        if (auth != null && auth.getPrincipal() instanceof OAuth2User principal) {
+            Object idAttr = principal.getAttribute("id");
+            if (idAttr != null) {
+                userId = idAttr.toString();
+            }
         }
-
-        Object idAttr = principal.getAttribute("id");
-        if (idAttr == null) {
-            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
-        }
-        String userId = idAttr.toString();
 
         // 2. Resolve tenant from Host header
         String tenantId = tenantResolver.resolve(request);
