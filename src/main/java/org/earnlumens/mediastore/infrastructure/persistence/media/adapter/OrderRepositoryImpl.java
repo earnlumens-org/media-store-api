@@ -32,6 +32,14 @@ public class OrderRepositoryImpl implements OrderRepository {
     }
 
     @Override
+    public List<Order> findAllByTenantIdAndUserIdAndCollectionId(String tenantId, String userId, String collectionId) {
+        return orderMongoRepository.findByTenantIdAndUserIdAndCollectionId(tenantId, userId, collectionId)
+                .stream()
+                .map(orderMapper::toModel)
+                .toList();
+    }
+
+    @Override
     public Optional<Order> findByTenantIdAndId(String tenantId, String id) {
         return orderMongoRepository.findByTenantIdAndId(tenantId, id)
                 .map(orderMapper::toModel);

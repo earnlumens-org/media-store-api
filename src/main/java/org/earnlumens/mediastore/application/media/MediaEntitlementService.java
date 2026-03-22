@@ -3,18 +3,26 @@ package org.earnlumens.mediastore.application.media;
 import org.earnlumens.mediastore.domain.media.dto.response.MediaEntitlementResponse;
 import org.earnlumens.mediastore.domain.media.model.Asset;
 import org.earnlumens.mediastore.domain.media.model.AssetStatus;
+import org.earnlumens.mediastore.domain.media.model.Collection;
+import org.earnlumens.mediastore.domain.media.model.CollectionStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.model.MediaKind;
+import org.earnlumens.mediastore.domain.media.model.PricingMode;
+import org.earnlumens.mediastore.domain.media.model.TargetType;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
+import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 
 @Service
 public class MediaEntitlementService {
@@ -24,13 +32,16 @@ public class MediaEntitlementService {
     private final EntryRepository entryRepository;
     private final EntitlementRepository entitlementRepository;
     private final AssetRepository assetRepository;
+    private final CollectionRepository collectionRepository;
 
     public MediaEntitlementService(EntryRepository entryRepository,
                                    EntitlementRepository entitlementRepository,
-                                   AssetRepository assetRepository) {
+                                   AssetRepository assetRepository,
+                                   CollectionRepository collectionRepository) {
         this.entryRepository = entryRepository;
         this.entitlementRepository = entitlementRepository;
         this.assetRepository = assetRepository;
+        this.collectionRepository = collectionRepository;
     }
 
     /**
@@ -79,13 +90,36 @@ public class MediaEntitlementService {
         boolean entitled = entitlementRepository
                 .existsByTenantIdAndUserIdAndEntryIdAndStatus(tenantId, userId, entryId, EntitlementStatus.ACTIVE);
 
-        if (!entitled) {
-            logger.debug("Access denied (no entitlement): tenantId={}, userId={}, entryId={}", tenantId, userId, entryId);
-            return Optional.empty();
+        if (entitled) {
+            logger.debug("Access granted (entry entitlement): userId={}, entryId={}", userId, entryId);
+            return buildAssetResponse(tenantId, entry);
         }
 
-        logger.debug("Access granted (entitlement): userId={}, entryId={}", userId, entryId);
-        return buildAssetResponse(tenantId, entry);
+        // Check collection-level access: find PUBLISHED collections containing this entry,
+        // then check if the user has an ACTIVE collection entitlement for any of them.
+        List<Collection> parentCollections = collectionRepository
+                .findByTenantIdAndStatusAndItemsEntryId(tenantId, CollectionStatus.PUBLISHED, entryId);
+
+        if (!parentCollections.isEmpty()) {
+            List<String> collIds = parentCollections.stream()
+                    .filter(Collection::isPaid)
+                    .map(Collection::getId)
+                    .toList();
+
+            if (!collIds.isEmpty()) {
+                Set<String> entitledCollIds = entitlementRepository.findEntitledCollectionIds(
+                        tenantId, userId, collIds, EntitlementStatus.ACTIVE);
+
+                if (!entitledCollIds.isEmpty()) {
+                    logger.debug("Access granted (collection entitlement): userId={}, entryId={}, collectionIds={}",
+                            userId, entryId, entitledCollIds);
+                    return buildAssetResponse(tenantId, entry);
+                }
+            }
+        }
+
+        logger.debug("Access denied (no entitlement): tenantId={}, userId={}, entryId={}", tenantId, userId, entryId);
+        return Optional.empty();
     }
 
     private Optional<MediaEntitlementResponse> buildAssetResponse(String tenantId, Entry entry) {

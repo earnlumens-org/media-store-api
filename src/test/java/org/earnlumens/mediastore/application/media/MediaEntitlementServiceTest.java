@@ -3,14 +3,17 @@ package org.earnlumens.mediastore.application.media;
 import org.earnlumens.mediastore.domain.media.dto.response.MediaEntitlementResponse;
 import org.earnlumens.mediastore.domain.media.model.*;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
+import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
+import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 /**
@@ -33,6 +36,7 @@ class MediaEntitlementServiceTest {
     private EntryRepository entryRepository;
     private EntitlementRepository entitlementRepository;
     private AssetRepository assetRepository;
+    private CollectionRepository collectionRepository;
     private MediaEntitlementService service;
 
     @BeforeEach
@@ -40,7 +44,11 @@ class MediaEntitlementServiceTest {
         entryRepository = mock(EntryRepository.class);
         entitlementRepository = mock(EntitlementRepository.class);
         assetRepository = mock(AssetRepository.class);
-        service = new MediaEntitlementService(entryRepository, entitlementRepository, assetRepository);
+        collectionRepository = mock(CollectionRepository.class);
+        // Default: no parent collections for entry (collection-level access fallback returns empty)
+        when(collectionRepository.findByTenantIdAndStatusAndItemsEntryId(any(), any(), any()))
+                .thenReturn(List.of());
+        service = new MediaEntitlementService(entryRepository, entitlementRepository, assetRepository, collectionRepository);
     }
 
     private Entry paidEntry() {

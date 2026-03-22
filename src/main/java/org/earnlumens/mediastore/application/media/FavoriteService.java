@@ -139,6 +139,16 @@ public class FavoriteService {
         Set<String> entitledEntryIds = entitlementRepository.findEntitledEntryIds(
                 tenantId, userId, paidNonOwnedEntryIds, EntitlementStatus.ACTIVE);
 
+        // Batch-check entitlements for paid collections
+        List<String> paidNonOwnedCollIds = collectionsById.values().stream()
+                .filter(Collection::isPaid)
+                .filter(c -> !userId.equals(c.getUserId()))
+                .map(Collection::getId)
+                .toList();
+
+        Set<String> entitledCollIds = entitlementRepository.findEntitledCollectionIds(
+                tenantId, userId, paidNonOwnedCollIds, EntitlementStatus.ACTIVE);
+
         // Build response, preserving favorites order (newest first), skipping orphans
         List<FavoriteItemResponse> items = new ArrayList<>();
         List<String> orphanIds = new ArrayList<>();
@@ -157,7 +167,10 @@ public class FavoriteService {
             } else {
                 Collection collection = collectionsById.get(fav.getItemId());
                 if (collection != null) {
-                    items.add(toCollectionResponse(fav, collection));
+                    boolean isOwner = userId.equals(collection.getUserId());
+                    boolean collLocked = collection.isPaid() && !isOwner
+                            && !entitledCollIds.contains(collection.getId());
+                    items.add(toCollectionResponse(fav, collection, collLocked));
                 } else {
                     orphanIds.add(fav.getId());
                 }
@@ -204,23 +217,24 @@ public class FavoriteService {
         );
     }
 
-    private FavoriteItemResponse toCollectionResponse(Favorite fav, Collection collection) {
+    private FavoriteItemResponse toCollectionResponse(Favorite fav, Collection collection, boolean locked) {
+        boolean unlocked = collection.isPaid() && !locked;
         return new FavoriteItemResponse(
                 fav.getId(),
                 collection.getId(),
                 "collection",
                 null, // entryType — not applicable for collections
                 collection.getTitle(),
-                null, // authorName — collections store userId, not username
-                null, // authorAvatarUrl
+                collection.getAuthorUsername(),
+                collection.getAuthorAvatarUrl(),
                 collection.getPublishedAt() != null ? collection.getPublishedAt().format(ISO_FORMATTER) : null,
                 null, // thumbnailUrl
                 collection.getCoverR2Key(),
                 null, // durationSec
                 collection.getCollectionType() != null ? collection.getCollectionType().name().toLowerCase() : null,
                 collection.getItems() != null ? collection.getItems().size() : null,
-                false, // locked
-                false, // unlocked — collections are never paid
+                locked,
+                unlocked,
                 fav.getAddedAt() != null ? fav.getAddedAt().format(ISO_FORMATTER) : null
         );
     }

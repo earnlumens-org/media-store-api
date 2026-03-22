@@ -2,6 +2,7 @@ package org.earnlumens.mediastore.web.media;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.earnlumens.mediastore.application.media.PurchaseListService;
+import org.earnlumens.mediastore.domain.media.dto.response.PurchasedCollectionPageResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PurchasedEntryPageResponse;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantResolver;
 import org.slf4j.Logger;
@@ -57,6 +58,34 @@ public class PurchaseController {
             logger.error("Error listing purchases for userId={}: {}", userId, e.getMessage(), e);
             return ResponseEntity.internalServerError()
                     .body(Map.of("error", "Failed to list purchases"));
+        }
+    }
+
+    /**
+     * GET /api/purchases/collections?page=0&size=24
+     * Returns a paginated list of collections the authenticated user has purchased.
+     */
+    @GetMapping("/collections")
+    public ResponseEntity<?> listCollectionPurchases(
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "24") int size,
+            HttpServletRequest request) {
+
+        String userId = extractUserId();
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+
+        String tenantId = tenantResolver.resolve(request);
+
+        try {
+            PurchasedCollectionPageResponse response =
+                    purchaseListService.listCollectionPurchases(tenantId, userId, page, size);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            logger.error("Error listing collection purchases for userId={}: {}", userId, e.getMessage(), e);
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", "Failed to list collection purchases"));
         }
     }
 

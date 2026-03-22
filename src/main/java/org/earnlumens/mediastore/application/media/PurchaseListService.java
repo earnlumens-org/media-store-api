@@ -1,10 +1,15 @@
 package org.earnlumens.mediastore.application.media;
 
+import org.earnlumens.mediastore.domain.media.dto.response.PurchasedCollectionPageResponse;
+import org.earnlumens.mediastore.domain.media.dto.response.PurchasedCollectionResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PurchasedEntryPageResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PurchasedEntryResponse;
+import org.earnlumens.mediastore.domain.media.model.Collection;
 import org.earnlumens.mediastore.domain.media.model.Entitlement;
 import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
+import org.earnlumens.mediastore.domain.media.model.TargetType;
+import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.slf4j.Logger;
@@ -20,7 +25,7 @@ import java.util.stream.Collectors;
 
 /**
  * Service for listing a user's purchased content.
- * Joins entitlements with entry data in a single paginated response.
+ * Joins entitlements with entry/collection data in a single paginated response.
  */
 @Service
 public class PurchaseListService {
@@ -30,11 +35,14 @@ public class PurchaseListService {
 
     private final EntitlementRepository entitlementRepository;
     private final EntryRepository entryRepository;
+    private final CollectionRepository collectionRepository;
 
     public PurchaseListService(EntitlementRepository entitlementRepository,
-                               EntryRepository entryRepository) {
+                               EntryRepository entryRepository,
+                               CollectionRepository collectionRepository) {
         this.entitlementRepository = entitlementRepository;
         this.entryRepository = entryRepository;
+        this.collectionRepository = collectionRepository;
     }
 
     /**
@@ -104,5 +112,63 @@ public class PurchaseListService {
                         ? entitlement.getGrantedAt().format(ISO_FORMATTER)
                         : null
         );
+    }
+
+    /**
+     * Returns a paginated list of collections the user has purchased (ACTIVE collection entitlements).
+     */
+    public PurchasedCollectionPageResponse listCollectionPurchases(String tenantId, String userId,
+                                                                    int page, int size) {
+        Page<Entitlement> entitlementPage = entitlementRepository
+                .findByTenantIdAndUserIdAndTargetTypeAndStatus(
+                        tenantId, userId, TargetType.COLLECTION, EntitlementStatus.ACTIVE,
+                        PageRequest.of(page, size));
+
+        List<Entitlement> entitlements = entitlementPage.getContent();
+
+        if (entitlements.isEmpty()) {
+            return new PurchasedCollectionPageResponse(
+                    List.of(), page, size,
+                    entitlementPage.getTotalElements(),
+                    entitlementPage.getTotalPages());
+        }
+
+        List<String> collectionIds = entitlements.stream()
+                .map(Entitlement::getCollectionId)
+                .toList();
+
+        Map<String, Collection> collectionsById = collectionRepository
+                .findByTenantIdAndIdIn(tenantId, collectionIds)
+                .stream()
+                .collect(Collectors.toMap(Collection::getId, c -> c));
+
+        List<PurchasedCollectionResponse> items = entitlements.stream()
+                .filter(ent -> ent.getCollectionId() != null && collectionsById.containsKey(ent.getCollectionId()))
+                .map(ent -> {
+                    Collection coll = collectionsById.get(ent.getCollectionId());
+                    return new PurchasedCollectionResponse(
+                            coll.getId(),
+                            coll.getTitle(),
+                            coll.getDescription(),
+                            coll.getCollectionType() != null ? coll.getCollectionType().name() : null,
+                            coll.getCoverR2Key(),
+                            coll.getAuthorUsername(),
+                            coll.getAuthorAvatarUrl(),
+                            coll.isPaid(),
+                            coll.getPriceXlm(),
+                            coll.getItems() != null ? coll.getItems().size() : 0,
+                            ent.getGrantedAt() != null
+                                    ? ent.getGrantedAt().format(ISO_FORMATTER)
+                                    : null
+                    );
+                })
+                .toList();
+
+        return new PurchasedCollectionPageResponse(
+                items,
+                entitlementPage.getNumber(),
+                entitlementPage.getSize(),
+                entitlementPage.getTotalElements(),
+                entitlementPage.getTotalPages());
     }
 }

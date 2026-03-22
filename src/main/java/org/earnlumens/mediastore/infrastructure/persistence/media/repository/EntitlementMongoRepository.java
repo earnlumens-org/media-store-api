@@ -12,9 +12,18 @@ public interface EntitlementMongoRepository extends MongoRepository<EntitlementE
     boolean existsByTenantIdAndUserIdAndEntryIdAndStatus(
             String tenantId, String userId, String entryId, String status);
 
+    boolean existsByTenantIdAndUserIdAndTargetTypeAndCollectionIdAndStatus(
+            String tenantId, String userId, String targetType, String collectionId, String status);
+
     List<EntitlementEntity> findByTenantIdAndUserIdAndEntryIdInAndStatus(
             String tenantId, String userId, List<String> entryIds, String status);
 
+    List<EntitlementEntity> findByTenantIdAndUserIdAndTargetTypeAndCollectionIdInAndStatus(
+            String tenantId, String userId, String targetType, List<String> collectionIds, String status);
+
     Page<EntitlementEntity> findByTenantIdAndUserIdAndStatusOrderByGrantedAtDesc(
             String tenantId, String userId, String status, Pageable pageable);
+
+    Page<EntitlementEntity> findByTenantIdAndUserIdAndTargetTypeAndStatusOrderByGrantedAtDesc(
+            String tenantId, String userId, String targetType, String status, Pageable pageable);
 }

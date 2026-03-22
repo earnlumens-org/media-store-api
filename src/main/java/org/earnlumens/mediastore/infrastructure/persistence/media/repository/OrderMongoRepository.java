@@ -11,6 +11,8 @@ public interface OrderMongoRepository extends MongoRepository<OrderEntity, Strin
 
     List<OrderEntity> findByTenantIdAndUserIdAndEntryId(String tenantId, String userId, String entryId);
 
+    List<OrderEntity> findByTenantIdAndUserIdAndCollectionId(String tenantId, String userId, String collectionId);
+
     List<OrderEntity> findByTenantIdAndUserIdAndStatus(String tenantId, String userId, String status);
 
     Optional<OrderEntity> findByTenantIdAndId(String tenantId, String id);

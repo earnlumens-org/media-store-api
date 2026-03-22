@@ -11,6 +11,9 @@ public interface OrderRepository {
 
     List<Order> findAllByTenantIdAndUserIdAndEntryId(String tenantId, String userId, String entryId);
 
+    /** Find existing orders for a user+collection (duplicate purchase check) */
+    List<Order> findAllByTenantIdAndUserIdAndCollectionId(String tenantId, String userId, String collectionId);
+
     Optional<Order> findByTenantIdAndId(String tenantId, String id);
 
     /** Find expired PENDING orders for cleanup within a tenant */
