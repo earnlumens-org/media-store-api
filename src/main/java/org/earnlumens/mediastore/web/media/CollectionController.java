@@ -280,6 +280,63 @@ public class CollectionController {
         return ResponseEntity.ok(response);
     }
 
+    /** POST /api/collections/{id}/cover/init — Get a presigned URL for cover upload. */
+    @PostMapping("/{id}/cover/init")
+    public ResponseEntity<?> initCoverUpload(
+            @PathVariable("id") String id,
+            @RequestBody Map<String, String> body,
+            HttpServletRequest httpRequest) {
+
+        String userId = extractUserId();
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+
+        String fileName = body.get("fileName");
+        String contentType = body.get("contentType");
+        if (fileName == null || fileName.isBlank() || contentType == null || contentType.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "fileName and contentType are required"));
+        }
+
+        String tenantId = tenantResolver.resolve(httpRequest);
+
+        try {
+            var result = collectionService.initCoverUpload(tenantId, userId, id, fileName, contentType);
+            return ResponseEntity.ok(Map.of(
+                    "presignedUrl", result.presignedUrl(),
+                    "r2Key", result.r2Key()
+            ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /** POST /api/collections/{id}/cover/finalize — Finalize cover upload. */
+    @PostMapping("/{id}/cover/finalize")
+    public ResponseEntity<?> finalizeCoverUpload(
+            @PathVariable("id") String id,
+            @RequestBody Map<String, String> body,
+            HttpServletRequest httpRequest) {
+
+        String userId = extractUserId();
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+
+        String r2Key = body.get("r2Key");
+        if (r2Key == null || r2Key.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "r2Key is required"));
+        }
+
+        String tenantId = tenantResolver.resolve(httpRequest);
+
+        boolean finalized = collectionService.finalizeCoverUpload(tenantId, userId, id, r2Key);
+        if (!finalized) {
+            return ResponseEntity.status(404).body(Map.of("error", "Collection not found"));
+        }
+        return ResponseEntity.ok(Map.of("message", "Cover uploaded"));
+    }
+
     private String extractUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !(auth.getPrincipal() instanceof OAuth2User principal)) return null;

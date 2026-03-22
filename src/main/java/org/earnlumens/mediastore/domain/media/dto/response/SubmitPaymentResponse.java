@@ -10,6 +10,8 @@ public record SubmitPaymentResponse(
         String stellarTxHash,
         /** Final order status (COMPLETED) */
         String status,
-        /** Entry ID that was unlocked */
-        String entryId
+        /** Entry ID that was unlocked (null for collection purchases) */
+        String entryId,
+        /** Collection ID that was unlocked (null for entry purchases) */
+        String collectionId
 ) {}

@@ -5,6 +5,7 @@ import org.earnlumens.mediastore.domain.media.dto.request.SubmitPaymentRequest;
 import org.earnlumens.mediastore.domain.media.dto.response.PreparePaymentResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.SubmitPaymentResponse;
 import org.earnlumens.mediastore.domain.media.model.*;
+import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
@@ -44,6 +45,7 @@ public class PaymentService {
     private static final BigDecimal ONE_HUNDRED = new BigDecimal("100.00");
 
     private final EntryRepository entryRepository;
+    private final CollectionRepository collectionRepository;
     private final OrderRepository orderRepository;
     private final EntitlementRepository entitlementRepository;
     private final StellarTransactionService stellarTxService;
@@ -52,6 +54,7 @@ public class PaymentService {
     private final XlmUsdPriceService xlmUsdPriceService;
 
     public PaymentService(EntryRepository entryRepository,
+                          CollectionRepository collectionRepository,
                           OrderRepository orderRepository,
                           EntitlementRepository entitlementRepository,
                           StellarTransactionService stellarTxService,
@@ -59,6 +62,7 @@ public class PaymentService {
                           PlatformConfig platformConfig,
                           XlmUsdPriceService xlmUsdPriceService) {
         this.entryRepository = entryRepository;
+        this.collectionRepository = collectionRepository;
         this.orderRepository = orderRepository;
         this.entitlementRepository = entitlementRepository;
         this.stellarTxService = stellarTxService;
@@ -70,108 +74,155 @@ public class PaymentService {
     /**
      * Phase 1: Prepare a payment transaction.
      * Builds an unsigned Stellar XDR and stores a PENDING order.
+     * Supports both entry and collection purchases.
      */
     public PreparePaymentResponse prepare(String tenantId, String userId, PreparePaymentRequest request) {
         String entryId = request.entryId();
+        String collectionId = request.collectionId();
         String buyerWallet = request.buyerWallet();
 
-        // 1. Load and validate the entry
-        Entry entry = entryRepository.findByTenantIdAndId(tenantId, entryId)
-                .orElseThrow(() -> new IllegalArgumentException("Entry not found"));
+        boolean isCollectionPurchase = collectionId != null && !collectionId.isBlank();
+        boolean isEntryPurchase = entryId != null && !entryId.isBlank();
 
-        if (!entry.isPaid()) {
-            throw new IllegalArgumentException("Entry is not paid content");
+        if (!isCollectionPurchase && !isEntryPurchase) {
+            throw new IllegalArgumentException("Either entryId or collectionId is required");
         }
-        if (entry.getStatus() != EntryStatus.PUBLISHED) {
-            throw new IllegalArgumentException("Entry is not published");
-        }
-        if (userId.equals(entry.getUserId())) {
-            throw new IllegalArgumentException("Cannot purchase your own content");
+        if (isCollectionPurchase && isEntryPurchase) {
+            throw new IllegalArgumentException("Cannot specify both entryId and collectionId");
         }
 
-        // Resolve the total amount in XLM based on the entry's price currency
+        // Resolve target properties
+        String sellerId;
         BigDecimal totalXlm;
         BigDecimal originalAmountUsd = null;
         BigDecimal xlmUsdRate = null;
-        String priceCurrency = entry.getPriceCurrency() != null
-                ? entry.getPriceCurrency().name()
-                : "XLM";
+        String priceCurrency;
+        List<PaymentSplit> targetSplits;
 
-        if (entry.getPriceCurrency() == PriceCurrency.USD) {
-            // USD-priced entry: convert to XLM using live rate
-            BigDecimal usdAmount = entry.getPriceUsd();
-            if (usdAmount == null || usdAmount.compareTo(BigDecimal.ZERO) <= 0) {
-                throw new IllegalArgumentException("Entry has no valid USD price");
+        if (isCollectionPurchase) {
+            // ── Collection purchase ──
+            Collection collection = collectionRepository.findByTenantIdAndId(tenantId, collectionId)
+                    .orElseThrow(() -> new IllegalArgumentException("Collection not found"));
+
+            if (!collection.isPaid()) {
+                throw new IllegalArgumentException("Collection is not paid content");
             }
-            var snapshot = xlmUsdPriceService.getPrice();
-            BigDecimal rate = snapshot != null ? snapshot.price() : null;
-            if (rate == null || rate.compareTo(BigDecimal.ZERO) <= 0) {
-                throw new IllegalStateException("XLM/USD price unavailable — cannot process USD payments");
+            if (collection.getStatus() != CollectionStatus.PUBLISHED) {
+                throw new IllegalArgumentException("Collection is not published");
             }
-            totalXlm = usdAmount.divide(rate, 7, RoundingMode.CEILING);
-            originalAmountUsd = usdAmount;
-            xlmUsdRate = rate;
-            logger.info("USD→XLM conversion: ${} / {} = {} XLM",
-                    usdAmount.toPlainString(), rate.toPlainString(), totalXlm.toPlainString());
+            if (userId.equals(collection.getUserId())) {
+                throw new IllegalArgumentException("Cannot purchase your own content");
+            }
+
+            sellerId = collection.getUserId();
+            priceCurrency = collection.getPriceCurrency() != null
+                    ? collection.getPriceCurrency().name() : "XLM";
+            targetSplits = collection.getPaymentSplits();
+
+            if (targetSplits == null || targetSplits.isEmpty()) {
+                throw new IllegalArgumentException("Collection has no payment splits configured");
+            }
+
+            if (collection.getPriceCurrency() == PriceCurrency.USD) {
+                BigDecimal usdAmount = collection.getPriceUsd();
+                if (usdAmount == null || usdAmount.compareTo(BigDecimal.ZERO) <= 0) {
+                    throw new IllegalArgumentException("Collection has no valid USD price");
+                }
+                var snapshot = xlmUsdPriceService.getPrice();
+                BigDecimal rate = snapshot != null ? snapshot.price() : null;
+                if (rate == null || rate.compareTo(BigDecimal.ZERO) <= 0) {
+                    throw new IllegalStateException("XLM/USD price unavailable — cannot process USD payments");
+                }
+                totalXlm = usdAmount.divide(rate, 7, RoundingMode.CEILING);
+                originalAmountUsd = usdAmount;
+                xlmUsdRate = rate;
+            } else {
+                totalXlm = collection.getPriceXlm();
+                if (totalXlm == null || totalXlm.compareTo(BigDecimal.ZERO) <= 0) {
+                    throw new IllegalArgumentException("Collection has no valid price");
+                }
+            }
+
+            // Check for existing orders
+            List<Order> existingOrders = orderRepository.findAllByTenantIdAndUserIdAndCollectionId(
+                    tenantId, userId, collectionId);
+            Order reusableOrder = processExistingOrders(existingOrders);
+            if (reusableOrder != null) {
+                return toResponse(reusableOrder);
+            }
         } else {
-            // XLM-priced entry (default, backward compatible)
-            totalXlm = entry.getPriceXlm();
-            if (totalXlm == null || totalXlm.compareTo(BigDecimal.ZERO) <= 0) {
-                throw new IllegalArgumentException("Entry has no valid price");
+            // ── Entry purchase (existing logic) ──
+            Entry entry = entryRepository.findByTenantIdAndId(tenantId, entryId)
+                    .orElseThrow(() -> new IllegalArgumentException("Entry not found"));
+
+            if (!entry.isPaid()) {
+                throw new IllegalArgumentException("Entry is not paid content");
+            }
+            if (entry.getStatus() != EntryStatus.PUBLISHED) {
+                throw new IllegalArgumentException("Entry is not published");
+            }
+            if (userId.equals(entry.getUserId())) {
+                throw new IllegalArgumentException("Cannot purchase your own content");
+            }
+
+            sellerId = entry.getUserId();
+            priceCurrency = entry.getPriceCurrency() != null
+                    ? entry.getPriceCurrency().name() : "XLM";
+            targetSplits = entry.getPaymentSplits();
+
+            if (targetSplits == null || targetSplits.isEmpty()) {
+                throw new IllegalArgumentException("Entry has no payment splits configured");
+            }
+
+            if (entry.getPriceCurrency() == PriceCurrency.USD) {
+                BigDecimal usdAmount = entry.getPriceUsd();
+                if (usdAmount == null || usdAmount.compareTo(BigDecimal.ZERO) <= 0) {
+                    throw new IllegalArgumentException("Entry has no valid USD price");
+                }
+                var snapshot = xlmUsdPriceService.getPrice();
+                BigDecimal rate = snapshot != null ? snapshot.price() : null;
+                if (rate == null || rate.compareTo(BigDecimal.ZERO) <= 0) {
+                    throw new IllegalStateException("XLM/USD price unavailable — cannot process USD payments");
+                }
+                totalXlm = usdAmount.divide(rate, 7, RoundingMode.CEILING);
+                originalAmountUsd = usdAmount;
+                xlmUsdRate = rate;
+                logger.info("USD→XLM conversion: ${} / {} = {} XLM",
+                        usdAmount.toPlainString(), rate.toPlainString(), totalXlm.toPlainString());
+            } else {
+                totalXlm = entry.getPriceXlm();
+                if (totalXlm == null || totalXlm.compareTo(BigDecimal.ZERO) <= 0) {
+                    throw new IllegalArgumentException("Entry has no valid price");
+                }
+            }
+
+            // Check for existing orders
+            List<Order> existingOrders = orderRepository.findAllByTenantIdAndUserIdAndEntryId(
+                    tenantId, userId, entryId);
+            Order reusableOrder = processExistingOrders(existingOrders);
+            if (reusableOrder != null) {
+                return toResponse(reusableOrder);
             }
         }
 
-        // Build the full payment splits dynamically: platform split from env config + entry's non-platform splits.
-        // This ensures changes to PLATFORM_WALLET or PLATFORM_FEE_PERCENT take effect immediately.
-        List<PaymentSplit> entrySplits = entry.getPaymentSplits();
-        if (entrySplits == null || entrySplits.isEmpty()) {
-            throw new IllegalArgumentException("Entry has no payment splits configured");
-        }
-        List<PaymentSplit> splits = buildFullSplits(entrySplits);
+        // Build the full payment splits (platform + seller/collaborator)
+        List<PaymentSplit> splits = buildFullSplits(targetSplits);
 
-        // 2. Check for existing orders (idempotency + duplicate handling)
-        List<Order> existingOrders = orderRepository.findAllByTenantIdAndUserIdAndEntryId(tenantId, userId, entryId);
-        Order reusableOrder = null;
-
-        for (Order existing : existingOrders) {
-            if (existing.getStatus() == OrderStatus.COMPLETED) {
-                throw new IllegalStateException("Content already purchased");
-            }
-            // If PENDING and not expired, keep it for reuse
-            if (existing.getStatus() == OrderStatus.PENDING
-                    && existing.getExpiresAt() != null
-                    && existing.getExpiresAt().isAfter(LocalDateTime.now(ZoneOffset.UTC))) {
-                reusableOrder = existing;
-                continue;
-            }
-            // Mark stale PENDING (expired) or FAILED orders as EXPIRED
-            if (existing.getStatus() == OrderStatus.PENDING || existing.getStatus() == OrderStatus.FAILED) {
-                existing.setStatus(OrderStatus.EXPIRED);
-                orderRepository.save(existing);
-            }
-        }
-
-        // If there's a valid PENDING order, reuse it
-        if (reusableOrder != null) {
-            return toResponse(reusableOrder);
-        }
-
-        // 3. Build the MEMO
+        // Build the MEMO
         String memo = "TOTAL: " + totalXlm.toPlainString() + " XLM";
 
-        // 4. Build the unsigned Stellar transaction
+        // Build the unsigned Stellar transaction
         StellarTransactionService.BuildResult buildResult =
                 stellarTxService.buildTransaction(buyerWallet, totalXlm, splits, memo);
 
-        // 5. Persist PENDING order
+        // Persist PENDING order
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         LocalDateTime expiresAt = now.plusSeconds(stellarConfig.getTxTimeoutSeconds());
 
         Order order = new Order();
         order.setTenantId(tenantId);
         order.setUserId(userId);
-        order.setEntryId(entryId);
-        order.setSellerId(entry.getUserId());
+        order.setSellerId(sellerId);
         order.setAmountXlm(totalXlm);
         order.setOriginalAmountUsd(originalAmountUsd);
         order.setXlmUsdRate(xlmUsdRate);
@@ -185,12 +236,46 @@ public class PaymentService {
         order.setExpiresAt(expiresAt);
         order.setPaymentSplits(splits);
 
+        if (isCollectionPurchase) {
+            order.setTargetType(TargetType.COLLECTION);
+            order.setCollectionId(collectionId);
+        } else {
+            order.setTargetType(TargetType.ENTRY);
+            order.setEntryId(entryId);
+        }
+
         Order saved = orderRepository.save(order);
 
-        logger.info("Payment prepared: orderId={}, entryId={}, buyer={}, total={} XLM",
-                saved.getId(), entryId, buyerWallet, totalXlm.toPlainString());
+        logger.info("Payment prepared: orderId={}, {}={}, buyer={}, total={} XLM",
+                saved.getId(),
+                isCollectionPurchase ? "collectionId" : "entryId",
+                isCollectionPurchase ? collectionId : entryId,
+                buyerWallet, totalXlm.toPlainString());
 
         return toResponse(saved);
+    }
+
+    /**
+     * Process existing orders: reject if COMPLETED, return reusable PENDING, expire stale ones.
+     */
+    private Order processExistingOrders(List<Order> existingOrders) {
+        Order reusableOrder = null;
+        for (Order existing : existingOrders) {
+            if (existing.getStatus() == OrderStatus.COMPLETED) {
+                throw new IllegalStateException("Content already purchased");
+            }
+            if (existing.getStatus() == OrderStatus.PENDING
+                    && existing.getExpiresAt() != null
+                    && existing.getExpiresAt().isAfter(LocalDateTime.now(ZoneOffset.UTC))) {
+                reusableOrder = existing;
+                continue;
+            }
+            if (existing.getStatus() == OrderStatus.PENDING || existing.getStatus() == OrderStatus.FAILED) {
+                existing.setStatus(OrderStatus.EXPIRED);
+                orderRepository.save(existing);
+            }
+        }
+        return reusableOrder;
     }
 
     /**
@@ -240,14 +325,15 @@ public class PaymentService {
             // 6. Create entitlement
             createEntitlement(order);
 
-            logger.info("Payment completed: orderId={}, txHash={}, entryId={}",
-                    orderId, txHash, order.getEntryId());
+            logger.info("Payment completed: orderId={}, txHash={}, entryId={}, collectionId={}",
+                    orderId, txHash, order.getEntryId(), order.getCollectionId());
 
             return new SubmitPaymentResponse(
                     orderId,
                     txHash,
                     OrderStatus.COMPLETED.name(),
-                    order.getEntryId()
+                    order.getEntryId(),
+                    order.getCollectionId()
             );
 
         } catch (Exception e) {
@@ -266,15 +352,17 @@ public class PaymentService {
         Entitlement entitlement = new Entitlement();
         entitlement.setTenantId(order.getTenantId());
         entitlement.setUserId(order.getUserId());
+        entitlement.setTargetType(order.getTargetType() != null ? order.getTargetType() : TargetType.ENTRY);
         entitlement.setEntryId(order.getEntryId());
+        entitlement.setCollectionId(order.getCollectionId());
         entitlement.setGrantType(GrantType.PURCHASE);
         entitlement.setOrderId(order.getId());
         entitlement.setStatus(EntitlementStatus.ACTIVE);
         entitlement.setGrantedAt(LocalDateTime.now(ZoneOffset.UTC));
 
         entitlementRepository.save(entitlement);
-        logger.info("Entitlement created: userId={}, entryId={}, orderId={}",
-                order.getUserId(), order.getEntryId(), order.getId());
+        logger.info("Entitlement created: userId={}, entryId={}, collectionId={}, orderId={}",
+                order.getUserId(), order.getEntryId(), order.getCollectionId(), order.getId());
     }
 
     /**

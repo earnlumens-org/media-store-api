@@ -13,16 +13,20 @@ import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
 import org.earnlumens.mediastore.domain.media.model.PriceCurrency;
+import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
+import org.earnlumens.mediastore.domain.media.model.SplitRole;
 import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.user.repository.UserRepository;
+import org.earnlumens.mediastore.infrastructure.r2.R2PresignedUrlService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
@@ -30,6 +34,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @Service
@@ -42,15 +47,18 @@ public class CollectionService {
     private final EntryRepository entryRepository;
     private final EntitlementRepository entitlementRepository;
     private final UserRepository userRepository;
+    private final R2PresignedUrlService r2PresignedUrlService;
 
     public CollectionService(CollectionRepository collectionRepository,
                              EntryRepository entryRepository,
                              EntitlementRepository entitlementRepository,
-                             UserRepository userRepository) {
+                             UserRepository userRepository,
+                             R2PresignedUrlService r2PresignedUrlService) {
         this.collectionRepository = collectionRepository;
         this.entryRepository = entryRepository;
         this.entitlementRepository = entitlementRepository;
         this.userRepository = userRepository;
+        this.r2PresignedUrlService = r2PresignedUrlService;
     }
 
     // ── CRUD ──
@@ -77,6 +85,13 @@ public class CollectionService {
 
         if (collection.isPaid() && (collection.getSellerWallet() == null || collection.getSellerWallet().isBlank())) {
             throw new IllegalArgumentException("sellerWallet is required for paid collections");
+        }
+
+        // Build seller payment splits for paid collections
+        if (collection.isPaid()) {
+            collection.setPaymentSplits(List.of(
+                    new PaymentSplit(collection.getSellerWallet(), SplitRole.SELLER, new BigDecimal("100.00"))
+            ));
         }
 
         // Denormalize author info for fast reads
@@ -111,6 +126,15 @@ public class CollectionService {
             collection.setPriceCurrency(PriceCurrency.valueOf(request.priceCurrency().toUpperCase()));
         }
         if (request.sellerWallet() != null) collection.setSellerWallet(request.sellerWallet());
+
+        // Rebuild payment splits when paid status or wallet changes
+        if (collection.isPaid() && collection.getSellerWallet() != null && !collection.getSellerWallet().isBlank()) {
+            collection.setPaymentSplits(List.of(
+                    new PaymentSplit(collection.getSellerWallet(), SplitRole.SELLER, new BigDecimal("100.00"))
+            ));
+        } else if (!collection.isPaid()) {
+            collection.setPaymentSplits(List.of());
+        }
 
         collectionRepository.save(collection);
         return true;
@@ -399,6 +423,49 @@ public class CollectionService {
                 .filter(Collection::isPaid)
                 .map(c -> toResponse(c, true, false))
                 .toList();
+    }
+
+    // ── Cover Upload ──
+
+    /**
+     * Generates a presigned PUT URL for uploading a collection cover image.
+     * R2 key pattern: public/collections/{collectionId}/cover/{uuid}-{filename}
+     */
+    public record CoverUploadResult(String presignedUrl, String r2Key) {}
+
+    public CoverUploadResult initCoverUpload(String tenantId, String userId,
+                                              String collectionId, String fileName, String contentType) {
+        Collection collection = collectionRepository.findByTenantIdAndId(tenantId, collectionId)
+                .orElseThrow(() -> new IllegalArgumentException("Collection not found"));
+
+        if (!collection.getUserId().equals(userId)) {
+            throw new IllegalArgumentException("Not the collection owner");
+        }
+
+        String sanitizedFileName = fileName.replaceAll("[^a-zA-Z0-9._-]", "_");
+        String r2Key = "public/collections/" + collectionId + "/cover/"
+                + UUID.randomUUID() + "-" + sanitizedFileName;
+
+        String presignedUrl = r2PresignedUrlService.generatePresignedPutUrl(r2Key, contentType);
+        logger.info("Cover upload initiated: collectionId={}, r2Key={}", collectionId, r2Key);
+        return new CoverUploadResult(presignedUrl, r2Key);
+    }
+
+    /**
+     * Finalizes a cover upload by denormalizing the R2 key on the collection.
+     */
+    public boolean finalizeCoverUpload(String tenantId, String userId,
+                                        String collectionId, String r2Key) {
+        Optional<Collection> opt = collectionRepository.findByTenantIdAndId(tenantId, collectionId);
+        if (opt.isEmpty() || !opt.get().getUserId().equals(userId)) {
+            return false;
+        }
+
+        Collection collection = opt.get();
+        collection.setCoverR2Key(r2Key);
+        collectionRepository.save(collection);
+        logger.info("Cover upload finalized: collectionId={}, r2Key={}", collectionId, r2Key);
+        return true;
     }
 
     // ── Helpers ──
