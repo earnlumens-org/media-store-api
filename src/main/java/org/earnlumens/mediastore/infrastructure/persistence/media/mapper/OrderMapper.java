@@ -4,6 +4,7 @@ import org.earnlumens.mediastore.domain.media.model.Order;
 import org.earnlumens.mediastore.domain.media.model.OrderStatus;
 import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
 import org.earnlumens.mediastore.domain.media.model.SplitRole;
+import org.earnlumens.mediastore.domain.media.model.TargetType;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.OrderEntity;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.PaymentSplitEntity;
 import org.mapstruct.Mapper;
@@ -17,10 +18,12 @@ import java.util.List;
 public interface OrderMapper {
 
     @Mapping(target = "status", source = "status", qualifiedByName = "stringToOrderStatus")
+    @Mapping(target = "targetType", source = "targetType", qualifiedByName = "stringToTargetType")
     @Mapping(target = "paymentSplits", source = "paymentSplits", qualifiedByName = "entitiesToSplits")
     Order toModel(OrderEntity entity);
 
     @Mapping(target = "status", source = "status", qualifiedByName = "orderStatusToString")
+    @Mapping(target = "targetType", source = "targetType", qualifiedByName = "targetTypeToString")
     @Mapping(target = "paymentSplits", source = "paymentSplits", qualifiedByName = "splitsToEntities")
     OrderEntity toEntity(Order model);
 
@@ -31,6 +34,16 @@ public interface OrderMapper {
 
     @Named("orderStatusToString")
     default String orderStatusToString(OrderStatus value) {
+        return value == null ? null : value.name();
+    }
+
+    @Named("stringToTargetType")
+    default TargetType stringToTargetType(String value) {
+        return value == null ? null : TargetType.valueOf(value);
+    }
+
+    @Named("targetTypeToString")
+    default String targetTypeToString(TargetType value) {
         return value == null ? null : value.name();
     }
 

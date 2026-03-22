@@ -7,7 +7,9 @@ public class Entitlement {
     private String id;
     private String tenantId;
     private String userId;
+    private TargetType targetType;
     private String entryId;
+    private String collectionId;
     private GrantType grantType;
     private String orderId;
     private EntitlementStatus status;
@@ -25,8 +27,14 @@ public class Entitlement {
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }
 
+    public TargetType getTargetType() { return targetType; }
+    public void setTargetType(TargetType targetType) { this.targetType = targetType; }
+
     public String getEntryId() { return entryId; }
     public void setEntryId(String entryId) { this.entryId = entryId; }
+
+    public String getCollectionId() { return collectionId; }
+    public void setCollectionId(String collectionId) { this.collectionId = collectionId; }
 
     public GrantType getGrantType() { return grantType; }
     public void setGrantType(GrantType grantType) { this.grantType = grantType; }

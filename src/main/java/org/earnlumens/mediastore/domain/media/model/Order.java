@@ -10,7 +10,9 @@ public class Order {
     private String id;
     private String tenantId;
     private String userId;
+    private TargetType targetType;
     private String entryId;
+    private String collectionId;
     private String sellerId;
     private BigDecimal amountXlm;
     /** Original USD amount (only set for USD-priced entries) */
@@ -48,8 +50,12 @@ public class Order {
     public void setTenantId(String tenantId) { this.tenantId = tenantId; }
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }
+    public TargetType getTargetType() { return targetType; }
+    public void setTargetType(TargetType targetType) { this.targetType = targetType; }
     public String getEntryId() { return entryId; }
     public void setEntryId(String entryId) { this.entryId = entryId; }
+    public String getCollectionId() { return collectionId; }
+    public void setCollectionId(String collectionId) { this.collectionId = collectionId; }
     public String getSellerId() { return sellerId; }
     public void setSellerId(String sellerId) { this.sellerId = sellerId; }
     public BigDecimal getAmountXlm() { return amountXlm; }

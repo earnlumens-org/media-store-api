@@ -6,6 +6,7 @@ import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
 import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
 import org.earnlumens.mediastore.domain.media.model.PriceCurrency;
+import org.earnlumens.mediastore.domain.media.model.PricingMode;
 import org.earnlumens.mediastore.domain.media.model.SplitRole;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.EntryEntity;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.PaymentSplitEntity;
@@ -23,6 +24,7 @@ public interface EntryMapper {
     @Mapping(target = "previousStatus", source = "previousStatus", qualifiedByName = "stringToEntryStatus")
     @Mapping(target = "visibility", source = "visibility", qualifiedByName = "stringToMediaVisibility")
     @Mapping(target = "priceCurrency", source = "priceCurrency", qualifiedByName = "stringToPriceCurrency")
+    @Mapping(target = "pricingMode", source = "pricingMode", qualifiedByName = "stringToPricingMode")
     @Mapping(target = "paymentSplits", source = "paymentSplits", qualifiedByName = "entitiesToSplits")
     Entry toModel(EntryEntity entity);
 
@@ -31,6 +33,7 @@ public interface EntryMapper {
     @Mapping(target = "previousStatus", source = "previousStatus", qualifiedByName = "entryStatusToString")
     @Mapping(target = "visibility", source = "visibility", qualifiedByName = "mediaVisibilityToString")
     @Mapping(target = "priceCurrency", source = "priceCurrency", qualifiedByName = "priceCurrencyToString")
+    @Mapping(target = "pricingMode", source = "pricingMode", qualifiedByName = "pricingModeToString")
     @Mapping(target = "paymentSplits", source = "paymentSplits", qualifiedByName = "splitsToEntities")
     EntryEntity toEntity(Entry model);
 
@@ -71,6 +74,16 @@ public interface EntryMapper {
 
     @Named("priceCurrencyToString")
     default String priceCurrencyToString(PriceCurrency value) {
+        return value == null ? null : value.name();
+    }
+
+    @Named("stringToPricingMode")
+    default PricingMode stringToPricingMode(String value) {
+        return value == null ? null : PricingMode.valueOf(value);
+    }
+
+    @Named("pricingModeToString")
+    default String pricingModeToString(PricingMode value) {
         return value == null ? null : value.name();
     }
 

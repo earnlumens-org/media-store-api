@@ -64,6 +64,9 @@ public class EntryEntity {
 
     private String priceCurrency;
 
+    /** How this entry can be purchased: INDIVIDUAL, COLLECTION_ONLY, or BOTH. */
+    private String pricingMode;
+
     /** Stellar public key (G...) of the seller. Required for paid content. */
     private String sellerWallet;
 
@@ -151,6 +154,9 @@ public class EntryEntity {
 
     public String getPriceCurrency() { return priceCurrency; }
     public void setPriceCurrency(String priceCurrency) { this.priceCurrency = priceCurrency; }
+
+    public String getPricingMode() { return pricingMode; }
+    public void setPricingMode(String pricingMode) { this.pricingMode = pricingMode; }
 
     public String getSellerWallet() { return sellerWallet; }
     public void setSellerWallet(String sellerWallet) { this.sellerWallet = sellerWallet; }

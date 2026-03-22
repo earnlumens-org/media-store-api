@@ -8,6 +8,7 @@ import org.springframework.data.annotation.LastModifiedDate;
 import org.springframework.data.mongodb.core.index.CompoundIndex;
 import org.springframework.data.mongodb.core.mapping.Document;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,6 +29,10 @@ public class CollectionEntity {
     @NotBlank
     private String userId;
 
+    private String authorUsername;
+
+    private String authorAvatarUrl;
+
     @NotBlank
     @Size(max = 200)
     private String title;
@@ -42,6 +47,21 @@ public class CollectionEntity {
 
     @NotBlank
     private String status;
+
+    @NotBlank
+    private String visibility;
+
+    private boolean isPaid;
+
+    private BigDecimal priceXlm;
+
+    private BigDecimal priceUsd;
+
+    private String priceCurrency;
+
+    private String sellerWallet;
+
+    private List<PaymentSplitEntity> paymentSplits = new ArrayList<>();
 
     private List<CollectionItemEmbeddable> items = new ArrayList<>();
 
@@ -64,6 +84,12 @@ public class CollectionEntity {
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }
 
+    public String getAuthorUsername() { return authorUsername; }
+    public void setAuthorUsername(String authorUsername) { this.authorUsername = authorUsername; }
+
+    public String getAuthorAvatarUrl() { return authorAvatarUrl; }
+    public void setAuthorAvatarUrl(String authorAvatarUrl) { this.authorAvatarUrl = authorAvatarUrl; }
+
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
 
@@ -78,6 +104,27 @@ public class CollectionEntity {
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+
+    public String getVisibility() { return visibility; }
+    public void setVisibility(String visibility) { this.visibility = visibility; }
+
+    public boolean isPaid() { return isPaid; }
+    public void setPaid(boolean paid) { isPaid = paid; }
+
+    public BigDecimal getPriceXlm() { return priceXlm; }
+    public void setPriceXlm(BigDecimal priceXlm) { this.priceXlm = priceXlm; }
+
+    public BigDecimal getPriceUsd() { return priceUsd; }
+    public void setPriceUsd(BigDecimal priceUsd) { this.priceUsd = priceUsd; }
+
+    public String getPriceCurrency() { return priceCurrency; }
+    public void setPriceCurrency(String priceCurrency) { this.priceCurrency = priceCurrency; }
+
+    public String getSellerWallet() { return sellerWallet; }
+    public void setSellerWallet(String sellerWallet) { this.sellerWallet = sellerWallet; }
+
+    public List<PaymentSplitEntity> getPaymentSplits() { return paymentSplits; }
+    public void setPaymentSplits(List<PaymentSplitEntity> paymentSplits) { this.paymentSplits = paymentSplits; }
 
     public List<CollectionItemEmbeddable> getItems() { return items; }
     public void setItems(List<CollectionItemEmbeddable> items) { this.items = items; }

@@ -1,5 +1,6 @@
 package org.earnlumens.mediastore.domain.media.model;
 
+import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -11,11 +12,20 @@ public class Collection {
     private String id;
     private String tenantId;
     private String userId;
+    private String authorUsername;
+    private String authorAvatarUrl;
     private String title;
     private String description;
     private CollectionType collectionType;
     private String coverR2Key;
     private CollectionStatus status;
+    private MediaVisibility visibility;
+    private boolean isPaid;
+    private BigDecimal priceXlm;
+    private BigDecimal priceUsd;
+    private PriceCurrency priceCurrency;
+    private String sellerWallet;
+    private List<PaymentSplit> paymentSplits = new ArrayList<>();
     private List<CollectionItem> items = new ArrayList<>();
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -29,6 +39,10 @@ public class Collection {
     public void setTenantId(String tenantId) { this.tenantId = tenantId; }
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }
+    public String getAuthorUsername() { return authorUsername; }
+    public void setAuthorUsername(String authorUsername) { this.authorUsername = authorUsername; }
+    public String getAuthorAvatarUrl() { return authorAvatarUrl; }
+    public void setAuthorAvatarUrl(String authorAvatarUrl) { this.authorAvatarUrl = authorAvatarUrl; }
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
     public String getDescription() { return description; }
@@ -39,6 +53,20 @@ public class Collection {
     public void setCoverR2Key(String coverR2Key) { this.coverR2Key = coverR2Key; }
     public CollectionStatus getStatus() { return status; }
     public void setStatus(CollectionStatus status) { this.status = status; }
+    public MediaVisibility getVisibility() { return visibility; }
+    public void setVisibility(MediaVisibility visibility) { this.visibility = visibility; }
+    public boolean isPaid() { return isPaid; }
+    public void setPaid(boolean paid) { isPaid = paid; }
+    public BigDecimal getPriceXlm() { return priceXlm; }
+    public void setPriceXlm(BigDecimal priceXlm) { this.priceXlm = priceXlm; }
+    public BigDecimal getPriceUsd() { return priceUsd; }
+    public void setPriceUsd(BigDecimal priceUsd) { this.priceUsd = priceUsd; }
+    public PriceCurrency getPriceCurrency() { return priceCurrency; }
+    public void setPriceCurrency(PriceCurrency priceCurrency) { this.priceCurrency = priceCurrency; }
+    public String getSellerWallet() { return sellerWallet; }
+    public void setSellerWallet(String sellerWallet) { this.sellerWallet = sellerWallet; }
+    public List<PaymentSplit> getPaymentSplits() { return paymentSplits; }
+    public void setPaymentSplits(List<PaymentSplit> paymentSplits) { this.paymentSplits = paymentSplits; }
     public List<CollectionItem> getItems() { return items; }
     public void setItems(List<CollectionItem> items) {
         if (items != null && items.size() > MAX_ITEMS) {

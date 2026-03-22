@@ -12,8 +12,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Document(collection = "orders")
-@CompoundIndex(name = "idx_order_tenant_user_entry", def = "{'tenantId': 1, 'userId': 1, 'entryId': 1}", unique = true)
+@CompoundIndex(name = "idx_order_tenant_user_target_entry", def = "{'tenantId': 1, 'userId': 1, 'targetType': 1, 'entryId': 1}", unique = true)
+@CompoundIndex(name = "idx_order_tenant_user_target_coll", def = "{'tenantId': 1, 'userId': 1, 'targetType': 1, 'collectionId': 1}", unique = true)
 @CompoundIndex(name = "idx_order_tenant_entry_status", def = "{'tenantId': 1, 'entryId': 1, 'status': 1}")
+@CompoundIndex(name = "idx_order_tenant_coll_status", def = "{'tenantId': 1, 'collectionId': 1, 'status': 1}")
 @CompoundIndex(name = "idx_order_tenant_user_status_created", def = "{'tenantId': 1, 'userId': 1, 'status': 1, 'createdAt': -1}")
 @CompoundIndex(name = "idx_order_tenant_seller_status_created", def = "{'tenantId': 1, 'sellerId': 1, 'status': 1, 'createdAt': -1}")
 @CompoundIndex(name = "idx_order_stellar_tx", def = "{'stellarTxHash': 1}")
@@ -30,7 +32,11 @@ public class OrderEntity {
     private String userId;
 
     @NotBlank
+    private String targetType;
+
     private String entryId;
+
+    private String collectionId;
 
     @NotBlank
     private String sellerId;
@@ -74,8 +80,14 @@ public class OrderEntity {
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }
 
+    public String getTargetType() { return targetType; }
+    public void setTargetType(String targetType) { this.targetType = targetType; }
+
     public String getEntryId() { return entryId; }
     public void setEntryId(String entryId) { this.entryId = entryId; }
+
+    public String getCollectionId() { return collectionId; }
+    public void setCollectionId(String collectionId) { this.collectionId = collectionId; }
 
     public String getSellerId() { return sellerId; }
     public void setSellerId(String sellerId) { this.sellerId = sellerId; }

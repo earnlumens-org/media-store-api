@@ -9,8 +9,10 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import java.time.LocalDateTime;
 
 @Document(collection = "entitlements")
-@CompoundIndex(name = "idx_tenant_user_entry", def = "{'tenantId': 1, 'userId': 1, 'entryId': 1}", unique = true)
+@CompoundIndex(name = "idx_ent_tenant_user_target_entry", def = "{'tenantId': 1, 'userId': 1, 'targetType': 1, 'entryId': 1}", unique = true)
+@CompoundIndex(name = "idx_ent_tenant_user_target_coll", def = "{'tenantId': 1, 'userId': 1, 'targetType': 1, 'collectionId': 1}", unique = true)
 @CompoundIndex(name = "idx_tenant_entry_status", def = "{'tenantId': 1, 'entryId': 1, 'status': 1}")
+@CompoundIndex(name = "idx_ent_tenant_coll_status", def = "{'tenantId': 1, 'collectionId': 1, 'status': 1}")
 @CompoundIndex(name = "idx_tenant_user_status_granted", def = "{'tenantId': 1, 'userId': 1, 'status': 1, 'grantedAt': -1}")
 public class EntitlementEntity {
 
@@ -24,7 +26,11 @@ public class EntitlementEntity {
     private String userId;
 
     @NotBlank
+    private String targetType;
+
     private String entryId;
+
+    private String collectionId;
 
     private String grantType;
 
@@ -49,8 +55,14 @@ public class EntitlementEntity {
     public String getUserId() { return userId; }
     public void setUserId(String userId) { this.userId = userId; }
 
+    public String getTargetType() { return targetType; }
+    public void setTargetType(String targetType) { this.targetType = targetType; }
+
     public String getEntryId() { return entryId; }
     public void setEntryId(String entryId) { this.entryId = entryId; }
+
+    public String getCollectionId() { return collectionId; }
+    public void setCollectionId(String collectionId) { this.collectionId = collectionId; }
 
     public String getGrantType() { return grantType; }
     public void setGrantType(String grantType) { this.grantType = grantType; }

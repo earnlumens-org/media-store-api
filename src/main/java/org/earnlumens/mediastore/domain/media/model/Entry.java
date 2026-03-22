@@ -25,6 +25,8 @@ public class Entry {
     private BigDecimal priceXlm;
     private BigDecimal priceUsd;
     private PriceCurrency priceCurrency;
+    /** How this entry can be purchased: INDIVIDUAL, COLLECTION_ONLY, or BOTH. */
+    private PricingMode pricingMode;
     /** Stellar public key of the seller at the time of publishing. Required for paid content. */
     private String sellerWallet;
     /**
@@ -99,6 +101,9 @@ public class Entry {
 
     public PriceCurrency getPriceCurrency() { return priceCurrency; }
     public void setPriceCurrency(PriceCurrency priceCurrency) { this.priceCurrency = priceCurrency; }
+
+    public PricingMode getPricingMode() { return pricingMode; }
+    public void setPricingMode(PricingMode pricingMode) { this.pricingMode = pricingMode; }
 
     public String getSellerWallet() { return sellerWallet; }
     public void setSellerWallet(String sellerWallet) { this.sellerWallet = sellerWallet; }

@@ -3,6 +3,7 @@ package org.earnlumens.mediastore.infrastructure.persistence.media.mapper;
 import org.earnlumens.mediastore.domain.media.model.Entitlement;
 import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
 import org.earnlumens.mediastore.domain.media.model.GrantType;
+import org.earnlumens.mediastore.domain.media.model.TargetType;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.EntitlementEntity;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
@@ -13,10 +14,12 @@ public interface EntitlementMapper {
 
     @Mapping(target = "status", source = "status", qualifiedByName = "stringToStatus")
     @Mapping(target = "grantType", source = "grantType", qualifiedByName = "stringToGrantType")
+    @Mapping(target = "targetType", source = "targetType", qualifiedByName = "stringToTargetType")
     Entitlement toModel(EntitlementEntity entity);
 
     @Mapping(target = "status", source = "status", qualifiedByName = "statusToString")
     @Mapping(target = "grantType", source = "grantType", qualifiedByName = "grantTypeToString")
+    @Mapping(target = "targetType", source = "targetType", qualifiedByName = "targetTypeToString")
     EntitlementEntity toEntity(Entitlement model);
 
     @Named("stringToStatus")
@@ -36,6 +39,16 @@ public interface EntitlementMapper {
 
     @Named("grantTypeToString")
     default String grantTypeToString(GrantType value) {
+        return value == null ? null : value.name();
+    }
+
+    @Named("stringToTargetType")
+    default TargetType stringToTargetType(String value) {
+        return value == null ? null : TargetType.valueOf(value);
+    }
+
+    @Named("targetTypeToString")
+    default String targetTypeToString(TargetType value) {
         return value == null ? null : value.name();
     }
 }
