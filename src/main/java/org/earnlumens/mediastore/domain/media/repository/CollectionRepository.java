@@ -22,6 +22,10 @@ public interface CollectionRepository {
     /** Creator dashboard: all collections by user, newest first */
     Page<Collection> findByTenantIdAndUserId(String tenantId, String userId, Pageable pageable);
 
+    /** Public profile: PUBLISHED + PUBLIC collections by author username */
+    Page<Collection> findByTenantIdAndAuthorUsernameAndStatusAndVisibility(
+            String tenantId, String authorUsername, CollectionStatus status, MediaVisibility visibility, Pageable pageable);
+
     /** Find all PUBLISHED collections that contain a specific entry */
     List<Collection> findByTenantIdAndStatusAndItemsEntryId(
             String tenantId, CollectionStatus status, String entryId);

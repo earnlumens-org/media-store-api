@@ -56,6 +56,14 @@ public class CollectionRepositoryImpl implements CollectionRepository {
     }
 
     @Override
+    public Page<Collection> findByTenantIdAndAuthorUsernameAndStatusAndVisibility(
+            String tenantId, String authorUsername, CollectionStatus status, MediaVisibility visibility, Pageable pageable) {
+        return collectionMongoRepository.findByTenantIdAndAuthorUsernameIgnoreCaseAndStatusAndVisibilityOrderByPublishedAtDesc(
+                tenantId, authorUsername, status.name(), visibility.name(), pageable)
+                .map(collectionMapper::toModel);
+    }
+
+    @Override
     public List<Collection> findByTenantIdAndStatusAndItemsEntryId(
             String tenantId, CollectionStatus status, String entryId) {
         return collectionMongoRepository.findByTenantIdAndStatusAndItems_EntryId(

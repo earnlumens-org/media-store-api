@@ -5,5 +5,9 @@ public enum CollectionType {
     COURSE,
     ALBUM,
     BUNDLE,
-    LIST
+    LIST,
+    LIBRARY,
+    CATALOG,
+    VOLUME,
+    ARCHIVE
 }

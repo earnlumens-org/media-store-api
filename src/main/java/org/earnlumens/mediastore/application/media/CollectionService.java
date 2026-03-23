@@ -11,6 +11,7 @@ import org.earnlumens.mediastore.domain.media.model.CollectionStatus;
 import org.earnlumens.mediastore.domain.media.model.CollectionType;
 import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
+import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
 import org.earnlumens.mediastore.domain.media.model.PriceCurrency;
 import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
@@ -156,6 +157,20 @@ public class CollectionService {
             throw new IllegalArgumentException("sellerWallet is required for paid collections");
         }
 
+        // Validate all items reference published entries
+        List<String> itemEntryIds = collection.getItems().stream()
+                .map(CollectionItem::getEntryId).toList();
+        if (!itemEntryIds.isEmpty()) {
+            List<Entry> entries = entryRepository.findByTenantIdAndIdIn(tenantId, itemEntryIds);
+            List<String> nonPublished = entries.stream()
+                    .filter(e -> e.getStatus() != EntryStatus.PUBLISHED)
+                    .map(Entry::getId).toList();
+            if (!nonPublished.isEmpty()) {
+                throw new IllegalArgumentException(
+                        "All entries must be PUBLISHED before publishing the collection. Non-published: " + nonPublished);
+            }
+        }
+
         collection.setStatus(CollectionStatus.PUBLISHED);
         collection.setPublishedAt(LocalDateTime.now());
         collectionRepository.save(collection);
@@ -217,9 +232,11 @@ public class CollectionService {
             return false;
         }
 
-        // Verify the entry exists in this tenant
-        if (entryRepository.findByTenantIdAndId(tenantId, entryId).isEmpty()) {
-            throw new IllegalArgumentException("Entry not found: " + entryId);
+        // Verify the entry exists and is published
+        Entry entry = entryRepository.findByTenantIdAndId(tenantId, entryId)
+                .orElseThrow(() -> new IllegalArgumentException("Entry not found: " + entryId));
+        if (entry.getStatus() != EntryStatus.PUBLISHED) {
+            throw new IllegalArgumentException("Only PUBLISHED entries can be added to a collection");
         }
 
         Collection collection = opt.get();
@@ -299,6 +316,19 @@ public class CollectionService {
                 collectionPage.getTotalElements(), collectionPage.getTotalPages());
     }
 
+    /** Public profile: PUBLISHED + PUBLIC collections by author username */
+    public CollectionPageResponse getPublicCollectionsByUsername(String tenantId, String username, int page, int size) {
+        Page<Collection> collectionPage = collectionRepository.findByTenantIdAndAuthorUsernameAndStatusAndVisibility(
+                tenantId, username, CollectionStatus.PUBLISHED, MediaVisibility.PUBLIC, PageRequest.of(page, size));
+
+        List<CollectionResponse> items = collectionPage.getContent().stream()
+                .map(c -> toResponse(c, false, false))
+                .toList();
+
+        return new CollectionPageResponse(items, page, size,
+                collectionPage.getTotalElements(), collectionPage.getTotalPages());
+    }
+
     /** Creator dashboard: all collections by user */
     public CollectionPageResponse getMyCollections(String tenantId, String userId, int page, int size) {
         Page<Collection> collectionPage = collectionRepository.findByTenantIdAndUserId(
@@ -363,6 +393,7 @@ public class CollectionService {
         Set<String> finalEntitledEntryIds = entitledEntryIds;
         List<CollectionDetailResponse.CollectionEntryItem> entryItems = sortedItems.stream()
                 .filter(item -> entriesById.containsKey(item.getEntryId()))
+                .filter(item -> isOwner || entriesById.get(item.getEntryId()).getStatus() == EntryStatus.PUBLISHED)
                 .map(item -> {
                     Entry entry = entriesById.get(item.getEntryId());
                     boolean entryLocked;

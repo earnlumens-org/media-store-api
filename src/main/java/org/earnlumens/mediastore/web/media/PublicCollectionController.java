@@ -34,15 +34,22 @@ public class PublicCollectionController {
     /**
      * GET /public/collections?page=0&size=48
      * Returns paginated PUBLISHED + PUBLIC collections for the resolved tenant.
+     * If ?username=xxx is provided, filters by that author.
      */
     @GetMapping
     public ResponseEntity<CollectionPageResponse> getPublishedCollections(
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "48") int size,
+            @RequestParam(value = "username", required = false) String username,
             HttpServletRequest request) {
 
         String tenantId = tenantResolver.resolve(request);
-        CollectionPageResponse response = collectionService.getPublicCollections(tenantId, page, size);
+        CollectionPageResponse response;
+        if (username != null && !username.isBlank()) {
+            response = collectionService.getPublicCollectionsByUsername(tenantId, username.trim(), page, size);
+        } else {
+            response = collectionService.getPublicCollections(tenantId, page, size);
+        }
         return ResponseEntity.ok(response);
     }
 
