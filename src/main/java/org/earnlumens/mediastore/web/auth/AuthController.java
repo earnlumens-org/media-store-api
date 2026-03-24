@@ -75,7 +75,7 @@ public class AuthController {
                 .path("/")
                 .domain(cookieDomain)
                 .maxAge(Duration.ofSeconds(cookieExpirationMs / 1000L))
-                .sameSite("Lax")
+                .sameSite("Strict")
                 .build();
 
         response.addHeader("Set-Cookie", cookie.toString());
@@ -117,7 +117,7 @@ public class AuthController {
                 .path("/")
                 .domain(cookieDomain)
                 .maxAge(0) // Expira inmediatamente
-                .sameSite("Lax")
+                .sameSite("Strict")
                 .build();
 
         response.addHeader("Set-Cookie", cookie.toString());
