@@ -153,7 +153,6 @@ public class WebSecurityConfig {
         CorsConfiguration configuration = new CorsConfiguration();
         configuration.setAllowedOrigins(Arrays.asList(
             mainDomain,
-            "https://www.earnlumens.org",
             "http://localhost:3000",
             "https://app-dev.earnlumens.org"
         ));
