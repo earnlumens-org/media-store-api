@@ -44,11 +44,12 @@ public class PublicCollectionController {
             HttpServletRequest request) {
 
         String tenantId = tenantResolver.resolve(request);
+        String userId = extractUserIdOptional();
         CollectionPageResponse response;
         if (username != null && !username.isBlank()) {
-            response = collectionService.getPublicCollectionsByUsername(tenantId, username.trim(), page, size);
+            response = collectionService.getPublicCollectionsByUsername(tenantId, username.trim(), userId, page, size);
         } else {
-            response = collectionService.getPublicCollections(tenantId, page, size);
+            response = collectionService.getPublicCollections(tenantId, userId, page, size);
         }
         return ResponseEntity.ok(response);
     }

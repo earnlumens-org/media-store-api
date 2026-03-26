@@ -304,26 +304,22 @@ public class CollectionService {
     // ── Queries ──
 
     /** Public feed: PUBLISHED + PUBLIC collections */
-    public CollectionPageResponse getPublicCollections(String tenantId, int page, int size) {
+    public CollectionPageResponse getPublicCollections(String tenantId, String userId, int page, int size) {
         Page<Collection> collectionPage = collectionRepository.findByTenantIdAndStatusAndVisibility(
                 tenantId, CollectionStatus.PUBLISHED, MediaVisibility.PUBLIC, PageRequest.of(page, size));
 
-        List<CollectionResponse> items = collectionPage.getContent().stream()
-                .map(c -> toResponse(c, false, false))
-                .toList();
+        List<CollectionResponse> items = resolveLockedState(tenantId, userId, collectionPage.getContent());
 
         return new CollectionPageResponse(items, page, size,
                 collectionPage.getTotalElements(), collectionPage.getTotalPages());
     }
 
     /** Public profile: PUBLISHED + PUBLIC collections by author username */
-    public CollectionPageResponse getPublicCollectionsByUsername(String tenantId, String username, int page, int size) {
+    public CollectionPageResponse getPublicCollectionsByUsername(String tenantId, String username, String userId, int page, int size) {
         Page<Collection> collectionPage = collectionRepository.findByTenantIdAndAuthorUsernameAndStatusAndVisibility(
                 tenantId, username, CollectionStatus.PUBLISHED, MediaVisibility.PUBLIC, PageRequest.of(page, size));
 
-        List<CollectionResponse> items = collectionPage.getContent().stream()
-                .map(c -> toResponse(c, false, false))
-                .toList();
+        List<CollectionResponse> items = resolveLockedState(tenantId, userId, collectionPage.getContent());
 
         return new CollectionPageResponse(items, page, size,
                 collectionPage.getTotalElements(), collectionPage.getTotalPages());
@@ -497,6 +493,32 @@ public class CollectionService {
         collectionRepository.save(collection);
         logger.info("Cover upload finalized: collectionId={}, r2Key={}", collectionId, r2Key);
         return true;
+    }
+
+    /**
+     * Compute locked/unlocked per collection for listing endpoints.
+     * If userId is null (unauthenticated), all paid collections are locked.
+     */
+    private List<CollectionResponse> resolveLockedState(String tenantId, String userId, List<Collection> collections) {
+        // Collect paid non-owned collection IDs for batch entitlement check
+        List<Collection> paidNonOwned = collections.stream()
+                .filter(c -> c.isPaid() && (userId == null || !userId.equals(c.getUserId())))
+                .toList();
+
+        Set<String> entitledIds = Set.of();
+        if (userId != null && !paidNonOwned.isEmpty()) {
+            List<String> paidIds = paidNonOwned.stream().map(Collection::getId).toList();
+            entitledIds = entitlementRepository.findEntitledCollectionIds(
+                    tenantId, userId, paidIds, EntitlementStatus.ACTIVE);
+        }
+
+        Set<String> finalEntitledIds = entitledIds;
+        return collections.stream().map(c -> {
+            boolean isOwner = userId != null && userId.equals(c.getUserId());
+            boolean locked = c.isPaid() && !isOwner && !finalEntitledIds.contains(c.getId());
+            boolean unlocked = c.isPaid() && (isOwner || finalEntitledIds.contains(c.getId()));
+            return toResponse(c, locked, unlocked);
+        }).toList();
     }
 
     // ── Helpers ──
