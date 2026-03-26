@@ -5,6 +5,7 @@ import org.earnlumens.mediastore.domain.media.dto.response.PurchasedCollectionRe
 import org.earnlumens.mediastore.domain.media.dto.response.PurchasedEntryPageResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PurchasedEntryResponse;
 import org.earnlumens.mediastore.domain.media.model.Collection;
+import org.earnlumens.mediastore.domain.media.model.CollectionItem;
 import org.earnlumens.mediastore.domain.media.model.Entitlement;
 import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
@@ -19,6 +20,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -47,11 +50,12 @@ public class PurchaseListService {
 
     /**
      * Returns a paginated list of entries the user has purchased (ACTIVE entitlements).
-     * Sorted by grantedAt descending (most recent purchases first).
+     * For collection entitlements, expands into individual entries so the frontend
+     * store knows which entry IDs are unlocked via collection purchase.
      */
     public PurchasedEntryPageResponse listPurchases(String tenantId, String userId,
                                                      int page, int size) {
-        // 1. Get paginated entitlements
+        // 1. Get paginated entitlements (both ENTRY and COLLECTION types)
         Page<Entitlement> entitlementPage = entitlementRepository
                 .findByTenantIdAndUserIdAndStatus(
                         tenantId, userId, EntitlementStatus.ACTIVE,
@@ -66,27 +70,80 @@ public class PurchaseListService {
                     entitlementPage.getTotalPages());
         }
 
-        // 2. Batch-load all referenced entries
-        List<String> entryIds = entitlements.stream()
+        // 2. Separate entry-level and collection-level entitlements
+        List<Entitlement> entryEntitlements = entitlements.stream()
+                .filter(ent -> ent.getEntryId() != null)
+                .toList();
+        List<Entitlement> collectionEntitlements = entitlements.stream()
+                .filter(ent -> ent.getEntryId() == null && ent.getCollectionId() != null)
+                .toList();
+
+        // 3. Batch-load entries from direct entry entitlements
+        List<String> directEntryIds = entryEntitlements.stream()
                 .map(Entitlement::getEntryId)
                 .toList();
 
-        Map<String, Entry> entriesById = entryRepository
-                .findByTenantIdAndIdIn(tenantId, entryIds)
-                .stream()
-                .collect(Collectors.toMap(Entry::getId, e -> e));
+        Map<String, Entry> entriesById = directEntryIds.isEmpty()
+                ? new LinkedHashMap<>()
+                : new LinkedHashMap<>(entryRepository
+                        .findByTenantIdAndIdIn(tenantId, directEntryIds)
+                        .stream()
+                        .collect(Collectors.toMap(Entry::getId, e -> e)));
 
-        // 3. Join entitlements with entries, skip any orphaned entitlements
-        List<PurchasedEntryResponse> items = entitlements.stream()
+        // 4. Expand collection entitlements → load collections → extract entry IDs → load entries
+        Map<String, Entitlement> collEntitlementByCollId = new LinkedHashMap<>();
+        for (Entitlement ent : collectionEntitlements) {
+            collEntitlementByCollId.put(ent.getCollectionId(), ent);
+        }
+
+        List<PurchasedEntryResponse> collectionExpandedItems = new ArrayList<>();
+        if (!collectionEntitlements.isEmpty()) {
+            List<String> collIds = new ArrayList<>(collEntitlementByCollId.keySet());
+            List<Collection> collections = collectionRepository.findByTenantIdAndIdIn(tenantId, collIds);
+
+            // Find entry IDs not yet loaded
+            List<String> expandedEntryIds = collections.stream()
+                    .filter(c -> c.getItems() != null)
+                    .flatMap(c -> c.getItems().stream().map(CollectionItem::getEntryId))
+                    .filter(id -> id != null && !entriesById.containsKey(id))
+                    .distinct()
+                    .toList();
+
+            if (!expandedEntryIds.isEmpty()) {
+                entryRepository.findByTenantIdAndIdIn(tenantId, expandedEntryIds)
+                        .forEach(e -> entriesById.put(e.getId(), e));
+            }
+
+            // Create response items for each entry in each purchased collection
+            for (Collection coll : collections) {
+                Entitlement ent = collEntitlementByCollId.get(coll.getId());
+                if (coll.getItems() == null) continue;
+                for (CollectionItem item : coll.getItems()) {
+                    Entry entry = entriesById.get(item.getEntryId());
+                    if (entry != null) {
+                        collectionExpandedItems.add(toResponse(entry, ent));
+                    }
+                }
+            }
+        }
+
+        // 5. Build direct entry items
+        List<PurchasedEntryResponse> directItems = entryEntitlements.stream()
                 .filter(ent -> entriesById.containsKey(ent.getEntryId()))
-                .map(ent -> {
-                    Entry entry = entriesById.get(ent.getEntryId());
-                    return toResponse(entry, ent);
-                })
+                .map(ent -> toResponse(entriesById.get(ent.getEntryId()), ent))
                 .toList();
 
+        // 6. Merge, deduplicate by entry ID (direct purchases take precedence)
+        Map<String, PurchasedEntryResponse> merged = new LinkedHashMap<>();
+        for (PurchasedEntryResponse item : directItems) {
+            merged.put(item.id(), item);
+        }
+        for (PurchasedEntryResponse item : collectionExpandedItems) {
+            merged.putIfAbsent(item.id(), item);
+        }
+
         return new PurchasedEntryPageResponse(
-                items,
+                new ArrayList<>(merged.values()),
                 entitlementPage.getNumber(),
                 entitlementPage.getSize(),
                 entitlementPage.getTotalElements(),
