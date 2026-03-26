@@ -48,6 +48,9 @@ logs/
 secrets.properties
 **/application-dev.properties
 **/application-local.properties
+
+### Architecture drafts (local only) ###
+docs/SECTION-ARCHITECTURE.md
 **/application-prod.properties
 **/application-*.yml
 !**/application.yml
