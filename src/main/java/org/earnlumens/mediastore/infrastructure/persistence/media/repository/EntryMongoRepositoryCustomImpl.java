@@ -5,15 +5,20 @@ import org.bson.Document;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.EntryEntity;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.aggregation.Aggregation;
+import org.springframework.data.mongodb.core.aggregation.AggregationOperation;
 import org.springframework.data.mongodb.core.aggregation.AggregationResults;
 import org.springframework.data.mongodb.core.query.Criteria;
 import org.springframework.data.mongodb.core.query.Query;
 import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Repository;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @Repository
 public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCustom {
@@ -85,11 +90,349 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
         return stats;
     }
 
+    // ── Unified Creator Studio feed ─────────────────────────────────────────
+
+    /**
+     * Builds the common $unionWith aggregation pipeline that merges entries + collections
+     * into a single sorted, filtered, paginated result set.
+     *
+     * <p>Pipeline shape:
+     * <ol>
+     *   <li>$match on entries collection (tenantId + userId)</li>
+     *   <li>$addFields: kind="entry", sortDate=createdAt, itemCount=0</li>
+     *   <li>$unionWith collections (same $match + $addFields: kind="collection", itemCount=$size(items))</li>
+     *   <li>(optional) $match on status</li>
+     *   <li>(optional) $match on type (entry type or "collection")</li>
+     *   <li>(optional) $match on search (regex on title)</li>
+     *   <li>$sort by chosen field</li>
+     *   <li>$skip + $limit</li>
+     * </ol>
+     */
+    @Override
+    public List<Document> findStudioItems(String tenantId, String userId,
+                                          String status, String type, String search,
+                                          String sort, int skip, int limit) {
+        List<AggregationOperation> ops = buildStudioPipeline(tenantId, userId, status, type, search);
+
+        // Sort
+        ops.add(buildSortStage(sort));
+        // Pagination
+        ops.add(Aggregation.skip((long) skip));
+        ops.add(Aggregation.limit(limit));
+
+        // Project only the fields we need (minimize memory / network)
+        ops.add(context -> Document.parse("""
+            { "$project": {
+                "_id": 1, "kind": 1, "type": 1, "title": 1, "description": 1,
+                "status": 1, "thumbnailR2Key": 1, "coverR2Key": 1,
+                "isPaid": 1, "priceXlm": 1, "priceUsd": 1, "priceCurrency": 1,
+                "contentLanguage": 1, "durationSec": 1, "viewCount": 1,
+                "itemCount": 1, "createdAt": 1, "updatedAt": 1, "publishedAt": 1,
+                "sellerWallet": 1, "sortDate": 1
+            }}
+            """));
+
+        Aggregation agg = Aggregation.newAggregation(ops);
+        return mongoTemplate.aggregate(agg, "entries", Document.class).getMappedResults();
+    }
+
+    @Override
+    public long countStudioItems(String tenantId, String userId,
+                                 String status, String type, String search) {
+        List<AggregationOperation> ops = buildStudioPipeline(tenantId, userId, status, type, search);
+        ops.add(Aggregation.count().as("total"));
+
+        Aggregation agg = Aggregation.newAggregation(ops);
+        Document result = mongoTemplate.aggregate(agg, "entries", Document.class).getUniqueMappedResult();
+        return result != null ? toLong(result.get("total")) : 0;
+    }
+
+    /**
+     * Shared pipeline stages for both findStudioItems and countStudioItems.
+     */
+    private List<AggregationOperation> buildStudioPipeline(String tenantId, String userId,
+                                                           String status, String type, String search) {
+        List<AggregationOperation> ops = new ArrayList<>();
+
+        // 1. Match entries for this user/tenant
+        ops.add(Aggregation.match(Criteria.where("tenantId").is(tenantId).and("userId").is(userId)));
+
+        // 2. Normalize entry docs: add kind, sortDate, itemCount
+        ops.add(context -> Document.parse("""
+            { "$addFields": {
+                "kind": "entry",
+                "sortDate": "$createdAt",
+                "itemCount": { "$literal": 0 },
+                "coverR2Key": { "$literal": null }
+            }}
+            """));
+
+        // 3. $unionWith collections — match + normalize in sub-pipeline
+        Document collMatch = new Document("$match", new Document("tenantId", tenantId).append("userId", userId));
+        Document collAddFields = Document.parse("""
+            { "$addFields": {
+                "kind": "collection",
+                "type": { "$ifNull": [ { "$toLower": "$collectionType" }, "catalog" ] },
+                "sortDate": "$createdAt",
+                "itemCount": { "$cond": { "if": { "$isArray": "$items" }, "then": { "$size": "$items" }, "else": 0 } },
+                "durationSec": { "$literal": null },
+                "viewCount": { "$literal": 0 },
+                "contentLanguage": { "$literal": null },
+                "thumbnailR2Key": { "$literal": null }
+            }}
+            """);
+        ops.add(context -> new Document("$unionWith",
+                new Document("coll", "collections")
+                        .append("pipeline", List.of(collMatch, collAddFields))));
+
+        // 4. Optional status filter
+        if (status != null && !status.isBlank()) {
+            ops.add(Aggregation.match(Criteria.where("status").is(status)));
+        } else {
+            // Default: exclude ARCHIVED
+            ops.add(Aggregation.match(Criteria.where("status").ne("ARCHIVED")));
+        }
+
+        // 5. Optional type filter
+        if (type != null && !type.isBlank()) {
+            if ("COLLECTION".equalsIgnoreCase(type)) {
+                ops.add(Aggregation.match(Criteria.where("kind").is("collection")));
+            } else {
+                // Filter by entry type (video, audio, image, resource)
+                ops.add(Aggregation.match(
+                        Criteria.where("kind").is("entry")
+                                .and("type").is(type.toUpperCase())));
+            }
+        }
+
+        // 6. Optional search (regex on title — case-insensitive)
+        if (search != null && !search.isBlank()) {
+            String escaped = Pattern.quote(search);
+            ops.add(Aggregation.match(Criteria.where("title").regex(escaped, "i")));
+        }
+
+        return ops;
+    }
+
+    private AggregationOperation buildSortStage(String sort) {
+        if (sort == null) sort = "newest";
+        return switch (sort) {
+            case "oldest" -> Aggregation.sort(org.springframework.data.domain.Sort.by(
+                    org.springframework.data.domain.Sort.Direction.ASC, "sortDate"));
+            case "title_asc" -> Aggregation.sort(org.springframework.data.domain.Sort.by(
+                    org.springframework.data.domain.Sort.Direction.ASC, "title"));
+            case "title_desc" -> Aggregation.sort(org.springframework.data.domain.Sort.by(
+                    org.springframework.data.domain.Sort.Direction.DESC, "title"));
+            default -> Aggregation.sort(org.springframework.data.domain.Sort.by(
+                    org.springframework.data.domain.Sort.Direction.DESC, "sortDate"));
+        };
+    }
+
+    // ── Helpers ─────────────────────────────────────────────────────────────
+
     private static long toLong(Object value) {
         if (value instanceof Number n) {
             return n.longValue();
         }
         return 0L;
+    }
+
+    // ── Public profile feed ─────────────────────────────────────────────────
+
+    /**
+     * Shared projection for all public feeds (profile, purchased).
+     */
+    private static final String PUBLIC_FEED_PROJECT = """
+            { "$project": {
+                "_id": 1, "kind": 1, "type": 1, "title": 1, "description": 1,
+                "authorUsername": 1, "authorAvatarUrl": 1, "publishedAt": 1,
+                "thumbnailR2Key": 1, "coverR2Key": 1, "durationSec": 1,
+                "viewCount": 1, "isPaid": 1, "priceXlm": 1, "priceUsd": 1,
+                "priceCurrency": 1, "itemCount": 1, "sortDate": 1
+            }}
+            """;
+
+    @Override
+    public List<Document> findProfileFeedItems(String tenantId, String authorUsername,
+                                                String type, String search, String sort,
+                                                int skip, int limit) {
+        List<AggregationOperation> ops = buildProfileFeedPipeline(tenantId, authorUsername, type, search);
+        ops.add(buildSortStage(sort));
+        ops.add(Aggregation.skip((long) skip));
+        ops.add(Aggregation.limit(limit));
+        ops.add(context -> Document.parse(PUBLIC_FEED_PROJECT));
+
+        Aggregation agg = Aggregation.newAggregation(ops);
+        return mongoTemplate.aggregate(agg, "entries", Document.class).getMappedResults();
+    }
+
+    @Override
+    public long countProfileFeedItems(String tenantId, String authorUsername,
+                                       String type, String search) {
+        List<AggregationOperation> ops = buildProfileFeedPipeline(tenantId, authorUsername, type, search);
+        ops.add(Aggregation.count().as("total"));
+
+        Aggregation agg = Aggregation.newAggregation(ops);
+        Document result = mongoTemplate.aggregate(agg, "entries", Document.class).getUniqueMappedResult();
+        return result != null ? toLong(result.get("total")) : 0;
+    }
+
+    private List<AggregationOperation> buildProfileFeedPipeline(String tenantId, String authorUsername,
+                                                                  String type, String search) {
+        List<AggregationOperation> ops = new ArrayList<>();
+
+        // 1. Match PUBLISHED entries for this author
+        ops.add(Aggregation.match(Criteria.where("tenantId").is(tenantId)
+                .and("authorUsername").is(authorUsername)
+                .and("status").is("PUBLISHED")));
+
+        // 2. Normalize entry docs
+        ops.add(context -> Document.parse("""
+            { "$addFields": {
+                "kind": "entry",
+                "sortDate": "$publishedAt",
+                "itemCount": { "$literal": 0 },
+                "coverR2Key": { "$literal": null }
+            }}
+            """));
+
+        // 3. $unionWith PUBLISHED + PUBLIC collections by the same author
+        Document collMatch = new Document("$match",
+                new Document("tenantId", tenantId)
+                        .append("authorUsername", authorUsername)
+                        .append("status", "PUBLISHED")
+                        .append("visibility", "PUBLIC"));
+        Document collAddFields = Document.parse("""
+            { "$addFields": {
+                "kind": "collection",
+                "type": { "$ifNull": [ { "$toLower": "$collectionType" }, "catalog" ] },
+                "sortDate": "$publishedAt",
+                "itemCount": { "$cond": { "if": { "$isArray": "$items" }, "then": { "$size": "$items" }, "else": 0 } },
+                "durationSec": { "$literal": null },
+                "viewCount": { "$literal": 0 },
+                "thumbnailR2Key": { "$literal": null }
+            }}
+            """);
+        ops.add(context -> new Document("$unionWith",
+                new Document("coll", "collections")
+                        .append("pipeline", List.of(collMatch, collAddFields))));
+
+        // 4. Optional type filter
+        addTypeFilter(ops, type);
+
+        // 5. Optional search
+        addSearchFilter(ops, search);
+
+        return ops;
+    }
+
+    // ── Purchased feed ──────────────────────────────────────────────────────
+
+    @Override
+    public List<Document> findPurchasedFeedItems(String tenantId,
+                                                  Set<String> entryIds, Set<String> collectionIds,
+                                                  String type, String search, String sort,
+                                                  int skip, int limit) {
+        List<AggregationOperation> ops = buildPurchasedFeedPipeline(tenantId, entryIds, collectionIds, type, search);
+        ops.add(buildSortStage(sort));
+        ops.add(Aggregation.skip((long) skip));
+        ops.add(Aggregation.limit(limit));
+        ops.add(context -> Document.parse(PUBLIC_FEED_PROJECT));
+
+        Aggregation agg = Aggregation.newAggregation(ops);
+        return mongoTemplate.aggregate(agg, "entries", Document.class).getMappedResults();
+    }
+
+    @Override
+    public long countPurchasedFeedItems(String tenantId,
+                                         Set<String> entryIds, Set<String> collectionIds,
+                                         String type, String search) {
+        List<AggregationOperation> ops = buildPurchasedFeedPipeline(tenantId, entryIds, collectionIds, type, search);
+        ops.add(Aggregation.count().as("total"));
+
+        Aggregation agg = Aggregation.newAggregation(ops);
+        Document result = mongoTemplate.aggregate(agg, "entries", Document.class).getUniqueMappedResult();
+        return result != null ? toLong(result.get("total")) : 0;
+    }
+
+    private List<AggregationOperation> buildPurchasedFeedPipeline(String tenantId,
+                                                                    Set<String> entryIds,
+                                                                    Set<String> collectionIds,
+                                                                    String type, String search) {
+        List<AggregationOperation> ops = new ArrayList<>();
+
+        // Convert string IDs to ObjectIds for _id matching
+        List<org.bson.types.ObjectId> entryOids = entryIds.stream()
+                .map(org.bson.types.ObjectId::new)
+                .collect(Collectors.toList());
+
+        // 1. Match purchased entries by ID
+        ops.add(Aggregation.match(Criteria.where("tenantId").is(tenantId)
+                .and("_id").in(entryOids)));
+
+        // 2. Normalize
+        ops.add(context -> Document.parse("""
+            { "$addFields": {
+                "kind": "entry",
+                "sortDate": "$publishedAt",
+                "itemCount": { "$literal": 0 },
+                "coverR2Key": { "$literal": null }
+            }}
+            """));
+
+        // 3. $unionWith purchased collections by ID
+        if (!collectionIds.isEmpty()) {
+            List<org.bson.types.ObjectId> collOids = collectionIds.stream()
+                    .map(org.bson.types.ObjectId::new)
+                    .collect(Collectors.toList());
+
+            Document collMatch = new Document("$match",
+                    new Document("tenantId", tenantId)
+                            .append("_id", new Document("$in", collOids)));
+            Document collAddFields = Document.parse("""
+                { "$addFields": {
+                    "kind": "collection",
+                    "type": { "$ifNull": [ { "$toLower": "$collectionType" }, "catalog" ] },
+                    "sortDate": "$publishedAt",
+                    "itemCount": { "$cond": { "if": { "$isArray": "$items" }, "then": { "$size": "$items" }, "else": 0 } },
+                    "durationSec": { "$literal": null },
+                    "viewCount": { "$literal": 0 },
+                    "thumbnailR2Key": { "$literal": null }
+                }}
+                """);
+            ops.add(context -> new Document("$unionWith",
+                    new Document("coll", "collections")
+                            .append("pipeline", List.of(collMatch, collAddFields))));
+        }
+
+        // 4. Optional type filter
+        addTypeFilter(ops, type);
+
+        // 5. Optional search
+        addSearchFilter(ops, search);
+
+        return ops;
+    }
+
+    // ── Shared filter helpers ───────────────────────────────────────────────
+
+    private void addTypeFilter(List<AggregationOperation> ops, String type) {
+        if (type != null && !type.isBlank()) {
+            if ("COLLECTION".equalsIgnoreCase(type)) {
+                ops.add(Aggregation.match(Criteria.where("kind").is("collection")));
+            } else {
+                ops.add(Aggregation.match(
+                        Criteria.where("kind").is("entry")
+                                .and("type").is(type.toUpperCase())));
+            }
+        }
+    }
+
+    private void addSearchFilter(List<AggregationOperation> ops, String search) {
+        if (search != null && !search.isBlank()) {
+            String escaped = Pattern.quote(search);
+            ops.add(Aggregation.match(Criteria.where("title").regex(escaped, "i")));
+        }
     }
 
     @Override

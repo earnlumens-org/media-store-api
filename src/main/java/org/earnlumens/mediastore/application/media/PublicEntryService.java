@@ -3,20 +3,29 @@ package org.earnlumens.mediastore.application.media;
 import org.earnlumens.mediastore.domain.media.dto.response.AssetInfo;
 import org.earnlumens.mediastore.domain.media.dto.response.PublicEntryPageResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PublicEntryResponse;
+import org.earnlumens.mediastore.domain.media.dto.response.PublicFeedItemResponse;
+import org.earnlumens.mediastore.domain.media.dto.response.PublicFeedPageResponse;
 import org.earnlumens.mediastore.domain.media.model.AssetStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
+import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.model.MediaKind;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
+import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
+import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
+import org.bson.Document;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Service for public (unauthenticated) entry queries.
@@ -27,10 +36,16 @@ public class PublicEntryService {
 
     private final EntryRepository entryRepository;
     private final AssetRepository assetRepository;
+    private final EntitlementRepository entitlementRepository;
+    private final CollectionRepository collectionRepository;
 
-    public PublicEntryService(EntryRepository entryRepository, AssetRepository assetRepository) {
+    public PublicEntryService(EntryRepository entryRepository, AssetRepository assetRepository,
+                              EntitlementRepository entitlementRepository,
+                              CollectionRepository collectionRepository) {
         this.entryRepository = entryRepository;
         this.assetRepository = assetRepository;
+        this.entitlementRepository = entitlementRepository;
+        this.collectionRepository = collectionRepository;
     }
 
     /**
@@ -162,5 +177,128 @@ public class PublicEntryService {
             case "resource" -> EntryType.RESOURCE;
             default -> null;
         };
+    }
+
+    // ── Unified profile feed (entries + collections via $unionWith) ────────
+
+    /**
+     * Returns a unified, paginated feed of entries + collections for a public user profile.
+     * @param userId nullable — the viewer's userId for entitlement checks (null if anonymous)
+     */
+    public PublicFeedPageResponse getProfileFeed(String tenantId, String authorUsername,
+                                                  String userId, String viewerUsername,
+                                                  String type, String search, String sort,
+                                                  int page, int size) {
+        int skip = page * size;
+        List<Document> docs = entryRepository.findProfileFeedItems(
+                tenantId, authorUsername, type, search, sort, skip, size);
+        long total = entryRepository.countProfileFeedItems(tenantId, authorUsername, type, search);
+        int totalPages = size > 0 ? (int) Math.ceil((double) total / size) : 0;
+
+        // Owner shortcut: if the viewer is the profile owner, all their paid items are unlocked
+        boolean viewerIsOwner = viewerUsername != null && viewerUsername.equals(authorUsername);
+
+        Set<String> unlockedEntryIds = Set.of();
+        Set<String> unlockedCollectionIds = Set.of();
+
+        if (!viewerIsOwner && userId != null) {
+            // Batch entitlement check for paid items (only when viewer is NOT the owner)
+            List<String> paidEntryIds = new ArrayList<>();
+            List<String> paidCollectionIds = new ArrayList<>();
+            for (Document doc : docs) {
+                Boolean isPaid = doc.getBoolean("isPaid", false);
+                if (Boolean.TRUE.equals(isPaid)) {
+                    String kind = doc.getString("kind");
+                    String id = doc.get("_id") != null ? doc.get("_id").toString() : null;
+                    if ("entry".equals(kind) && id != null) paidEntryIds.add(id);
+                    else if ("collection".equals(kind) && id != null) paidCollectionIds.add(id);
+                }
+            }
+            if (!paidEntryIds.isEmpty()) {
+                unlockedEntryIds = new java.util.HashSet<>(entitlementRepository.findEntitledEntryIds(
+                        tenantId, userId, paidEntryIds, EntitlementStatus.ACTIVE));
+
+                // Also expand collection-level entitlements: entries inside purchased collections are unlocked
+                Set<String> stillLocked = new java.util.HashSet<>(paidEntryIds);
+                stillLocked.removeAll(unlockedEntryIds);
+                if (!stillLocked.isEmpty()) {
+                    Set<String> userCollIds = entitlementRepository.findAllEntitledCollectionIds(
+                            tenantId, userId, EntitlementStatus.ACTIVE);
+                    if (!userCollIds.isEmpty()) {
+                        var userColls = collectionRepository.findByTenantIdAndIdIn(
+                                tenantId, new ArrayList<>(userCollIds));
+                        for (var c : userColls) {
+                            if (c.getItems() != null) {
+                                for (var item : c.getItems()) {
+                                    if (item.getEntryId() != null && stillLocked.contains(item.getEntryId())) {
+                                        unlockedEntryIds.add(item.getEntryId());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if (!paidCollectionIds.isEmpty()) {
+                unlockedCollectionIds = entitlementRepository.findEntitledCollectionIds(
+                        tenantId, userId, paidCollectionIds, EntitlementStatus.ACTIVE);
+            }
+        }
+
+        List<PublicFeedItemResponse> content = new ArrayList<>();
+        for (Document doc : docs) {
+            content.add(mapDocToFeedItem(doc, unlockedEntryIds, unlockedCollectionIds, viewerIsOwner));
+        }
+
+        return new PublicFeedPageResponse(content, page, size, total, totalPages);
+    }
+
+    private PublicFeedItemResponse mapDocToFeedItem(Document doc,
+                                                     Set<String> unlockedEntryIds,
+                                                     Set<String> unlockedCollectionIds,
+                                                     boolean viewerIsOwner) {
+        String id = doc.get("_id") != null ? doc.get("_id").toString() : null;
+        String kind = doc.getString("kind");
+        String type = doc.getString("type") != null ? doc.getString("type").toLowerCase() : "resource";
+        boolean isPaid = doc.getBoolean("isPaid", false);
+
+        boolean unlocked;
+        boolean locked;
+        if (!isPaid) {
+            unlocked = false;
+            locked = false;
+        } else if (viewerIsOwner) {
+            unlocked = true;
+            locked = false;
+        } else if ("entry".equals(kind)) {
+            unlocked = unlockedEntryIds.contains(id);
+            locked = !unlocked;
+        } else {
+            unlocked = unlockedCollectionIds.contains(id);
+            locked = !unlocked;
+        }
+
+        return new PublicFeedItemResponse(
+                id,
+                kind,
+                type,
+                doc.getString("title"),
+                doc.getString("description"),
+                doc.getString("authorUsername"),
+                doc.getString("authorAvatarUrl"),
+                doc.get("publishedAt") instanceof java.util.Date d ? d.toInstant().toString() :
+                    (doc.get("publishedAt") instanceof String s ? s : null),
+                doc.getString("thumbnailR2Key"),
+                doc.getString("coverR2Key"),
+                doc.getInteger("durationSec"),
+                doc.get("viewCount") instanceof Number n ? n.longValue() : 0L,
+                isPaid,
+                doc.get("priceXlm") instanceof Number n ? new BigDecimal(n.toString()) : null,
+                doc.get("priceUsd") instanceof Number n ? new BigDecimal(n.toString()) : null,
+                doc.getString("priceCurrency"),
+                doc.getInteger("itemCount", 0),
+                locked,
+                unlocked
+        );
     }
 }

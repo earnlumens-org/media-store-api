@@ -10,6 +10,8 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
+import org.bson.Document;
+
 public interface EntryRepository {
 
     Optional<Entry> findByTenantIdAndId(String tenantId, String id);
@@ -56,4 +58,37 @@ public interface EntryRepository {
      * Called when a user's profile info changes (e.g. username change on X/Twitter).
      */
     long updateAuthorInfoByUserId(String tenantId, String userId, String newUsername, String newAvatarUrl);
+
+    /**
+     * Unified Creator Studio feed: entries + collections merged via $unionWith.
+     */
+    List<Document> findStudioItems(String tenantId, String userId,
+                                   String status, String type, String search,
+                                   String sort, int skip, int limit);
+
+    /**
+     * Count for unified studio feed pagination.
+     */
+    long countStudioItems(String tenantId, String userId,
+                          String status, String type, String search);
+
+    // ── Public profile feed ─────────────────────────────────────────────
+
+    List<Document> findProfileFeedItems(String tenantId, String authorUsername,
+                                        String type, String search, String sort,
+                                        int skip, int limit);
+
+    long countProfileFeedItems(String tenantId, String authorUsername,
+                               String type, String search);
+
+    // ── Purchased feed ──────────────────────────────────────────────────
+
+    List<Document> findPurchasedFeedItems(String tenantId,
+                                          java.util.Set<String> entryIds, java.util.Set<String> collectionIds,
+                                          String type, String search, String sort,
+                                          int skip, int limit);
+
+    long countPurchasedFeedItems(String tenantId,
+                                 java.util.Set<String> entryIds, java.util.Set<String> collectionIds,
+                                 String type, String search);
 }

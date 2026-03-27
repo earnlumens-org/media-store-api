@@ -10,6 +10,8 @@ import org.earnlumens.mediastore.domain.media.dto.response.FinalizeUploadRespons
 import org.earnlumens.mediastore.domain.media.dto.response.InitUploadResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.OwnerEntryPageResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.OwnerEntryResponse;
+import org.earnlumens.mediastore.domain.media.dto.response.StudioItemResponse;
+import org.earnlumens.mediastore.domain.media.dto.response.StudioPageResponse;
 import org.earnlumens.mediastore.domain.media.model.Asset;
 import org.earnlumens.mediastore.domain.media.model.AssetStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
@@ -37,7 +39,9 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.regex.Pattern;
@@ -562,6 +566,78 @@ public class EntryUploadService {
                 entryPage.getTotalElements(),
                 entryPage.getTotalPages()
         );
+    }
+
+    /**
+     * Unified Creator Studio feed — returns entries and collections merged,
+     * sorted, filtered and paginated server-side via a single MongoDB
+     * {@code $unionWith} aggregation.
+     */
+    public StudioPageResponse getStudioItems(String tenantId, String userId,
+                                              String status, String type, String search,
+                                              String sort, int page, int size) {
+        int skip = page * size;
+        List<org.bson.Document> docs = entryRepository.findStudioItems(
+                tenantId, userId, status, type, search, sort, skip, size);
+        long total = entryRepository.countStudioItems(tenantId, userId, status, type, search);
+
+        // Batch-resolve transcoding status for video entries in one pass
+        Map<String, String> transcodingMap = new HashMap<>();
+        for (org.bson.Document doc : docs) {
+            if ("entry".equals(doc.getString("kind")) && "VIDEO".equalsIgnoreCase(doc.getString("type"))) {
+                String entryId = doc.getObjectId("_id").toHexString();
+                transcodingJobService.findLatestByTenantIdAndEntryId(tenantId, entryId)
+                        .ifPresent(job -> transcodingMap.put(entryId, job.getStatus().name()));
+            }
+        }
+
+        java.time.format.DateTimeFormatter fmt = java.time.format.DateTimeFormatter.ISO_LOCAL_DATE_TIME;
+        List<StudioItemResponse> content = docs.stream().map(doc -> {
+            String id = doc.getObjectId("_id").toHexString();
+            String kind = doc.getString("kind");
+
+            // Date formatting helper
+            java.util.function.Function<String, String> fmtDate = field -> {
+                Object val = doc.get(field);
+                if (val instanceof java.util.Date d) {
+                    return d.toInstant().atZone(java.time.ZoneOffset.UTC).format(fmt);
+                }
+                return val instanceof String s ? s : null;
+            };
+
+            return new StudioItemResponse(
+                    id,
+                    kind,
+                    doc.getString("type") != null ? doc.getString("type").toLowerCase() : null,
+                    doc.getString("title"),
+                    doc.getString("description"),
+                    doc.getString("status"),
+                    doc.getString("thumbnailR2Key"),
+                    doc.getString("coverR2Key"),
+                    Boolean.TRUE.equals(doc.getBoolean("isPaid")),
+                    toBigDecimal(doc.get("priceXlm")),
+                    toBigDecimal(doc.get("priceUsd")),
+                    doc.getString("priceCurrency"),
+                    doc.getString("contentLanguage"),
+                    doc.getInteger("durationSec"),
+                    doc.get("viewCount") instanceof Number n ? n.longValue() : 0L,
+                    doc.getInteger("itemCount", 0),
+                    fmtDate.apply("createdAt"),
+                    fmtDate.apply("updatedAt"),
+                    fmtDate.apply("publishedAt"),
+                    transcodingMap.get(id),
+                    doc.getString("sellerWallet")
+            );
+        }).toList();
+
+        int totalPages = size > 0 ? (int) Math.ceil((double) total / size) : 1;
+        return new StudioPageResponse(content, page, size, total, totalPages);
+    }
+
+    private static BigDecimal toBigDecimal(Object value) {
+        if (value == null) return null;
+        if (value instanceof Number n) return BigDecimal.valueOf(n.doubleValue());
+        try { return new BigDecimal(value.toString()); } catch (NumberFormatException e) { return null; }
     }
 
     /**

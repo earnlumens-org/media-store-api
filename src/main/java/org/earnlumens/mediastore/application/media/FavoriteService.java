@@ -91,7 +91,7 @@ public class FavoriteService {
      * Items whose underlying entry/collection no longer exists are silently skipped
      * (orphaned favorites are cleaned up lazily).
      */
-    public FavoritePageResponse listFavorites(String tenantId, String userId, int page, int size) {
+    public FavoritePageResponse listFavorites(String tenantId, String userId, String viewerUsername, int page, int size) {
         Page<Favorite> favoritePage = favoriteRepository.findByTenantIdAndUserId(
                 tenantId, userId, PageRequest.of(page, size));
 
@@ -132,17 +132,42 @@ public class FavoriteService {
         // Exclude entries owned by the requesting user — owners always have access.
         List<String> paidNonOwnedEntryIds = entriesById.values().stream()
                 .filter(Entry::isPaid)
-                .filter(e -> !userId.equals(e.getUserId()))
+                .filter(e -> !isOwner(userId, viewerUsername, e.getUserId(), e.getAuthorUsername()))
                 .map(Entry::getId)
                 .toList();
 
-        Set<String> entitledEntryIds = entitlementRepository.findEntitledEntryIds(
-                tenantId, userId, paidNonOwnedEntryIds, EntitlementStatus.ACTIVE);
+        Set<String> entitledEntryIds = new java.util.HashSet<>(entitlementRepository.findEntitledEntryIds(
+                tenantId, userId, paidNonOwnedEntryIds, EntitlementStatus.ACTIVE));
+
+        // Also check collection-level entitlements: if the user purchased a collection,
+        // all entries inside it are unlocked too.
+        if (!paidNonOwnedEntryIds.isEmpty()) {
+            Set<String> stillLockedEntryIds = paidNonOwnedEntryIds.stream()
+                    .filter(id -> !entitledEntryIds.contains(id))
+                    .collect(java.util.stream.Collectors.toSet());
+            if (!stillLockedEntryIds.isEmpty()) {
+                Set<String> userCollIds = entitlementRepository.findAllEntitledCollectionIds(
+                        tenantId, userId, EntitlementStatus.ACTIVE);
+                if (!userCollIds.isEmpty()) {
+                    List<Collection> userColls = collectionRepository.findByTenantIdAndIdIn(
+                            tenantId, new java.util.ArrayList<>(userCollIds));
+                    for (Collection c : userColls) {
+                        if (c.getItems() != null) {
+                            for (var item : c.getItems()) {
+                                if (item.getEntryId() != null && stillLockedEntryIds.contains(item.getEntryId())) {
+                                    entitledEntryIds.add(item.getEntryId());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         // Batch-check entitlements for paid collections
         List<String> paidNonOwnedCollIds = collectionsById.values().stream()
                 .filter(Collection::isPaid)
-                .filter(c -> !userId.equals(c.getUserId()))
+                .filter(c -> !isOwner(userId, viewerUsername, c.getUserId(), c.getAuthorUsername()))
                 .map(Collection::getId)
                 .toList();
 
@@ -157,8 +182,8 @@ public class FavoriteService {
             if (fav.getItemType() == FavoriteItemType.ENTRY) {
                 Entry entry = entriesById.get(fav.getItemId());
                 if (entry != null) {
-                    boolean isOwner = userId.equals(entry.getUserId());
-                    boolean locked = entry.isPaid() && !isOwner
+                    boolean entryIsOwner = isOwner(userId, viewerUsername, entry.getUserId(), entry.getAuthorUsername());
+                    boolean locked = entry.isPaid() && !entryIsOwner
                             && !entitledEntryIds.contains(entry.getId());
                     items.add(toEntryResponse(fav, entry, locked));
                 } else {
@@ -167,8 +192,8 @@ public class FavoriteService {
             } else {
                 Collection collection = collectionsById.get(fav.getItemId());
                 if (collection != null) {
-                    boolean isOwner = userId.equals(collection.getUserId());
-                    boolean collLocked = collection.isPaid() && !isOwner
+                    boolean collIsOwner = isOwner(userId, viewerUsername, collection.getUserId(), collection.getAuthorUsername());
+                    boolean collLocked = collection.isPaid() && !collIsOwner
                             && !entitledCollIds.contains(collection.getId());
                     items.add(toCollectionResponse(fav, collection, collLocked));
                 } else {
@@ -247,5 +272,14 @@ public class FavoriteService {
             case IMAGE -> "image";
             case RESOURCE -> "resource";
         };
+    }
+
+    /**
+     * Check ownership by userId match OR authorUsername fallback.
+     */
+    private boolean isOwner(String viewerUserId, String viewerUsername,
+                            String itemUserId, String itemAuthorUsername) {
+        if (viewerUserId != null && viewerUserId.equals(itemUserId)) return true;
+        return viewerUsername != null && viewerUsername.equals(itemAuthorUsername);
     }
 }

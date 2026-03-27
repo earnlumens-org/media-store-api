@@ -36,5 +36,11 @@ public interface EntitlementRepository {
     Page<Entitlement> findByTenantIdAndUserIdAndTargetTypeAndStatus(
             String tenantId, String userId, TargetType targetType, EntitlementStatus status, Pageable pageable);
 
+    /** All entry IDs the user is entitled to (unpaginated, for purchased feed). */
+    Set<String> findAllEntitledEntryIds(String tenantId, String userId, EntitlementStatus status);
+
+    /** All collection IDs the user is entitled to (unpaginated, for purchased feed). */
+    Set<String> findAllEntitledCollectionIds(String tenantId, String userId, EntitlementStatus status);
+
     Entitlement save(Entitlement entitlement);
 }

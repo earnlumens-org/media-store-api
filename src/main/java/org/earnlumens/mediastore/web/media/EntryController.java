@@ -9,6 +9,7 @@ import org.earnlumens.mediastore.domain.media.dto.request.UpdateEntryStatusReque
 import org.earnlumens.mediastore.domain.media.dto.response.CreateEntryResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.OwnerEntryPageResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.OwnerStatsResponse;
+import org.earnlumens.mediastore.domain.media.dto.response.StudioPageResponse;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -156,6 +157,31 @@ public class EntryController {
         String tenantId = tenantResolver.resolve(httpRequest);
         OwnerStatsResponse stats = entryUploadService.getOwnerStats(tenantId, userId);
         return ResponseEntity.ok(stats);
+    }
+
+    /**
+     * GET /api/entries/mine/studio — Unified Creator Studio feed (entries + collections).
+     * Server-side merge, filter, sort and paginate via MongoDB $unionWith.
+     */
+    @GetMapping("/mine/studio")
+    public ResponseEntity<?> getStudioItems(
+            @RequestParam(value = "status", required = false) String status,
+            @RequestParam(value = "type", required = false) String type,
+            @RequestParam(value = "search", required = false) String search,
+            @RequestParam(value = "sort", defaultValue = "newest") String sort,
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size,
+            HttpServletRequest httpRequest
+    ) {
+        String userId = extractUserId();
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+
+        String tenantId = tenantResolver.resolve(httpRequest);
+        StudioPageResponse response = entryUploadService.getStudioItems(
+                tenantId, userId, status, type, search, sort, page, size);
+        return ResponseEntity.ok(response);
     }
 
     /**

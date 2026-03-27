@@ -145,4 +145,45 @@ public class EntryRepositoryImpl implements EntryRepository {
     public long updateAuthorInfoByUserId(String tenantId, String userId, String newUsername, String newAvatarUrl) {
         return entryMongoRepository.updateAuthorInfoByUserId(tenantId, userId, newUsername, newAvatarUrl);
     }
+
+    @Override
+    public java.util.List<org.bson.Document> findStudioItems(String tenantId, String userId,
+                                                              String status, String type, String search,
+                                                              String sort, int skip, int limit) {
+        return entryMongoRepository.findStudioItems(tenantId, userId, status, type, search, sort, skip, limit);
+    }
+
+    @Override
+    public long countStudioItems(String tenantId, String userId,
+                                 String status, String type, String search) {
+        return entryMongoRepository.countStudioItems(tenantId, userId, status, type, search);
+    }
+
+    @Override
+    public java.util.List<org.bson.Document> findProfileFeedItems(String tenantId, String authorUsername,
+                                                                    String type, String search, String sort,
+                                                                    int skip, int limit) {
+        return entryMongoRepository.findProfileFeedItems(tenantId, authorUsername, type, search, sort, skip, limit);
+    }
+
+    @Override
+    public long countProfileFeedItems(String tenantId, String authorUsername,
+                                       String type, String search) {
+        return entryMongoRepository.countProfileFeedItems(tenantId, authorUsername, type, search);
+    }
+
+    @Override
+    public java.util.List<org.bson.Document> findPurchasedFeedItems(String tenantId,
+                                                                      java.util.Set<String> entryIds, java.util.Set<String> collectionIds,
+                                                                      String type, String search, String sort,
+                                                                      int skip, int limit) {
+        return entryMongoRepository.findPurchasedFeedItems(tenantId, entryIds, collectionIds, type, search, sort, skip, limit);
+    }
+
+    @Override
+    public long countPurchasedFeedItems(String tenantId,
+                                         java.util.Set<String> entryIds, java.util.Set<String> collectionIds,
+                                         String type, String search) {
+        return entryMongoRepository.countPurchasedFeedItems(tenantId, entryIds, collectionIds, type, search);
+    }
 }

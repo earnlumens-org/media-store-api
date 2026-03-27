@@ -176,7 +176,7 @@ class FavoriteControllerTest {
     void listFavorites_authenticated_returnsPage() throws Exception {
         configureValidToken();
         setAuthContext();
-        when(favoriteService.listFavorites(TENANT_ID, USER_ID, 0, 24))
+        when(favoriteService.listFavorites(TENANT_ID, USER_ID, "testuser", 0, 24))
                 .thenReturn(samplePage());
 
         mockMvc.perform(get("/api/favorites")
@@ -189,14 +189,14 @@ class FavoriteControllerTest {
                 .andExpect(jsonPath("$.content[0].itemType").value("entry"))
                 .andExpect(jsonPath("$.content[0].title").value("Test Video"));
 
-        verify(favoriteService).listFavorites(TENANT_ID, USER_ID, 0, 24);
+        verify(favoriteService).listFavorites(TENANT_ID, USER_ID, "testuser", 0, 24);
     }
 
     @Test
     void listFavorites_customPagination() throws Exception {
         configureValidToken();
         setAuthContext();
-        when(favoriteService.listFavorites(TENANT_ID, USER_ID, 2, 10))
+        when(favoriteService.listFavorites(TENANT_ID, USER_ID, "testuser", 2, 10))
                 .thenReturn(new FavoritePageResponse(List.of(), 2, 10, 25, 3));
 
         mockMvc.perform(get("/api/favorites")
@@ -209,7 +209,7 @@ class FavoriteControllerTest {
                 .andExpect(jsonPath("$.totalElements").value(25))
                 .andExpect(jsonPath("$.totalPages").value(3));
 
-        verify(favoriteService).listFavorites(TENANT_ID, USER_ID, 2, 10);
+        verify(favoriteService).listFavorites(TENANT_ID, USER_ID, "testuser", 2, 10);
     }
 
     // ─── POST /api/favorites/{itemId} — toggle ───────────────
@@ -333,15 +333,15 @@ class FavoriteControllerTest {
         setAuthContext();
         String otherTenant = "other-site";
         when(tenantResolver.resolve(any())).thenReturn(otherTenant);
-        when(favoriteService.listFavorites(otherTenant, USER_ID, 0, 24))
+        when(favoriteService.listFavorites(otherTenant, USER_ID, "testuser", 0, 24))
                 .thenReturn(new FavoritePageResponse(List.of(), 0, 24, 0, 0));
 
         mockMvc.perform(get("/api/favorites")
                         .header("Authorization", "Bearer " + VALID_TOKEN))
                 .andExpect(status().isOk());
 
-        verify(favoriteService).listFavorites(eq(otherTenant), eq(USER_ID), anyInt(), anyInt());
-        verify(favoriteService, never()).listFavorites(eq(TENANT_ID), any(), anyInt(), anyInt());
+        verify(favoriteService).listFavorites(eq(otherTenant), eq(USER_ID), any(), anyInt(), anyInt());
+        verify(favoriteService, never()).listFavorites(eq(TENANT_ID), any(), any(), anyInt(), anyInt());
     }
 
     @Test

@@ -2,6 +2,7 @@ package org.earnlumens.mediastore.web.media;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.earnlumens.mediastore.application.media.PurchaseListService;
+import org.earnlumens.mediastore.domain.media.dto.response.PublicFeedPageResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PurchasedCollectionPageResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PurchasedEntryPageResponse;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantResolver;
@@ -94,5 +95,36 @@ public class PurchaseController {
         if (auth == null || !(auth.getPrincipal() instanceof OAuth2User principal)) return null;
         Object idAttr = principal.getAttribute("id");
         return idAttr != null ? idAttr.toString() : null;
+    }
+
+    /**
+     * GET /api/purchases/feed?type=&search=&sort=newest&page=0&size=24
+     * Unified purchased content feed: entries + collections merged via $unionWith.
+     */
+    @GetMapping("/feed")
+    public ResponseEntity<?> getUnifiedPurchases(
+            @RequestParam(value = "type", required = false) String type,
+            @RequestParam(value = "search", required = false) String search,
+            @RequestParam(value = "sort", defaultValue = "newest") String sort,
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "24") int size,
+            HttpServletRequest request) {
+
+        String userId = extractUserId();
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+
+        String tenantId = tenantResolver.resolve(request);
+
+        try {
+            PublicFeedPageResponse response =
+                    purchaseListService.getUnifiedPurchases(tenantId, userId, type, search, sort, page, size);
+            return ResponseEntity.ok(response);
+        } catch (Exception e) {
+            logger.error("Error listing unified purchases for userId={}: {}", userId, e.getMessage(), e);
+            return ResponseEntity.internalServerError()
+                    .body(Map.of("error", "Failed to list purchases"));
+        }
     }
 }

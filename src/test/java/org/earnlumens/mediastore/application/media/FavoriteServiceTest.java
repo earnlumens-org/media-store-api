@@ -189,7 +189,7 @@ class FavoriteServiceTest {
         when(favoriteRepository.findByTenantIdAndUserId(eq(TENANT_A), eq(USER_ID), any()))
                 .thenReturn(emptyPage);
 
-        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, 0, 24);
+        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, null, 0, 24);
 
         assertTrue(response.content().isEmpty());
         assertEquals(0, response.totalElements());
@@ -215,7 +215,7 @@ class FavoriteServiceTest {
         when(entitlementRepository.findEntitledEntryIds(eq(TENANT_A), eq(USER_ID), eq(List.of(ENTRY_ID)), any()))
                 .thenReturn(Set.of());
 
-        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, 0, 24);
+        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, null, 0, 24);
 
         assertEquals(2, response.content().size());
         assertEquals("entry", response.content().get(0).itemType());
@@ -238,7 +238,7 @@ class FavoriteServiceTest {
         when(entryRepository.findByTenantIdAndIdIn(TENANT_A, List.of(ENTRY_ID)))
                 .thenReturn(List.of());
 
-        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, 0, 24);
+        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, null, 0, 24);
 
         assertTrue(response.content().isEmpty());
         // The orphan should be deleted
@@ -256,7 +256,7 @@ class FavoriteServiceTest {
         when(collectionRepository.findByTenantIdAndIdIn(TENANT_A, List.of(COLLECTION_ID)))
                 .thenReturn(List.of());
 
-        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, 0, 24);
+        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, null, 0, 24);
 
         assertTrue(response.content().isEmpty());
         verify(favoriteRepository).deleteByTenantIdAndId(TENANT_A, "fav-" + COLLECTION_ID);
@@ -276,7 +276,7 @@ class FavoriteServiceTest {
         when(entitlementRepository.findEntitledEntryIds(eq(TENANT_A), eq(USER_ID), eq(List.of(ENTRY_ID)), any()))
                 .thenReturn(Set.of());
 
-        service.listFavorites(TENANT_A, USER_ID, 0, 24);
+        service.listFavorites(TENANT_A, USER_ID, null, 0, 24);
 
         // Verify the batch-load used TENANT_A, never TENANT_B
         verify(entryRepository).findByTenantIdAndIdIn(eq(TENANT_A), eq(List.of(ENTRY_ID)));
@@ -302,8 +302,8 @@ class FavoriteServiceTest {
         when(entitlementRepository.findEntitledEntryIds(eq(TENANT_A), eq(USER_ID), eq(List.of(ENTRY_ID)), any()))
                 .thenReturn(Set.of());
 
-        FavoritePageResponse user1Response = service.listFavorites(TENANT_A, USER_ID, 0, 24);
-        FavoritePageResponse user2Response = service.listFavorites(TENANT_A, OTHER_USER, 0, 24);
+        FavoritePageResponse user1Response = service.listFavorites(TENANT_A, USER_ID, null, 0, 24);
+        FavoritePageResponse user2Response = service.listFavorites(TENANT_A, OTHER_USER, null, 0, 24);
 
         assertEquals(1, user1Response.content().size());
         assertEquals(0, user2Response.content().size());
@@ -324,7 +324,7 @@ class FavoriteServiceTest {
         when(entitlementRepository.findEntitledEntryIds(eq(TENANT_A), eq(USER_ID), eq(List.of(ENTRY_ID)), any()))
                 .thenReturn(Set.of());
 
-        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, 0, 24);
+        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, null, 0, 24);
         var item = response.content().get(0);
 
         assertEquals("fav-" + ENTRY_ID, item.id());
@@ -352,7 +352,7 @@ class FavoriteServiceTest {
         when(collectionRepository.findByTenantIdAndIdIn(TENANT_A, List.of(COLLECTION_ID)))
                 .thenReturn(List.of(sampleCollection()));
 
-        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, 0, 24);
+        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, null, 0, 24);
         var item = response.content().get(0);
 
         assertEquals("fav-" + COLLECTION_ID, item.id());
@@ -384,7 +384,7 @@ class FavoriteServiceTest {
         when(entitlementRepository.findEntitledEntryIds(eq(TENANT_A), eq(USER_ID), eq(List.of(ENTRY_ID)), any()))
                 .thenReturn(Set.of(ENTRY_ID));
 
-        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, 0, 24);
+        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, null, 0, 24);
         var item = response.content().get(0);
 
         assertFalse(item.locked(), "Paid entry WITH entitlement should NOT be locked");
@@ -404,7 +404,7 @@ class FavoriteServiceTest {
         when(entitlementRepository.findEntitledEntryIds(eq(TENANT_A), eq(USER_ID), eq(List.of(ENTRY_ID)), any()))
                 .thenReturn(Set.of());
 
-        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, 0, 24);
+        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, null, 0, 24);
         var item = response.content().get(0);
 
         assertTrue(item.locked(), "Paid entry WITHOUT entitlement should be locked");
@@ -427,7 +427,7 @@ class FavoriteServiceTest {
         when(entitlementRepository.findEntitledEntryIds(eq(TENANT_A), eq(USER_ID), eq(List.of()), any()))
                 .thenReturn(Set.of());
 
-        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, 0, 24);
+        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, null, 0, 24);
         var item = response.content().get(0);
 
         assertFalse(item.locked(), "Free entry should never be locked");
@@ -444,7 +444,7 @@ class FavoriteServiceTest {
         when(collectionRepository.findByTenantIdAndIdIn(TENANT_A, List.of(COLLECTION_ID)))
                 .thenReturn(List.of(sampleCollection()));
 
-        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, 0, 24);
+        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, null, 0, 24);
         var item = response.content().get(0);
 
         assertFalse(item.locked(), "Collections should never be locked");
@@ -468,7 +468,7 @@ class FavoriteServiceTest {
         when(entitlementRepository.findEntitledEntryIds(eq(TENANT_A), eq(ownerUserId), eq(List.of()), any()))
                 .thenReturn(Set.of());
 
-        FavoritePageResponse response = service.listFavorites(TENANT_A, ownerUserId, 0, 24);
+        FavoritePageResponse response = service.listFavorites(TENANT_A, ownerUserId, "creator", 0, 24);
         var item = response.content().get(0);
 
         assertFalse(item.locked(), "Owner's own paid content should never be locked");
@@ -483,7 +483,7 @@ class FavoriteServiceTest {
         when(favoriteRepository.findByTenantIdAndUserId(eq(TENANT_A), eq(USER_ID), any()))
                 .thenReturn(page);
 
-        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, 2, 10);
+        FavoritePageResponse response = service.listFavorites(TENANT_A, USER_ID, null, 2, 10);
 
         assertEquals(2, response.page());
         assertEquals(10, response.size());

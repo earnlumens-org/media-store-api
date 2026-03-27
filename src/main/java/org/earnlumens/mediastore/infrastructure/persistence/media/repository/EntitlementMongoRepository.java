@@ -26,4 +26,8 @@ public interface EntitlementMongoRepository extends MongoRepository<EntitlementE
 
     Page<EntitlementEntity> findByTenantIdAndUserIdAndTargetTypeAndStatusOrderByGrantedAtDesc(
             String tenantId, String userId, String targetType, String status, Pageable pageable);
+
+    /** Unpaginated: all entitlements of a given targetType + status for a user. */
+    List<EntitlementEntity> findByTenantIdAndUserIdAndTargetTypeAndStatus(
+            String tenantId, String userId, String targetType, String status);
 }

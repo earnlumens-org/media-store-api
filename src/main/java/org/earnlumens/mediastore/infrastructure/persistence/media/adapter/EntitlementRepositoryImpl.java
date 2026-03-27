@@ -87,6 +87,26 @@ public class EntitlementRepositoryImpl implements EntitlementRepository {
     }
 
     @Override
+    public Set<String> findAllEntitledEntryIds(String tenantId, String userId, EntitlementStatus status) {
+        return entitlementMongoRepository
+                .findByTenantIdAndUserIdAndTargetTypeAndStatus(tenantId, userId, TargetType.ENTRY.name(), status.name())
+                .stream()
+                .map(EntitlementEntity::getEntryId)
+                .filter(id -> id != null)
+                .collect(Collectors.toSet());
+    }
+
+    @Override
+    public Set<String> findAllEntitledCollectionIds(String tenantId, String userId, EntitlementStatus status) {
+        return entitlementMongoRepository
+                .findByTenantIdAndUserIdAndTargetTypeAndStatus(tenantId, userId, TargetType.COLLECTION.name(), status.name())
+                .stream()
+                .map(EntitlementEntity::getCollectionId)
+                .filter(id -> id != null)
+                .collect(Collectors.toSet());
+    }
+
+    @Override
     public Entitlement save(Entitlement entitlement) {
         EntitlementEntity entity = entitlementMapper.toEntity(entitlement);
         EntitlementEntity saved = entitlementMongoRepository.save(entity);

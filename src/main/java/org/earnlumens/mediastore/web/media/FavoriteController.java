@@ -54,9 +54,10 @@ public class FavoriteController {
             return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
         }
         String tenantId = tenantResolver.resolve(request);
+        String viewerUsername = extractUsername();
 
         try {
-            FavoritePageResponse response = favoriteService.listFavorites(tenantId, userId, page, size);
+            FavoritePageResponse response = favoriteService.listFavorites(tenantId, userId, viewerUsername, page, size);
             return ResponseEntity.ok(response);
         } catch (Exception e) {
             logger.error("Error listing favorites for userId={}: {}", userId, e.getMessage(), e);
@@ -156,6 +157,13 @@ public class FavoriteController {
         if (auth == null || !(auth.getPrincipal() instanceof OAuth2User principal)) return null;
         Object idAttr = principal.getAttribute("id");
         return idAttr != null ? idAttr.toString() : null;
+    }
+
+    private String extractUsername() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !(auth.getPrincipal() instanceof OAuth2User principal)) return null;
+        Object attr = principal.getAttribute("username");
+        return attr != null ? attr.toString() : null;
     }
 
     /**

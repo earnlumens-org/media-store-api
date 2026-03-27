@@ -4,6 +4,8 @@ import org.earnlumens.mediastore.domain.media.dto.response.PurchasedCollectionPa
 import org.earnlumens.mediastore.domain.media.dto.response.PurchasedCollectionResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PurchasedEntryPageResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PurchasedEntryResponse;
+import org.earnlumens.mediastore.domain.media.dto.response.PublicFeedItemResponse;
+import org.earnlumens.mediastore.domain.media.dto.response.PublicFeedPageResponse;
 import org.earnlumens.mediastore.domain.media.model.Collection;
 import org.earnlumens.mediastore.domain.media.model.CollectionItem;
 import org.earnlumens.mediastore.domain.media.model.Entitlement;
@@ -13,17 +15,20 @@ import org.earnlumens.mediastore.domain.media.model.TargetType;
 import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
+import org.bson.Document;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
+import java.math.BigDecimal;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 /**
@@ -227,5 +232,70 @@ public class PurchaseListService {
                 entitlementPage.getSize(),
                 entitlementPage.getTotalElements(),
                 entitlementPage.getTotalPages());
+    }
+
+    // ── Unified purchased feed (entries + collections via $unionWith) ──────
+
+    /**
+     * Returns a unified, paginated feed of purchased entries + collections.
+     * All items are unlocked (user owns them).
+     */
+    public PublicFeedPageResponse getUnifiedPurchases(String tenantId, String userId,
+                                                       String type, String search, String sort,
+                                                       int page, int size) {
+        // 1. Get ALL entitled entry IDs and collection IDs
+        Set<String> entryIds = entitlementRepository.findAllEntitledEntryIds(
+                tenantId, userId, EntitlementStatus.ACTIVE);
+        Set<String> collectionIds = entitlementRepository.findAllEntitledCollectionIds(
+                tenantId, userId, EntitlementStatus.ACTIVE);
+
+        if (entryIds.isEmpty() && collectionIds.isEmpty()) {
+            return new PublicFeedPageResponse(List.of(), page, size, 0, 0);
+        }
+
+        // 2. Run $unionWith aggregation with server-side pagination
+        int skip = page * size;
+        List<Document> docs = entryRepository.findPurchasedFeedItems(
+                tenantId, entryIds, collectionIds, type, search, sort, skip, size);
+        long total = entryRepository.countPurchasedFeedItems(
+                tenantId, entryIds, collectionIds, type, search);
+        int totalPages = size > 0 ? (int) Math.ceil((double) total / size) : 0;
+
+        // 3. Map docs — all purchased items are unlocked
+        List<PublicFeedItemResponse> content = docs.stream()
+                .map(this::mapPurchasedDoc)
+                .toList();
+
+        return new PublicFeedPageResponse(content, page, size, total, totalPages);
+    }
+
+    private PublicFeedItemResponse mapPurchasedDoc(Document doc) {
+        String id = doc.get("_id") != null ? doc.get("_id").toString() : null;
+        String kind = doc.getString("kind");
+        String type = doc.getString("type") != null ? doc.getString("type").toLowerCase() : "resource";
+        boolean isPaid = doc.getBoolean("isPaid", false);
+
+        return new PublicFeedItemResponse(
+                id,
+                kind,
+                type,
+                doc.getString("title"),
+                doc.getString("description"),
+                doc.getString("authorUsername"),
+                doc.getString("authorAvatarUrl"),
+                doc.get("publishedAt") instanceof java.util.Date d ? d.toInstant().toString() :
+                    (doc.get("publishedAt") instanceof String s ? s : null),
+                doc.getString("thumbnailR2Key"),
+                doc.getString("coverR2Key"),
+                doc.getInteger("durationSec"),
+                doc.get("viewCount") instanceof Number n ? n.longValue() : 0L,
+                isPaid,
+                doc.get("priceXlm") instanceof Number n ? new BigDecimal(n.toString()) : null,
+                doc.get("priceUsd") instanceof Number n ? new BigDecimal(n.toString()) : null,
+                doc.getString("priceCurrency"),
+                doc.getInteger("itemCount", 0),
+                false,  // locked: never locked (user owns it)
+                isPaid  // unlocked: true for paid items (user bought it)
+        );
     }
 }
