@@ -182,6 +182,26 @@ public class PublicEntryService {
     // ── Unified profile feed (entries + collections via $unionWith) ────────
 
     /**
+     * Returns a unified, paginated feed of ALL entries + collections for the explore page.
+     * No entitlement checks — locked/unlocked is resolved client-side via purchasesStore.
+     */
+    public PublicFeedPageResponse getExploreFeed(String tenantId, String type, String sort,
+                                                  int page, int size) {
+        int skip = page * size;
+        List<Document> docs = entryRepository.findExploreFeedItems(tenantId, type, sort, skip, size);
+        long total = entryRepository.countExploreFeedItems(tenantId, type);
+        int totalPages = size > 0 ? (int) Math.ceil((double) total / size) : 0;
+
+        List<PublicFeedItemResponse> content = new ArrayList<>();
+        Set<String> emptySet = Set.of();
+        for (Document doc : docs) {
+            content.add(mapDocToFeedItem(doc, emptySet, emptySet, false));
+        }
+
+        return new PublicFeedPageResponse(content, page, size, total, totalPages);
+    }
+
+    /**
      * Returns a unified, paginated feed of entries + collections for a public user profile.
      * @param userId nullable — the viewer's userId for entitlement checks (null if anonymous)
      */

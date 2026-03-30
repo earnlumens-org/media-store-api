@@ -91,4 +91,11 @@ public interface EntryRepository {
     long countPurchasedFeedItems(String tenantId,
                                  java.util.Set<String> entryIds, java.util.Set<String> collectionIds,
                                  String type, String search);
+
+    // ── Explore feed ────────────────────────────────────────────────────
+
+    List<Document> findExploreFeedItems(String tenantId, String type, String sort,
+                                        int skip, int limit);
+
+    long countExploreFeedItems(String tenantId, String type);
 }

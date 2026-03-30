@@ -186,4 +186,15 @@ public class EntryRepositoryImpl implements EntryRepository {
                                          String type, String search) {
         return entryMongoRepository.countPurchasedFeedItems(tenantId, entryIds, collectionIds, type, search);
     }
+
+    @Override
+    public java.util.List<org.bson.Document> findExploreFeedItems(String tenantId, String type, String sort,
+                                                                    int skip, int limit) {
+        return entryMongoRepository.findExploreFeedItems(tenantId, type, sort, skip, limit);
+    }
+
+    @Override
+    public long countExploreFeedItems(String tenantId, String type) {
+        return entryMongoRepository.countExploreFeedItems(tenantId, type);
+    }
 }

@@ -49,6 +49,24 @@ public class PublicEntryController {
     }
 
     /**
+     * GET /public/entries/feed?type=&sort=newest&page=0&size=48
+     * Unified explore feed: ALL published entries + collections merged via $unionWith.
+     * No auth required. Locked/unlocked resolved client-side.
+     */
+    @GetMapping("/feed")
+    public ResponseEntity<PublicFeedPageResponse> getExploreFeed(
+            @RequestParam(value = "type", required = false) String type,
+            @RequestParam(value = "sort", defaultValue = "newest") String sort,
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "48") int size,
+            HttpServletRequest request
+    ) {
+        String tenantId = tenantResolver.resolve(request);
+        PublicFeedPageResponse response = publicEntryService.getExploreFeed(tenantId, type, sort, page, size);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
      * GET /public/entries/{id}
      * Returns a single PUBLISHED entry by ID.
      * Returns 404 if the entry doesn't exist or is not published.

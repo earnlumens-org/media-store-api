@@ -435,6 +435,74 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
         }
     }
 
+    // ── Explore feed ────────────────────────────────────────────────────────
+
+    @Override
+    public List<Document> findExploreFeedItems(String tenantId, String type, String sort,
+                                                int skip, int limit) {
+        List<AggregationOperation> ops = buildExploreFeedPipeline(tenantId, type);
+        ops.add(buildSortStage(sort));
+        ops.add(Aggregation.skip((long) skip));
+        ops.add(Aggregation.limit(limit));
+        ops.add(context -> Document.parse(PUBLIC_FEED_PROJECT));
+
+        Aggregation agg = Aggregation.newAggregation(ops);
+        return mongoTemplate.aggregate(agg, "entries", Document.class).getMappedResults();
+    }
+
+    @Override
+    public long countExploreFeedItems(String tenantId, String type) {
+        List<AggregationOperation> ops = buildExploreFeedPipeline(tenantId, type);
+        ops.add(Aggregation.count().as("total"));
+
+        Aggregation agg = Aggregation.newAggregation(ops);
+        Document result = mongoTemplate.aggregate(agg, "entries", Document.class).getUniqueMappedResult();
+        return result != null ? toLong(result.get("total")) : 0;
+    }
+
+    private List<AggregationOperation> buildExploreFeedPipeline(String tenantId, String type) {
+        List<AggregationOperation> ops = new ArrayList<>();
+
+        // 1. Match ALL PUBLISHED entries for this tenant
+        ops.add(Aggregation.match(Criteria.where("tenantId").is(tenantId)
+                .and("status").is("PUBLISHED")));
+
+        // 2. Normalize entry docs
+        ops.add(context -> Document.parse("""
+            { "$addFields": {
+                "kind": "entry",
+                "sortDate": "$publishedAt",
+                "itemCount": { "$literal": 0 },
+                "coverR2Key": { "$literal": null }
+            }}
+            """));
+
+        // 3. $unionWith ALL PUBLISHED + PUBLIC collections for this tenant
+        Document collMatch = new Document("$match",
+                new Document("tenantId", tenantId)
+                        .append("status", "PUBLISHED")
+                        .append("visibility", "PUBLIC"));
+        Document collAddFields = Document.parse("""
+            { "$addFields": {
+                "kind": "collection",
+                "type": { "$ifNull": [ { "$toLower": "$collectionType" }, "catalog" ] },
+                "sortDate": "$publishedAt",
+                "itemCount": { "$cond": { "if": { "$isArray": "$items" }, "then": { "$size": "$items" }, "else": 0 } },
+                "durationSec": { "$literal": null },
+                "viewCount": { "$literal": 0 },
+                "thumbnailR2Key": { "$literal": null }
+            }}
+            """);
+        ops.add(context -> new Document("$unionWith",
+                new Document("coll", "collections")
+                        .append("pipeline", List.of(collMatch, collAddFields))));
+
+        // 4. Optional type filter
+        addTypeFilter(ops, type);
+
+        return ops;
+    }
+
     @Override
     public long updateAuthorInfoByUserId(String tenantId, String userId, String newUsername, String newAvatarUrl) {
         Query query = new Query(Criteria.where("tenantId").is(tenantId).and("userId").is(userId));

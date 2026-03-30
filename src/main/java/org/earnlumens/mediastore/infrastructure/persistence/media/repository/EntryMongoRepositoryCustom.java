@@ -78,4 +78,15 @@ public interface EntryMongoRepositoryCustom {
                                  java.util.Set<String> entryIds,
                                  java.util.Set<String> collectionIds,
                                  String type, String search);
+
+    // ── Explore feed ────────────────────────────────────────────────────────
+
+    /**
+     * Unified explore feed: merges ALL PUBLISHED entries + PUBLISHED/PUBLIC collections
+     * for the entire tenant, with optional type filter and sort+pagination.
+     */
+    List<Document> findExploreFeedItems(String tenantId, String type, String sort,
+                                        int skip, int limit);
+
+    long countExploreFeedItems(String tenantId, String type);
 }
