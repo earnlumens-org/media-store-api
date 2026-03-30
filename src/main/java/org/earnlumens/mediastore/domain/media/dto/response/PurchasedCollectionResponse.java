@@ -16,5 +16,6 @@ public record PurchasedCollectionResponse(
         boolean isPaid,
         BigDecimal priceXlm,
         int itemCount,
+        String contentLanguage,
         String purchasedAt
 ) {}

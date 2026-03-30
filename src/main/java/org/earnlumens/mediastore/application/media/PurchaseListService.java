@@ -219,6 +219,7 @@ public class PurchaseListService {
                             coll.isPaid(),
                             coll.getPriceXlm(),
                             coll.getItems() != null ? coll.getItems().size() : 0,
+                            coll.getContentLanguage(),
                             ent.getGrantedAt() != null
                                     ? ent.getGrantedAt().format(ISO_FORMATTER)
                                     : null

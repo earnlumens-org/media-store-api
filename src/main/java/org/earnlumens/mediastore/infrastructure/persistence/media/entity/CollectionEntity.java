@@ -65,6 +65,9 @@ public class CollectionEntity {
 
     private List<CollectionItemEmbeddable> items = new ArrayList<>();
 
+    /** ISO 639-1 language code of the content (e.g. "es", "en"). */
+    private String contentLanguage;
+
     @CreatedDate
     private LocalDateTime createdAt;
 
@@ -128,6 +131,9 @@ public class CollectionEntity {
 
     public List<CollectionItemEmbeddable> getItems() { return items; }
     public void setItems(List<CollectionItemEmbeddable> items) { this.items = items; }
+
+    public String getContentLanguage() { return contentLanguage; }
+    public void setContentLanguage(String contentLanguage) { this.contentLanguage = contentLanguage; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

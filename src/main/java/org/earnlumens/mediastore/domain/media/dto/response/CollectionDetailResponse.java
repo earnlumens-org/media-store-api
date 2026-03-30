@@ -25,6 +25,7 @@ public record CollectionDetailResponse(
         boolean locked,
         boolean unlocked,
         boolean isOwner,
+        String contentLanguage,
         List<CollectionEntryItem> items
 ) {
     public record CollectionEntryItem(

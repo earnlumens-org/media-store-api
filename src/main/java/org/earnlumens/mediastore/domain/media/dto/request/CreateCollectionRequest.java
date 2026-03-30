@@ -33,5 +33,9 @@ public record CreateCollectionRequest(
 
         @Size(min = 56, max = 56)
         @Pattern(regexp = "^G[A-Z2-7]{55}$", message = "Invalid Stellar public key")
-        String sellerWallet
+        String sellerWallet,
+
+        /** ISO 639-1 language code of the content (e.g. "es", "en"). Optional. */
+        @Size(min = 2, max = 5)
+        String contentLanguage
 ) {}

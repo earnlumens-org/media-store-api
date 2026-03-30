@@ -83,6 +83,7 @@ public class CollectionService {
                 ? PriceCurrency.valueOf(request.priceCurrency().toUpperCase())
                 : null);
         collection.setSellerWallet(request.sellerWallet());
+        collection.setContentLanguage(request.contentLanguage());
 
         if (collection.isPaid() && (collection.getSellerWallet() == null || collection.getSellerWallet().isBlank())) {
             throw new IllegalArgumentException("sellerWallet is required for paid collections");
@@ -127,6 +128,7 @@ public class CollectionService {
             collection.setPriceCurrency(PriceCurrency.valueOf(request.priceCurrency().toUpperCase()));
         }
         if (request.sellerWallet() != null) collection.setSellerWallet(request.sellerWallet());
+        if (request.contentLanguage() != null) collection.setContentLanguage(request.contentLanguage());
 
         // Rebuild payment splits when paid status or wallet changes
         if (collection.isPaid() && collection.getSellerWallet() != null && !collection.getSellerWallet().isBlank()) {
@@ -438,6 +440,7 @@ public class CollectionService {
                 collLocked,
                 collUnlocked,
                 isOwner,
+                collection.getContentLanguage(),
                 entryItems
         ));
     }
@@ -541,7 +544,8 @@ public class CollectionService {
                 collection.getPriceCurrency() != null ? collection.getPriceCurrency().name() : null,
                 collection.getItems() != null ? collection.getItems().size() : 0,
                 locked,
-                unlocked
+                unlocked,
+                collection.getContentLanguage()
         );
     }
 }

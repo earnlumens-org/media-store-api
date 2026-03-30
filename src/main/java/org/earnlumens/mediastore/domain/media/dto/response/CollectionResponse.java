@@ -23,5 +23,6 @@ public record CollectionResponse(
         String priceCurrency,
         int itemCount,
         boolean locked,
-        boolean unlocked
+        boolean unlocked,
+        String contentLanguage
 ) {}

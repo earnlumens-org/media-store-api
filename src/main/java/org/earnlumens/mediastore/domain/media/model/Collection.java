@@ -27,6 +27,8 @@ public class Collection {
     private String sellerWallet;
     private List<PaymentSplit> paymentSplits = new ArrayList<>();
     private List<CollectionItem> items = new ArrayList<>();
+    /** ISO 639-1 language code of the content (e.g. "es", "en"). Nullable for legacy collections. */
+    private String contentLanguage;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private LocalDateTime publishedAt;
@@ -74,6 +76,8 @@ public class Collection {
         }
         this.items = items;
     }
+    public String getContentLanguage() { return contentLanguage; }
+    public void setContentLanguage(String contentLanguage) { this.contentLanguage = contentLanguage; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
