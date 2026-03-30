@@ -282,8 +282,9 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
         List<AggregationOperation> ops = new ArrayList<>();
 
         // 1. Match PUBLISHED entries for this author
+        String usernamePattern = "^" + Pattern.quote(authorUsername) + "$";
         ops.add(Aggregation.match(Criteria.where("tenantId").is(tenantId)
-                .and("authorUsername").is(authorUsername)
+                .and("authorUsername").regex(usernamePattern, "i")
                 .and("status").is("PUBLISHED")));
 
         // 2. Normalize entry docs
@@ -299,7 +300,9 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
         // 3. $unionWith PUBLISHED + PUBLIC collections by the same author
         Document collMatch = new Document("$match",
                 new Document("tenantId", tenantId)
-                        .append("authorUsername", authorUsername)
+                        .append("authorUsername",
+                                new Document("$regex", "^" + Pattern.quote(authorUsername) + "$")
+                                        .append("$options", "i"))
                         .append("status", "PUBLISHED")
                         .append("visibility", "PUBLIC"));
         Document collAddFields = Document.parse("""
