@@ -83,10 +83,10 @@ public interface EntryMongoRepositoryCustom {
 
     /**
      * Unified explore feed: merges ALL PUBLISHED entries + PUBLISHED/PUBLIC collections
-     * for the entire tenant, with optional type filter and sort+pagination.
+     * for the entire tenant, with optional type/pricing filter and sort+pagination.
+     * Uses $facet to return data + total count in a single aggregation pass.
+     * Returns a Document with "data" (List<Document>) and "total" (long).
      */
-    List<Document> findExploreFeedItems(String tenantId, String type, String sort,
-                                        int skip, int limit);
-
-    long countExploreFeedItems(String tenantId, String type);
+    Document findExploreFeed(String tenantId, String type, String pricing, String sort,
+                             int skip, int limit);
 }

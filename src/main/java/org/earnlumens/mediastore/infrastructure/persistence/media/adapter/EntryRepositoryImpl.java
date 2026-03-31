@@ -188,13 +188,8 @@ public class EntryRepositoryImpl implements EntryRepository {
     }
 
     @Override
-    public java.util.List<org.bson.Document> findExploreFeedItems(String tenantId, String type, String sort,
-                                                                    int skip, int limit) {
-        return entryMongoRepository.findExploreFeedItems(tenantId, type, sort, skip, limit);
-    }
-
-    @Override
-    public long countExploreFeedItems(String tenantId, String type) {
-        return entryMongoRepository.countExploreFeedItems(tenantId, type);
+    public org.bson.Document findExploreFeed(String tenantId, String type, String pricing, String sort,
+                                              int skip, int limit) {
+        return entryMongoRepository.findExploreFeed(tenantId, type, pricing, sort, skip, limit);
     }
 }

@@ -431,6 +431,16 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
         }
     }
 
+    private void addPricingFilter(List<AggregationOperation> ops, String pricing) {
+        if (pricing != null && !pricing.isBlank()) {
+            if ("free".equalsIgnoreCase(pricing)) {
+                ops.add(Aggregation.match(Criteria.where("isPaid").is(false)));
+            } else if ("premium".equalsIgnoreCase(pricing)) {
+                ops.add(Aggregation.match(Criteria.where("isPaid").is(true)));
+            }
+        }
+    }
+
     private void addSearchFilter(List<AggregationOperation> ops, String search) {
         if (search != null && !search.isBlank()) {
             String escaped = Pattern.quote(search);
@@ -441,29 +451,38 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
     // ── Explore feed ────────────────────────────────────────────────────────
 
     @Override
-    public List<Document> findExploreFeedItems(String tenantId, String type, String sort,
-                                                int skip, int limit) {
-        List<AggregationOperation> ops = buildExploreFeedPipeline(tenantId, type);
-        ops.add(buildSortStage(sort));
-        ops.add(Aggregation.skip((long) skip));
-        ops.add(Aggregation.limit(limit));
-        ops.add(context -> Document.parse(PUBLIC_FEED_PROJECT));
+    public Document findExploreFeed(String tenantId, String type, String pricing, String sort,
+                                     int skip, int limit) {
+        List<AggregationOperation> ops = buildExploreFeedPipeline(tenantId, type, pricing);
+
+        // Build sort document for use inside $facet
+        Document sortDoc = buildSortDocument(sort);
+
+        // $facet: data + count in a single aggregation pass
+        ops.add(context -> new Document("$facet", new Document()
+                .append("data", List.of(
+                        sortDoc,
+                        new Document("$skip", skip),
+                        new Document("$limit", limit),
+                        Document.parse(PUBLIC_FEED_PROJECT)))
+                .append("count", List.of(
+                        new Document("$count", "total")))));
 
         Aggregation agg = Aggregation.newAggregation(ops);
-        return mongoTemplate.aggregate(agg, "entries", Document.class).getMappedResults();
+        return mongoTemplate.aggregate(agg, "entries", Document.class).getUniqueMappedResult();
     }
 
-    @Override
-    public long countExploreFeedItems(String tenantId, String type) {
-        List<AggregationOperation> ops = buildExploreFeedPipeline(tenantId, type);
-        ops.add(Aggregation.count().as("total"));
-
-        Aggregation agg = Aggregation.newAggregation(ops);
-        Document result = mongoTemplate.aggregate(agg, "entries", Document.class).getUniqueMappedResult();
-        return result != null ? toLong(result.get("total")) : 0;
+    private Document buildSortDocument(String sort) {
+        if (sort == null) sort = "newest";
+        return switch (sort) {
+            case "oldest" -> new Document("$sort", new Document("sortDate", 1));
+            case "title_asc" -> new Document("$sort", new Document("title", 1));
+            case "title_desc" -> new Document("$sort", new Document("title", -1));
+            default -> new Document("$sort", new Document("sortDate", -1));
+        };
     }
 
-    private List<AggregationOperation> buildExploreFeedPipeline(String tenantId, String type) {
+    private List<AggregationOperation> buildExploreFeedPipeline(String tenantId, String type, String pricing) {
         List<AggregationOperation> ops = new ArrayList<>();
 
         // 1. Match ALL PUBLISHED entries for this tenant
@@ -502,6 +521,9 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
 
         // 4. Optional type filter
         addTypeFilter(ops, type);
+
+        // 5. Optional pricing filter
+        addPricingFilter(ops, pricing);
 
         return ops;
     }

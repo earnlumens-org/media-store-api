@@ -185,11 +185,18 @@ public class PublicEntryService {
      * Returns a unified, paginated feed of ALL entries + collections for the explore page.
      * No entitlement checks — locked/unlocked is resolved client-side via purchasesStore.
      */
-    public PublicFeedPageResponse getExploreFeed(String tenantId, String type, String sort,
+    public PublicFeedPageResponse getExploreFeed(String tenantId, String type, String pricing, String sort,
                                                   int page, int size) {
         int skip = page * size;
-        List<Document> docs = entryRepository.findExploreFeedItems(tenantId, type, sort, skip, size);
-        long total = entryRepository.countExploreFeedItems(tenantId, type);
+        Document facetResult = entryRepository.findExploreFeed(tenantId, type, pricing, sort, skip, size);
+
+        List<Document> docs = facetResult != null
+                ? facetResult.getList("data", Document.class, List.of())
+                : List.of();
+        List<Document> countList = facetResult != null
+                ? facetResult.getList("count", Document.class, List.of())
+                : List.of();
+        long total = countList.isEmpty() ? 0 : countList.get(0).get("total", Number.class).longValue();
         int totalPages = size > 0 ? (int) Math.ceil((double) total / size) : 0;
 
         List<PublicFeedItemResponse> content = new ArrayList<>();

@@ -94,8 +94,6 @@ public interface EntryRepository {
 
     // ── Explore feed ────────────────────────────────────────────────────
 
-    List<Document> findExploreFeedItems(String tenantId, String type, String sort,
-                                        int skip, int limit);
-
-    long countExploreFeedItems(String tenantId, String type);
+    Document findExploreFeed(String tenantId, String type, String pricing, String sort,
+                             int skip, int limit);
 }

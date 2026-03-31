@@ -56,13 +56,14 @@ public class PublicEntryController {
     @GetMapping("/feed")
     public ResponseEntity<PublicFeedPageResponse> getExploreFeed(
             @RequestParam(value = "type", required = false) String type,
+            @RequestParam(value = "pricing", required = false) String pricing,
             @RequestParam(value = "sort", defaultValue = "newest") String sort,
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "48") int size,
             HttpServletRequest request
     ) {
         String tenantId = tenantResolver.resolve(request);
-        PublicFeedPageResponse response = publicEntryService.getExploreFeed(tenantId, type, sort, page, size);
+        PublicFeedPageResponse response = publicEntryService.getExploreFeed(tenantId, type, pricing, sort, page, size);
         return ResponseEntity.ok(response);
     }
 
