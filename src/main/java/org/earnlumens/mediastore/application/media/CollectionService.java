@@ -20,6 +20,7 @@ import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.user.repository.UserRepository;
+import org.earnlumens.mediastore.application.user.UserBadgeService;
 import org.earnlumens.mediastore.infrastructure.r2.R2PresignedUrlService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -49,17 +50,20 @@ public class CollectionService {
     private final EntitlementRepository entitlementRepository;
     private final UserRepository userRepository;
     private final R2PresignedUrlService r2PresignedUrlService;
+    private final UserBadgeService userBadgeService;
 
     public CollectionService(CollectionRepository collectionRepository,
                              EntryRepository entryRepository,
                              EntitlementRepository entitlementRepository,
                              UserRepository userRepository,
-                             R2PresignedUrlService r2PresignedUrlService) {
+                             R2PresignedUrlService r2PresignedUrlService,
+                             UserBadgeService userBadgeService) {
         this.collectionRepository = collectionRepository;
         this.entryRepository = entryRepository;
         this.entitlementRepository = entitlementRepository;
         this.userRepository = userRepository;
         this.r2PresignedUrlService = r2PresignedUrlService;
+        this.userBadgeService = userBadgeService;
     }
 
     // ── CRUD ──
@@ -175,6 +179,11 @@ public class CollectionService {
 
         collection.setStatus(CollectionStatus.PUBLISHED);
         collection.setPublishedAt(LocalDateTime.now());
+
+        // Stamp the author's active badge on the collection
+        userBadgeService.getActiveBadgeKey(tenantId, collection.getUserId())
+                .ifPresent(collection::setAuthorBadge);
+
         collectionRepository.save(collection);
         logger.info("Published collection id={}", collectionId);
         return true;
@@ -431,6 +440,7 @@ public class CollectionService {
                 collection.getVisibility() != null ? collection.getVisibility().name() : null,
                 collection.getAuthorUsername(),
                 collection.getAuthorAvatarUrl(),
+                collection.getAuthorBadge(),
                 collection.getPublishedAt() != null ? collection.getPublishedAt().format(ISO_FORMATTER) : null,
                 collection.isPaid(),
                 collection.getPriceXlm(),

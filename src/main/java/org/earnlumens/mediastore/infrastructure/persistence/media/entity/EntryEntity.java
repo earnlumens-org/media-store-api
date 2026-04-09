@@ -33,6 +33,9 @@ public class EntryEntity {
 
     private String authorAvatarUrl;
 
+    /** Badge key of the author at publish time (e.g. "U1", "U2"). Null if no badge. */
+    private String authorBadge;
+
     @NotBlank
     @Size(max = 200)
     private String title;
@@ -121,6 +124,9 @@ public class EntryEntity {
 
     public String getAuthorAvatarUrl() { return authorAvatarUrl; }
     public void setAuthorAvatarUrl(String authorAvatarUrl) { this.authorAvatarUrl = authorAvatarUrl; }
+
+    public String getAuthorBadge() { return authorBadge; }
+    public void setAuthorBadge(String authorBadge) { this.authorBadge = authorBadge; }
 
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }

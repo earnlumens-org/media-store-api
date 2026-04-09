@@ -12,6 +12,8 @@ public class Entry {
     private String userId;
     private String authorUsername;
     private String authorAvatarUrl;
+    /** Badge key of the author at publish time (e.g. "u1", "u2"). Null if no badge. */
+    private String authorBadge;
     private String title;
     private String description;
     /** Rich text body for RESOURCE entries (articles, notes). Optional. */
@@ -68,6 +70,9 @@ public class Entry {
 
     public String getAuthorAvatarUrl() { return authorAvatarUrl; }
     public void setAuthorAvatarUrl(String authorAvatarUrl) { this.authorAvatarUrl = authorAvatarUrl; }
+
+    public String getAuthorBadge() { return authorBadge; }
+    public void setAuthorBadge(String authorBadge) { this.authorBadge = authorBadge; }
 
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }

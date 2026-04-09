@@ -7,12 +7,18 @@ public class Founder {
     private String id;
     private LocalDateTime entryDate;
     private String email;
+    private String userId;
 
     public Founder() {
     }
 
     public Founder(String email) {
         this.email = email;
+    }
+
+    public Founder(String email, String userId) {
+        this.email = email;
+        this.userId = userId;
     }
 
     public String getEmail() {
@@ -37,5 +43,13 @@ public class Founder {
 
     public void setEntryDate(LocalDateTime entryDate) {
         this.entryDate = entryDate;
+    }
+
+    public String getUserId() {
+        return userId;
+    }
+
+    public void setUserId(String userId) {
+        this.userId = userId;
     }
 }

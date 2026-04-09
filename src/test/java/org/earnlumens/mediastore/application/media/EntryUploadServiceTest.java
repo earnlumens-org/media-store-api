@@ -18,6 +18,7 @@ import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.earnlumens.mediastore.domain.user.repository.UserRepository;
+import org.earnlumens.mediastore.application.user.UserBadgeService;
 import org.earnlumens.mediastore.infrastructure.config.PlatformConfig;
 import org.earnlumens.mediastore.infrastructure.r2.R2PresignedUrlService;
 import org.junit.jupiter.api.BeforeEach;
@@ -50,6 +51,7 @@ class EntryUploadServiceTest {
     private R2PresignedUrlService r2PresignedUrlService;
     private PlatformConfig platformConfig;
     private TranscodingJobService transcodingJobService;
+    private UserBadgeService userBadgeService;
     private EntryUploadService service;
 
     @BeforeEach
@@ -60,10 +62,11 @@ class EntryUploadServiceTest {
         orderRepository = mock(OrderRepository.class);
         r2PresignedUrlService = mock(R2PresignedUrlService.class);
         transcodingJobService = mock(TranscodingJobService.class);
+        userBadgeService = mock(UserBadgeService.class);
         platformConfig = new PlatformConfig();
         platformConfig.setWallet(PLATFORM_WALLET);
         platformConfig.setFeePercent(new BigDecimal("10.00"));
-        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, r2PresignedUrlService, platformConfig, transcodingJobService);
+        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, r2PresignedUrlService, platformConfig, transcodingJobService, userBadgeService);
         when(userRepository.findAllById(any())).thenReturn(java.util.List.of());
         when(transcodingJobService.getMaxRetries()).thenReturn(3);
         when(transcodingJobService.createJob(any(TranscodingJob.class)))

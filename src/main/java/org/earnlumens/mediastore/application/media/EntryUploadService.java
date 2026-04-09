@@ -29,6 +29,7 @@ import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.earnlumens.mediastore.domain.user.repository.UserRepository;
+import org.earnlumens.mediastore.application.user.UserBadgeService;
 import org.earnlumens.mediastore.infrastructure.config.PlatformConfig;
 import org.earnlumens.mediastore.infrastructure.r2.R2PresignedUrlService;
 import org.slf4j.Logger;
@@ -69,6 +70,7 @@ public class EntryUploadService {
     private final R2PresignedUrlService r2PresignedUrlService;
     private final PlatformConfig platformConfig;
     private final TranscodingJobService transcodingJobService;
+    private final UserBadgeService userBadgeService;
 
     public EntryUploadService(
             EntryRepository entryRepository,
@@ -77,7 +79,8 @@ public class EntryUploadService {
             OrderRepository orderRepository,
             R2PresignedUrlService r2PresignedUrlService,
             PlatformConfig platformConfig,
-            TranscodingJobService transcodingJobService
+            TranscodingJobService transcodingJobService,
+            UserBadgeService userBadgeService
     ) {
         this.entryRepository = entryRepository;
         this.assetRepository = assetRepository;
@@ -86,6 +89,7 @@ public class EntryUploadService {
         this.r2PresignedUrlService = r2PresignedUrlService;
         this.platformConfig = platformConfig;
         this.transcodingJobService = transcodingJobService;
+        this.userBadgeService = userBadgeService;
     }
 
     /**
@@ -418,6 +422,12 @@ public class EntryUploadService {
         // When archiving, remember the current status so we can restore it later
         if (newStatus == EntryStatus.ARCHIVED) {
             entry.setPreviousStatus(entry.getStatus());
+        }
+
+        // When publishing, stamp the author's active badge on the entry
+        if (newStatus == EntryStatus.PUBLISHED) {
+            userBadgeService.getActiveBadgeKey(tenantId, userId)
+                    .ifPresent(entry::setAuthorBadge);
         }
 
         entry.setStatus(newStatus);

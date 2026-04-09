@@ -1,7 +1,9 @@
 package org.earnlumens.mediastore.web.user;
 
 import org.earnlumens.mediastore.application.user.UserService;
+import org.earnlumens.mediastore.application.user.UserBadgeService;
 import org.earnlumens.mediastore.domain.user.model.User;
+import org.earnlumens.mediastore.infrastructure.tenant.TenantResolver;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -27,11 +29,16 @@ class UserControllerTest {
 
     private MockMvc mockMvc;
     private UserService userService;
+    private UserBadgeService userBadgeService;
+    private TenantResolver tenantResolver;
 
     @BeforeEach
     void setUp() {
         userService = mock(UserService.class);
-        mockMvc = MockMvcBuilders.standaloneSetup(new UserController(userService)).build();
+        userBadgeService = mock(UserBadgeService.class);
+        tenantResolver = mock(TenantResolver.class);
+        when(tenantResolver.resolve(org.mockito.ArgumentMatchers.any())).thenReturn("earnlumens");
+        mockMvc = MockMvcBuilders.standaloneSetup(new UserController(userService, userBadgeService, tenantResolver)).build();
     }
 
     @AfterEach

@@ -284,6 +284,7 @@ public class PurchaseListService {
                 doc.getString("description"),
                 doc.getString("authorUsername"),
                 doc.getString("authorAvatarUrl"),
+                doc.getString("authorBadge"),
                 doc.get("publishedAt") instanceof java.util.Date d ? d.toInstant().toString() :
                     (doc.get("publishedAt") instanceof String s ? s : null),
                 doc.getString("thumbnailR2Key"),

@@ -9,6 +9,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
+import org.springframework.security.oauth2.core.user.OAuth2User;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -30,7 +33,8 @@ public class WaitlistController {
     @PostMapping("/subscribe")
     public ResponseEntity<?> subscribe(@Valid @RequestBody WaitlistRequest waitlistRequest) {
         try {
-            waitlistService.register(waitlistRequest);
+            String userId = extractOptionalUserId();
+            waitlistService.register(waitlistRequest, userId);
             return ResponseEntity.ok(new MessageResponse("User registered successfully!"));
         } catch (IllegalArgumentException ex) {
             return ResponseEntity.badRequest().body(new MessageResponse("Error: Captcha error, try again!"));
@@ -49,5 +53,12 @@ public class WaitlistController {
             log.error("Waitlist stats failed", ex);
             return new ResponseEntity<>(HttpStatus.INTERNAL_SERVER_ERROR);
         }
+    }
+
+    private String extractOptionalUserId() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !(auth.getPrincipal() instanceof OAuth2User principal)) return null;
+        Object idAttr = principal.getAttribute("id");
+        return idAttr != null ? idAttr.toString() : null;
     }
 }

@@ -16,6 +16,8 @@ public record PublicEntryResponse(
         String authorId,
         String authorName,
         String authorAvatarUrl,
+        /** Badge key (e.g. "u1", "u2") or null */
+        String profileBadge,
         String publishedAt,
         String thumbnailR2Key,
         String previewR2Key,

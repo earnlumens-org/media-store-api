@@ -34,7 +34,7 @@ class WaitlistControllerTest {
 
     @Test
     void subscribe_whenOk_returns200AndMessage() throws Exception {
-                doNothing().when(waitlistService).register(any());
+                doNothing().when(waitlistService).register(any(), any());
 
         String body = "{" +
                 "\"email\":\"test@example.com\"," +
@@ -53,7 +53,7 @@ class WaitlistControllerTest {
     void subscribe_whenCaptchaInvalid_returns400AndMessage() throws Exception {
         doThrow(new IllegalArgumentException("CAPTCHA_INVALID"))
                 .when(waitlistService)
-                                .register(any());
+                                .register(any(), any());
 
         String body = "{" +
                 "\"email\":\"test@example.com\"," +

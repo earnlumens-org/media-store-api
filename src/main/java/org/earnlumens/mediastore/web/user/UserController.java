@@ -1,7 +1,10 @@
 package org.earnlumens.mediastore.web.user;
 
+import jakarta.servlet.http.HttpServletRequest;
+import org.earnlumens.mediastore.application.user.UserBadgeService;
 import org.earnlumens.mediastore.application.user.UserService;
 import org.earnlumens.mediastore.domain.user.model.User;
+import org.earnlumens.mediastore.infrastructure.tenant.TenantResolver;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -20,29 +23,50 @@ import java.util.Map;
 public class UserController {
 
     private final UserService userService;
+    private final UserBadgeService userBadgeService;
+    private final TenantResolver tenantResolver;
 
-    public UserController(UserService userService) {
+    public UserController(UserService userService, UserBadgeService userBadgeService,
+                          TenantResolver tenantResolver) {
         this.userService = userService;
+        this.userBadgeService = userBadgeService;
+        this.tenantResolver = tenantResolver;
     }
 
     @GetMapping("/me")
-    public ResponseEntity<?> me() {
+    public ResponseEntity<?> me(HttpServletRequest httpRequest) {
         Authentication authentication = SecurityContextHolder.getContext().getAuthentication();
         if (authentication == null || !(authentication.getPrincipal() instanceof OAuth2User oauth2User)) {
             return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
         }
 
-        return ResponseEntity.ok(toResponse(oauth2User));
+        String tenantId = tenantResolver.resolve(httpRequest);
+        Map<String, Object> response = toResponse(oauth2User);
+
+        Object idAttr = oauth2User.getAttribute("id");
+        if (idAttr != null) {
+            userBadgeService.getActiveBadgeKey(tenantId, idAttr.toString())
+                    .ifPresent(badge -> response.put("profileBadge", badge));
+        }
+
+        return ResponseEntity.ok(response);
     }
 
     @GetMapping("/by-username/{username}")
-    public ResponseEntity<?> getByUsername(@PathVariable("username") String username) {
+    public ResponseEntity<?> getByUsername(@PathVariable("username") String username,
+                                           HttpServletRequest httpRequest) {
         if (!StringUtils.hasText(username)) {
             return ResponseEntity.badRequest().body(Map.of("error", "username is required"));
         }
 
+        String tenantId = tenantResolver.resolve(httpRequest);
         return userService.findByUsername(username)
-                .<ResponseEntity<?>>map(user -> ResponseEntity.ok(toResponse(user)))
+                .<ResponseEntity<?>>map(user -> {
+                    Map<String, Object> response = toResponse(user);
+                    userBadgeService.getActiveBadgeKey(tenantId, user.getOauthUserId())
+                            .ifPresent(badge -> response.put("profileBadge", badge));
+                    return ResponseEntity.ok(response);
+                })
                 .orElseGet(() -> ResponseEntity.status(404).body(Map.of("error", "user not found")));
     }
 

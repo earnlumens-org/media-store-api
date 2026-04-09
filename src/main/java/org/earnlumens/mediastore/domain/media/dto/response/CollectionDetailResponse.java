@@ -16,6 +16,8 @@ public record CollectionDetailResponse(
         String visibility,
         String authorUsername,
         String authorAvatarUrl,
+        /** Badge key (e.g. "u1", "u2") or null */
+        String profileBadge,
         String publishedAt,
         boolean isPaid,
         BigDecimal priceXlm,

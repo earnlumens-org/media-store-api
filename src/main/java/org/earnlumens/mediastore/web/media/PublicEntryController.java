@@ -49,6 +49,25 @@ public class PublicEntryController {
     }
 
     /**
+     * GET /public/entries/community/feed?type=&pricing=&sort=newest&page=0&size=48
+     * Community feed: PUBLISHED entries + collections from users with an active badge.
+     * Filters by authorBadge="u1". No auth required.
+     */
+    @GetMapping("/community/feed")
+    public ResponseEntity<PublicFeedPageResponse> getCommunityFeed(
+            @RequestParam(value = "type", required = false) String type,
+            @RequestParam(value = "pricing", required = false) String pricing,
+            @RequestParam(value = "sort", defaultValue = "newest") String sort,
+            @RequestParam(value = "page", defaultValue = "0") int page,
+            @RequestParam(value = "size", defaultValue = "48") int size,
+            HttpServletRequest request
+    ) {
+        String tenantId = tenantResolver.resolve(request);
+        PublicFeedPageResponse response = publicEntryService.getCommunityFeed(tenantId, type, pricing, sort, page, size);
+        return ResponseEntity.ok(response);
+    }
+
+    /**
      * GET /public/entries/feed?type=&sort=newest&page=0&size=48
      * Unified explore feed: ALL published entries + collections merged via $unionWith.
      * No auth required. Locked/unlocked resolved client-side.

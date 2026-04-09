@@ -230,6 +230,7 @@ public class FavoriteService {
                 entry.getTitle(),
                 entry.getAuthorUsername(),
                 entry.getAuthorAvatarUrl(),
+                entry.getAuthorBadge(),
                 entry.getPublishedAt() != null ? entry.getPublishedAt().format(ISO_FORMATTER) : null,
                 entry.getThumbnailR2Key(),
                 null, // coverUrl — entries use thumbnail
@@ -252,6 +253,7 @@ public class FavoriteService {
                 collection.getTitle(),
                 collection.getAuthorUsername(),
                 collection.getAuthorAvatarUrl(),
+                collection.getAuthorBadge(),
                 collection.getPublishedAt() != null ? collection.getPublishedAt().format(ISO_FORMATTER) : null,
                 null, // thumbnailUrl
                 collection.getCoverR2Key(),

@@ -36,7 +36,7 @@ public class WaitlistService {
         this.captchaVerificationService = captchaVerificationService;
     }
 
-    public void register(WaitlistRequest waitlistRequest) {
+    public void register(WaitlistRequest waitlistRequest, String userId) {
         boolean captchaSuccess = captchaVerificationService.verify(waitlistRequest.getCaptchaResponse());
         if (!captchaSuccess) {
             throw new IllegalArgumentException("CAPTCHA_INVALID");
@@ -47,13 +47,20 @@ public class WaitlistService {
 
         if (founderRepository.existsByEmail(email)) {
             Optional<Founder> founder = founderRepository.findByEmail(email);
-            if (founder.isPresent() && StringUtils.hasText(feedback)) {
-                feedbackRepository.save(new Feedback(founder.get().getId(), feedback));
+            if (founder.isPresent()) {
+                // Back-fill userId if missing (legacy entries before auth was required)
+                if (userId != null && founder.get().getUserId() == null) {
+                    founder.get().setUserId(userId);
+                    founderRepository.save(founder.get());
+                }
+                if (StringUtils.hasText(feedback)) {
+                    feedbackRepository.save(new Feedback(founder.get().getId(), feedback));
+                }
             }
             return;
         }
 
-        Founder founder = founderRepository.save(new Founder(email));
+        Founder founder = founderRepository.save(new Founder(email, userId));
         if (StringUtils.hasText(feedback)) {
             feedbackRepository.save(new Feedback(founder.getId(), feedback));
         }

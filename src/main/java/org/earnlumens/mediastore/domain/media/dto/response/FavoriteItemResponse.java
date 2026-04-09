@@ -11,6 +11,8 @@ public record FavoriteItemResponse(
         String title,
         String authorName,
         String authorAvatarUrl,
+        /** Badge key (e.g. "u1", "u2") or null */
+        String profileBadge,
         String publishedAt,
         String thumbnailUrl,
         String coverUrl,

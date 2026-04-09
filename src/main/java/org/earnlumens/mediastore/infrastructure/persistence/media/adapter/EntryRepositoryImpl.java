@@ -192,4 +192,10 @@ public class EntryRepositoryImpl implements EntryRepository {
                                               int skip, int limit) {
         return entryMongoRepository.findExploreFeed(tenantId, type, pricing, sort, skip, limit);
     }
+
+    @Override
+    public org.bson.Document findCommunityFeed(String tenantId, String badgeKey, String type,
+                                                String pricing, String sort, int skip, int limit) {
+        return entryMongoRepository.findCommunityFeed(tenantId, badgeKey, type, pricing, sort, skip, limit);
+    }
 }

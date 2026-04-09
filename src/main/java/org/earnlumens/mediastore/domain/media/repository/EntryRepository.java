@@ -96,4 +96,9 @@ public interface EntryRepository {
 
     Document findExploreFeed(String tenantId, String type, String pricing, String sort,
                              int skip, int limit);
+
+    // ── Community feed ──────────────────────────────────────────────────
+
+    Document findCommunityFeed(String tenantId, String badgeKey, String type,
+                               String pricing, String sort, int skip, int limit);
 }

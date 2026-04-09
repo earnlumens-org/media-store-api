@@ -136,6 +136,7 @@ public class PublicEntryService {
                 entry.getUserId(),
                 entry.getAuthorUsername() != null ? entry.getAuthorUsername() : entry.getUserId(),
                 entry.getAuthorAvatarUrl(),
+                entry.getAuthorBadge(),
                 publishedAt,
                 entry.getThumbnailR2Key(),
                 entry.getPreviewR2Key(),
@@ -180,6 +181,33 @@ public class PublicEntryService {
     }
 
     // ── Unified profile feed (entries + collections via $unionWith) ────────
+
+    /**
+     * Returns a paginated community feed: entries + collections from badge-verified users.
+     * Only content with authorBadge="u1" appears.
+     */
+    public PublicFeedPageResponse getCommunityFeed(String tenantId, String type, String pricing,
+                                                    String sort, int page, int size) {
+        int skip = page * size;
+        Document facetResult = entryRepository.findCommunityFeed(tenantId, "u1", type, pricing, sort, skip, size);
+
+        List<Document> docs = facetResult != null
+                ? facetResult.getList("data", Document.class, List.of())
+                : List.of();
+        List<Document> countList = facetResult != null
+                ? facetResult.getList("count", Document.class, List.of())
+                : List.of();
+        long total = countList.isEmpty() ? 0 : countList.get(0).get("total", Number.class).longValue();
+        int totalPages = size > 0 ? (int) Math.ceil((double) total / size) : 0;
+
+        List<PublicFeedItemResponse> content = new ArrayList<>();
+        Set<String> emptySet = Set.of();
+        for (Document doc : docs) {
+            content.add(mapDocToFeedItem(doc, emptySet, emptySet, false));
+        }
+
+        return new PublicFeedPageResponse(content, page, size, total, totalPages);
+    }
 
     /**
      * Returns a unified, paginated feed of ALL entries + collections for the explore page.
@@ -313,6 +341,7 @@ public class PublicEntryService {
                 doc.getString("description"),
                 doc.getString("authorUsername"),
                 doc.getString("authorAvatarUrl"),
+                doc.getString("authorBadge"),
                 doc.get("publishedAt") instanceof java.util.Date d ? d.toInstant().toString() :
                     (doc.get("publishedAt") instanceof String s ? s : null),
                 doc.getString("thumbnailR2Key"),

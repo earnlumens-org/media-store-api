@@ -51,7 +51,7 @@ class WaitlistServiceTest {
 
         when(captchaVerificationService.verify(anyString())).thenReturn(false);
 
-        assertThrows(IllegalArgumentException.class, () -> waitlistService.register(request));
+        assertThrows(IllegalArgumentException.class, () -> waitlistService.register(request, "user-1"));
 
         verifyNoInteractions(founderRepository);
         verifyNoInteractions(feedbackRepository);
@@ -71,7 +71,7 @@ class WaitlistServiceTest {
         savedFounder.setId("founder-1");
         when(founderRepository.save(any(Founder.class))).thenReturn(savedFounder);
 
-        waitlistService.register(request);
+        waitlistService.register(request, "user-1");
 
         verify(founderRepository).save(any(Founder.class));
 
@@ -96,9 +96,12 @@ class WaitlistServiceTest {
         existing.setId("founder-99");
         when(founderRepository.findByEmail("existing@example.com")).thenReturn(Optional.of(existing));
 
-        waitlistService.register(request);
+        waitlistService.register(request, "user-99");
 
-        verify(founderRepository, never()).save(any());
+        // Back-fills userId on existing founder
+        ArgumentCaptor<Founder> founderCaptor = ArgumentCaptor.forClass(Founder.class);
+        verify(founderRepository).save(founderCaptor.capture());
+        assertEquals("user-99", founderCaptor.getValue().getUserId());
 
         ArgumentCaptor<Feedback> feedbackCaptor = ArgumentCaptor.forClass(Feedback.class);
         verify(feedbackRepository).save(feedbackCaptor.capture());
@@ -120,10 +123,11 @@ class WaitlistServiceTest {
         existing.setId("founder-99");
         when(founderRepository.findByEmail("existing@example.com")).thenReturn(Optional.of(existing));
 
-        waitlistService.register(request);
+        waitlistService.register(request, "user-99");
 
         verify(feedbackRepository, never()).save(any());
-        verify(founderRepository, never()).save(any());
+        // Back-fills userId on existing founder
+        verify(founderRepository).save(any(Founder.class));
     }
 
     @Test

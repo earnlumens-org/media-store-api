@@ -245,7 +245,8 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
     private static final String PUBLIC_FEED_PROJECT = """
             { "$project": {
                 "_id": 1, "kind": 1, "type": 1, "title": 1, "description": 1,
-                "authorUsername": 1, "authorAvatarUrl": 1, "publishedAt": 1,
+                "authorUsername": 1, "authorAvatarUrl": 1, "authorBadge": 1,
+                "publishedAt": 1,
                 "thumbnailR2Key": 1, "coverR2Key": 1, "durationSec": 1,
                 "viewCount": 1, "isPaid": 1, "priceXlm": 1, "priceUsd": 1,
                 "priceCurrency": 1, "itemCount": 1, "sortDate": 1
@@ -504,6 +505,77 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
                 new Document("tenantId", tenantId)
                         .append("status", "PUBLISHED")
                         .append("visibility", "PUBLIC"));
+        Document collAddFields = Document.parse("""
+            { "$addFields": {
+                "kind": "collection",
+                "type": { "$ifNull": [ { "$toLower": "$collectionType" }, "catalog" ] },
+                "sortDate": "$publishedAt",
+                "itemCount": { "$cond": { "if": { "$isArray": "$items" }, "then": { "$size": "$items" }, "else": 0 } },
+                "durationSec": { "$literal": null },
+                "viewCount": { "$literal": 0 },
+                "thumbnailR2Key": { "$literal": null }
+            }}
+            """);
+        ops.add(context -> new Document("$unionWith",
+                new Document("coll", "collections")
+                        .append("pipeline", List.of(collMatch, collAddFields))));
+
+        // 4. Optional type filter
+        addTypeFilter(ops, type);
+
+        // 5. Optional pricing filter
+        addPricingFilter(ops, pricing);
+
+        return ops;
+    }
+
+    // ── Community feed ────────────────────────────────────────────────────
+
+    @Override
+    public Document findCommunityFeed(String tenantId, String badgeKey, String type,
+                                       String pricing, String sort, int skip, int limit) {
+        List<AggregationOperation> ops = buildCommunityFeedPipeline(tenantId, badgeKey, type, pricing);
+
+        Document sortDoc = buildSortDocument(sort);
+
+        ops.add(context -> new Document("$facet", new Document()
+                .append("data", List.of(
+                        sortDoc,
+                        new Document("$skip", skip),
+                        new Document("$limit", limit),
+                        Document.parse(PUBLIC_FEED_PROJECT)))
+                .append("count", List.of(
+                        new Document("$count", "total")))));
+
+        Aggregation agg = Aggregation.newAggregation(ops);
+        return mongoTemplate.aggregate(agg, "entries", Document.class).getUniqueMappedResult();
+    }
+
+    private List<AggregationOperation> buildCommunityFeedPipeline(String tenantId, String badgeKey,
+                                                                    String type, String pricing) {
+        List<AggregationOperation> ops = new ArrayList<>();
+
+        // 1. Match PUBLISHED entries with the given authorBadge
+        ops.add(Aggregation.match(Criteria.where("tenantId").is(tenantId)
+                .and("status").is("PUBLISHED")
+                .and("authorBadge").is(badgeKey)));
+
+        // 2. Normalize entry docs
+        ops.add(context -> Document.parse("""
+            { "$addFields": {
+                "kind": "entry",
+                "sortDate": "$publishedAt",
+                "itemCount": { "$literal": 0 },
+                "coverR2Key": { "$literal": null }
+            }}
+            """));
+
+        // 3. $unionWith PUBLISHED + PUBLIC collections with matching authorBadge
+        Document collMatch = new Document("$match",
+                new Document("tenantId", tenantId)
+                        .append("status", "PUBLISHED")
+                        .append("visibility", "PUBLIC")
+                        .append("authorBadge", badgeKey));
         Document collAddFields = Document.parse("""
             { "$addFields": {
                 "kind": "collection",

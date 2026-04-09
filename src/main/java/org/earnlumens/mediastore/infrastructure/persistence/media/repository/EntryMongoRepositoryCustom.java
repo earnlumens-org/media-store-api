@@ -89,4 +89,15 @@ public interface EntryMongoRepositoryCustom {
      */
     Document findExploreFeed(String tenantId, String type, String pricing, String sort,
                              int skip, int limit);
+
+    // ── Community feed ──────────────────────────────────────────────────────
+
+    /**
+     * Community feed: merges PUBLISHED entries + PUBLISHED/PUBLIC collections
+     * where authorBadge matches the given badge key (e.g. "u1").
+     * Uses $facet to return data + total count in a single aggregation pass.
+     * Returns a Document with "data" (List<Document>) and "total" (long).
+     */
+    Document findCommunityFeed(String tenantId, String badgeKey, String type,
+                               String pricing, String sort, int skip, int limit);
 }
