@@ -49,6 +49,12 @@ public interface EntryRepository {
     /** Aggregated stats for the owner dashboard (counts by status + total views). */
     java.util.Map<String, Long> getOwnerStats(String tenantId, String userId);
 
+    /** Count entries created by a user after a given timestamp (for daily quota). */
+    long countByTenantIdAndUserIdAndCreatedAtAfter(String tenantId, String userId, LocalDateTime after);
+
+    /** Count entries in a specific status for a user (for burst detection). */
+    long countByTenantIdAndUserIdAndStatus(String tenantId, String userId, EntryStatus status);
+
     Entry save(Entry entry);
 
     void deleteByTenantIdAndId(String tenantId, String id);

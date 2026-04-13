@@ -38,4 +38,8 @@ public interface EntryMongoRepository extends MongoRepository<EntryEntity, Strin
     List<EntryEntity> findByTenantIdAndStatusAndCreatedAtBefore(String tenantId, String status, LocalDateTime cutoff);
 
     List<EntryEntity> findByTenantIdAndStatusAndType(String tenantId, String status, String type);
+
+    long countByTenantIdAndUserIdAndCreatedAtAfter(String tenantId, String userId, LocalDateTime after);
+
+    long countByTenantIdAndUserIdAndStatus(String tenantId, String userId, String status);
 }

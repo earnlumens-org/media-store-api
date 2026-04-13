@@ -69,6 +69,9 @@ public class EntryController {
             return ResponseEntity.status(201).body(response);
         } catch (IllegalArgumentException e) {
             logger.warn("createEntry: invalid request: {}", e.getMessage());
+            if ("DAILY_ENTRY_LIMIT_REACHED".equals(e.getMessage())) {
+                return ResponseEntity.status(429).body(Map.of("error", e.getMessage()));
+            }
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }
@@ -119,6 +122,9 @@ public class EntryController {
             return ResponseEntity.noContent().build();
         } catch (IllegalArgumentException e) {
             logger.warn("updateEntryStatus: invalid request: {}", e.getMessage());
+            if ("TOO_MANY_PENDING_REVIEWS".equals(e.getMessage())) {
+                return ResponseEntity.status(429).body(Map.of("error", e.getMessage()));
+            }
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
     }

@@ -123,6 +123,22 @@ class RateLimitFilterTest {
             filter.doFilter(req, res, chain);
             assertEquals(429, res.getStatus());
         }
+
+        @Test
+        void entriesEndpoint_blockedAfter10PerMinute() throws ServletException, IOException {
+            String ip = "10.0.0.4";
+            for (int i = 0; i < 10; i++) {
+                var req = request("/api/entries", ip);
+                req.setMethod("POST");
+                filter.doFilter(req, new MockHttpServletResponse(), chain);
+            }
+
+            var req = request("/api/entries", ip);
+            req.setMethod("POST");
+            var res = new MockHttpServletResponse();
+            filter.doFilter(req, res, chain);
+            assertEquals(429, res.getStatus());
+        }
     }
 
     @Nested

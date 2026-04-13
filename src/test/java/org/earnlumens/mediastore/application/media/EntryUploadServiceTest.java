@@ -71,7 +71,7 @@ class EntryUploadServiceTest {
         platformConfig = new PlatformConfig();
         platformConfig.setWallet(PLATFORM_WALLET);
         platformConfig.setFeePercent(new BigDecimal("10.00"));
-        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, r2PresignedUrlService, platformConfig, transcodingJobService, moderationJobService, userBadgeService);
+        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, r2PresignedUrlService, platformConfig, transcodingJobService, moderationJobService, userBadgeService, 20, 10);
         when(userRepository.findAllById(any())).thenReturn(java.util.List.of());
         when(transcodingJobService.getMaxRetries()).thenReturn(3);
         when(transcodingJobService.createJob(any(TranscodingJob.class)))
@@ -81,6 +81,11 @@ class EntryUploadServiceTest {
                 .thenAnswer(inv -> { ModerationJob j = inv.getArgument(0); j.setId("mod-job-1"); return j; });
         when(moderationJobService.findActiveByTenantIdAndEntryId(anyString(), anyString()))
                 .thenReturn(Optional.empty());
+        // Abuse prevention: default to 0 entries today and 0 in review
+        when(entryRepository.countByTenantIdAndUserIdAndCreatedAtAfter(anyString(), anyString(), any()))
+                .thenReturn(0L);
+        when(entryRepository.countByTenantIdAndUserIdAndStatus(anyString(), anyString(), any()))
+                .thenReturn(0L);
     }
 
     private Entry draftEntry() {
@@ -390,6 +395,73 @@ class EntryUploadServiceTest {
 
         assertFalse(result);
         verify(entryRepository, never()).save(any());
+    }
+
+    // ─── Abuse prevention ──────────────────────────────────────
+
+    @Test
+    void createEntry_dailyLimitReached_throws() {
+        when(entryRepository.countByTenantIdAndUserIdAndCreatedAtAfter(anyString(), anyString(), any()))
+                .thenReturn(20L);
+
+        CreateEntryRequest request = new CreateEntryRequest(
+                "Spam Entry", null, null, "VIDEO", false, null, null, null, null, null);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.createEntry(TENANT, USER_ID, request));
+        assertEquals("DAILY_ENTRY_LIMIT_REACHED", ex.getMessage());
+        verify(entryRepository, never()).save(any());
+    }
+
+    @Test
+    void createEntry_belowDailyLimit_succeeds() {
+        when(entryRepository.countByTenantIdAndUserIdAndCreatedAtAfter(anyString(), anyString(), any()))
+                .thenReturn(19L);
+        when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> {
+            Entry e = inv.getArgument(0); e.setId(ENTRY_ID); return e;
+        });
+
+        CreateEntryRequest request = new CreateEntryRequest(
+                "OK Entry", null, null, "AUDIO", false, null, null, null, null, null);
+
+        CreateEntryResponse response = service.createEntry(TENANT, USER_ID, request);
+        assertNotNull(response);
+        verify(entryRepository).save(any());
+    }
+
+    @Test
+    void updateStatus_inReviewBurstLimit_throws() {
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
+                .thenReturn(Optional.of(draftEntry()));
+        when(entryRepository.countByTenantIdAndUserIdAndStatus(TENANT, USER_ID, EntryStatus.IN_REVIEW))
+                .thenReturn(10L);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.updateEntryStatus(TENANT, USER_ID, ENTRY_ID, new UpdateEntryStatusRequest("IN_REVIEW")));
+        assertEquals("TOO_MANY_PENDING_REVIEWS", ex.getMessage());
+        verify(entryRepository, never()).save(any());
+    }
+
+    @Test
+    void updateStatus_belowBurstLimit_succeeds() {
+        Entry draft = draftEntry();
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
+                .thenReturn(Optional.of(draft));
+        when(entryRepository.countByTenantIdAndUserIdAndStatus(TENANT, USER_ID, EntryStatus.IN_REVIEW))
+                .thenReturn(9L);
+        when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        Asset fullAsset = new Asset();
+        fullAsset.setR2Key("tenants/earnlumens/entries/entry-abc/full/video.mp4");
+        when(assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
+                TENANT, ENTRY_ID, MediaKind.FULL, AssetStatus.UPLOADED))
+                .thenReturn(Optional.of(fullAsset));
+
+        boolean result = service.updateEntryStatus(
+                TENANT, USER_ID, ENTRY_ID, new UpdateEntryStatusRequest("IN_REVIEW"));
+
+        assertTrue(result);
+        verify(entryRepository).save(any());
     }
 
     // ─── finalizeUpload: transcoding ───────────────────────────

@@ -36,6 +36,7 @@ import org.earnlumens.mediastore.infrastructure.config.PlatformConfig;
 import org.earnlumens.mediastore.infrastructure.r2.R2PresignedUrlService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
@@ -74,6 +75,8 @@ public class EntryUploadService {
     private final TranscodingJobService transcodingJobService;
     private final ModerationJobService moderationJobService;
     private final UserBadgeService userBadgeService;
+    private final int dailyEntryLimit;
+    private final int maxConcurrentReview;
 
     public EntryUploadService(
             EntryRepository entryRepository,
@@ -84,7 +87,9 @@ public class EntryUploadService {
             PlatformConfig platformConfig,
             TranscodingJobService transcodingJobService,
             ModerationJobService moderationJobService,
-            UserBadgeService userBadgeService
+            UserBadgeService userBadgeService,
+            @Value("${mediastore.abuse.daily-entry-limit:20}") int dailyEntryLimit,
+            @Value("${mediastore.abuse.max-concurrent-review:10}") int maxConcurrentReview
     ) {
         this.entryRepository = entryRepository;
         this.assetRepository = assetRepository;
@@ -95,6 +100,8 @@ public class EntryUploadService {
         this.transcodingJobService = transcodingJobService;
         this.moderationJobService = moderationJobService;
         this.userBadgeService = userBadgeService;
+        this.dailyEntryLimit = dailyEntryLimit;
+        this.maxConcurrentReview = maxConcurrentReview;
     }
 
     /**
@@ -108,6 +115,15 @@ public class EntryUploadService {
      * Future: sellers will be able to add COLLABORATOR splits manually.
      */
     public CreateEntryResponse createEntry(String tenantId, String userId, CreateEntryRequest request) {
+        // ── Abuse prevention: daily entry creation limit ──────────────
+        long entriesToday = entryRepository.countByTenantIdAndUserIdAndCreatedAtAfter(
+                tenantId, userId, java.time.LocalDateTime.now().minusHours(24));
+        if (entriesToday >= dailyEntryLimit) {
+            logger.warn("createEntry: daily limit reached for user={} (count={}, limit={})",
+                    userId, entriesToday, dailyEntryLimit);
+            throw new IllegalArgumentException("DAILY_ENTRY_LIMIT_REACHED");
+        }
+
         EntryType entryType = EntryType.valueOf(request.type());
         boolean isPaid = Boolean.TRUE.equals(request.isPaid());
 
@@ -422,6 +438,17 @@ public class EntryUploadService {
             logger.warn("updateEntryStatus: invalid transition {} → {} for entry {}",
                     entry.getStatus(), newStatus, entryId);
             return false;
+        }
+
+        // ── Abuse prevention: burst detection on submit for review ────
+        if (newStatus == EntryStatus.IN_REVIEW) {
+            long inReviewCount = entryRepository.countByTenantIdAndUserIdAndStatus(
+                    tenantId, userId, EntryStatus.IN_REVIEW);
+            if (inReviewCount >= maxConcurrentReview) {
+                logger.warn("updateEntryStatus: burst limit reached for user={} (inReview={}, limit={})",
+                        userId, inReviewCount, maxConcurrentReview);
+                throw new IllegalArgumentException("TOO_MANY_PENDING_REVIEWS");
+            }
         }
 
         // When archiving, remember the current status so we can restore it later

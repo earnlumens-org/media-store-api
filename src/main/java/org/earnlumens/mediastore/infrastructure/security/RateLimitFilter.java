@@ -25,6 +25,7 @@ import java.util.concurrent.atomic.AtomicLong;
  * <p>Tiers (requests per minute):
  * <ul>
  *   <li><b>AUTH</b>  – /api/auth/**:         10/min  (brute-force protection)</li>
+ *   <li><b>ENTRIES</b> – /api/entries/**:     10/min  (anti-bot entry spam)</li>
  *   <li><b>UPLOAD</b> – /api/uploads/**:      30/min  (presigned URL spam)</li>
  *   <li><b>WAITLIST</b> – /api/waitlist/**:   10/min  (spam protection)</li>
  *   <li><b>INTERNAL</b> – /api/internal/**:  300/min  (worker callbacks)</li>
@@ -44,6 +45,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // ── Rate limit tiers ──────────────────────────────────────────
     private enum Tier {
         AUTH(10),
+        ENTRIES(10),
         UPLOAD(30),
         WAITLIST(10),
         INTERNAL(300),
@@ -128,6 +130,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private Tier classifyRequest(String path) {
         if (path.startsWith("/api/auth/"))      return Tier.AUTH;
+        if (path.startsWith("/api/entries"))     return Tier.ENTRIES;
         if (path.startsWith("/api/uploads/"))    return Tier.UPLOAD;
         if (path.startsWith("/api/waitlist/"))   return Tier.WAITLIST;
         if (path.startsWith("/api/internal/"))   return Tier.INTERNAL;

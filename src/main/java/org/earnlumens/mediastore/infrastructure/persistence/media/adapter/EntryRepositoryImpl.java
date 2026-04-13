@@ -129,6 +129,16 @@ public class EntryRepositoryImpl implements EntryRepository {
     }
 
     @Override
+    public long countByTenantIdAndUserIdAndCreatedAtAfter(String tenantId, String userId, LocalDateTime after) {
+        return entryMongoRepository.countByTenantIdAndUserIdAndCreatedAtAfter(tenantId, userId, after);
+    }
+
+    @Override
+    public long countByTenantIdAndUserIdAndStatus(String tenantId, String userId, EntryStatus status) {
+        return entryMongoRepository.countByTenantIdAndUserIdAndStatus(tenantId, userId, status.name());
+    }
+
+    @Override
     public Entry save(Entry entry) {
         EntryEntity entity = entryMapper.toEntity(entry);
         EntryEntity saved = entryMongoRepository.save(entity);
