@@ -23,6 +23,8 @@ import org.earnlumens.mediastore.domain.media.model.OrderStatus;
 import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
 import org.earnlumens.mediastore.domain.media.model.PriceCurrency;
 import org.earnlumens.mediastore.domain.media.model.SplitRole;
+import org.earnlumens.mediastore.domain.media.model.ModerationJob;
+import org.earnlumens.mediastore.domain.media.model.ModerationJobStatus;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJob;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
@@ -70,6 +72,7 @@ public class EntryUploadService {
     private final R2PresignedUrlService r2PresignedUrlService;
     private final PlatformConfig platformConfig;
     private final TranscodingJobService transcodingJobService;
+    private final ModerationJobService moderationJobService;
     private final UserBadgeService userBadgeService;
 
     public EntryUploadService(
@@ -80,6 +83,7 @@ public class EntryUploadService {
             R2PresignedUrlService r2PresignedUrlService,
             PlatformConfig platformConfig,
             TranscodingJobService transcodingJobService,
+            ModerationJobService moderationJobService,
             UserBadgeService userBadgeService
     ) {
         this.entryRepository = entryRepository;
@@ -89,6 +93,7 @@ public class EntryUploadService {
         this.r2PresignedUrlService = r2PresignedUrlService;
         this.platformConfig = platformConfig;
         this.transcodingJobService = transcodingJobService;
+        this.moderationJobService = moderationJobService;
         this.userBadgeService = userBadgeService;
     }
 
@@ -433,8 +438,66 @@ public class EntryUploadService {
         entry.setStatus(newStatus);
         entryRepository.save(entry);
 
+        // When transitioning to IN_REVIEW, create a moderation job
+        if (newStatus == EntryStatus.IN_REVIEW) {
+            createModerationJob(tenantId, entry);
+        }
+
         logger.info("updateEntryStatus: entryId={}, {} → {}", entryId, entry.getStatus(), newStatus);
         return true;
+    }
+
+    /**
+     * Creates a moderation job for an entry that just transitioned to IN_REVIEW.
+     * The moderation pipeline will run BEFORE any transcoding happens.
+     */
+    private void createModerationJob(String tenantId, Entry entry) {
+        // Skip if there's already an active moderation job
+        if (moderationJobService.findActiveByTenantIdAndEntryId(tenantId, entry.getId()).isPresent()) {
+            logger.debug("createModerationJob: skipping — active moderation job exists for entry={}",
+                    entry.getId());
+            return;
+        }
+
+        // Find the source R2 key — for VIDEO/AUDIO/IMAGE it's the FULL asset
+        String sourceR2Key = null;
+        var optAsset = assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
+                tenantId, entry.getId(), MediaKind.FULL, AssetStatus.UPLOADED);
+        if (optAsset.isEmpty()) {
+            optAsset = assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
+                    tenantId, entry.getId(), MediaKind.FULL, AssetStatus.READY);
+        }
+        if (optAsset.isPresent()) {
+            sourceR2Key = optAsset.get().getR2Key();
+        }
+
+        if (sourceR2Key == null && entry.getType() != org.earnlumens.mediastore.domain.media.model.EntryType.RESOURCE) {
+            logger.warn("createModerationJob: no source asset found for entry={}, type={}",
+                    entry.getId(), entry.getType());
+            return;
+        }
+
+        // For RESOURCE entries without uploaded files, use a placeholder
+        if (sourceR2Key == null) {
+            sourceR2Key = "";
+        }
+
+        ModerationJob job = new ModerationJob();
+        job.setTenantId(tenantId);
+        job.setEntryId(entry.getId());
+        job.setSourceR2Key(sourceR2Key);
+        job.setThumbnailR2Key(entry.getThumbnailR2Key());
+        job.setEntryType(entry.getType());
+        job.setEntryTitle(entry.getTitle());
+        job.setEntryDescription(entry.getDescription());
+        // Tags are stored differently per entry — pass title + description for now
+        job.setStatus(ModerationJobStatus.PENDING);
+        job.setRetryCount(0);
+        job.setMaxRetries(moderationJobService.getMaxRetries());
+        moderationJobService.createJob(job);
+
+        logger.info("createModerationJob: created moderation job for entry={}, type={}",
+                entry.getId(), entry.getType());
     }
 
     /**

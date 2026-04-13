@@ -12,7 +12,10 @@ import org.earnlumens.mediastore.domain.media.model.AssetStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
+import org.earnlumens.mediastore.domain.media.model.MediaKind;
 import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
+import org.earnlumens.mediastore.domain.media.model.ModerationJob;
+import org.earnlumens.mediastore.domain.media.model.ModerationJobStatus;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJob;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
@@ -51,6 +54,7 @@ class EntryUploadServiceTest {
     private R2PresignedUrlService r2PresignedUrlService;
     private PlatformConfig platformConfig;
     private TranscodingJobService transcodingJobService;
+    private ModerationJobService moderationJobService;
     private UserBadgeService userBadgeService;
     private EntryUploadService service;
 
@@ -62,15 +66,21 @@ class EntryUploadServiceTest {
         orderRepository = mock(OrderRepository.class);
         r2PresignedUrlService = mock(R2PresignedUrlService.class);
         transcodingJobService = mock(TranscodingJobService.class);
+        moderationJobService = mock(ModerationJobService.class);
         userBadgeService = mock(UserBadgeService.class);
         platformConfig = new PlatformConfig();
         platformConfig.setWallet(PLATFORM_WALLET);
         platformConfig.setFeePercent(new BigDecimal("10.00"));
-        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, r2PresignedUrlService, platformConfig, transcodingJobService, userBadgeService);
+        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, r2PresignedUrlService, platformConfig, transcodingJobService, moderationJobService, userBadgeService);
         when(userRepository.findAllById(any())).thenReturn(java.util.List.of());
         when(transcodingJobService.getMaxRetries()).thenReturn(3);
         when(transcodingJobService.createJob(any(TranscodingJob.class)))
                 .thenAnswer(inv -> { TranscodingJob j = inv.getArgument(0); j.setId("job-1"); return j; });
+        when(moderationJobService.getMaxRetries()).thenReturn(2);
+        when(moderationJobService.createJob(any(ModerationJob.class)))
+                .thenAnswer(inv -> { ModerationJob j = inv.getArgument(0); j.setId("mod-job-1"); return j; });
+        when(moderationJobService.findActiveByTenantIdAndEntryId(anyString(), anyString()))
+                .thenReturn(Optional.empty());
     }
 
     private Entry draftEntry() {
@@ -278,16 +288,45 @@ class EntryUploadServiceTest {
     // ─── updateEntryStatus ─────────────────────────────────────
 
     @Test
-    void updateStatus_draftToInReview_succeeds() {
+    void updateStatus_draftToInReview_succeeds_and_createsModerationJob() {
+        Entry draft = draftEntry();
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
-                .thenReturn(Optional.of(draftEntry()));
+                .thenReturn(Optional.of(draft));
         when(entryRepository.save(any(Entry.class))).thenAnswer(invocation -> invocation.getArgument(0));
+
+        Asset fullAsset = new Asset();
+        fullAsset.setR2Key("tenants/earnlumens/entries/entry-abc/full/video.mp4");
+        when(assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
+                TENANT, ENTRY_ID, MediaKind.FULL, AssetStatus.UPLOADED))
+                .thenReturn(Optional.of(fullAsset));
 
         boolean result = service.updateEntryStatus(
                 TENANT, USER_ID, ENTRY_ID, new UpdateEntryStatusRequest("IN_REVIEW"));
 
         assertTrue(result);
         verify(entryRepository).save(any(Entry.class));
+        verify(moderationJobService).createJob(argThat(job -> {
+            assertEquals(TENANT, job.getTenantId());
+            assertEquals(ENTRY_ID, job.getEntryId());
+            assertEquals("tenants/earnlumens/entries/entry-abc/full/video.mp4", job.getSourceR2Key());
+            assertEquals(ModerationJobStatus.PENDING, job.getStatus());
+            return true;
+        }));
+    }
+
+    @Test
+    void updateStatus_draftToInReview_skipsModeration_whenActiveJobExists() {
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
+                .thenReturn(Optional.of(draftEntry()));
+        when(entryRepository.save(any(Entry.class))).thenAnswer(invocation -> invocation.getArgument(0));
+        when(moderationJobService.findActiveByTenantIdAndEntryId(TENANT, ENTRY_ID))
+                .thenReturn(Optional.of(new ModerationJob()));
+
+        boolean result = service.updateEntryStatus(
+                TENANT, USER_ID, ENTRY_ID, new UpdateEntryStatusRequest("IN_REVIEW"));
+
+        assertTrue(result);
+        verify(moderationJobService, never()).createJob(any());
     }
 
     @Test
