@@ -8,8 +8,10 @@ import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
 import org.earnlumens.mediastore.domain.media.model.PriceCurrency;
 import org.earnlumens.mediastore.domain.media.model.PricingMode;
 import org.earnlumens.mediastore.domain.media.model.SplitRole;
+import org.earnlumens.mediastore.domain.media.model.StatusChangeRecord;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.EntryEntity;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.PaymentSplitEntity;
+import org.earnlumens.mediastore.infrastructure.persistence.media.entity.StatusChangeRecordEntity;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.Named;
@@ -26,6 +28,7 @@ public interface EntryMapper {
     @Mapping(target = "priceCurrency", source = "priceCurrency", qualifiedByName = "stringToPriceCurrency")
     @Mapping(target = "pricingMode", source = "pricingMode", qualifiedByName = "stringToPricingMode")
     @Mapping(target = "paymentSplits", source = "paymentSplits", qualifiedByName = "entitiesToSplits")
+    @Mapping(target = "statusHistory", source = "statusHistory", qualifiedByName = "entitiesToStatusHistory")
     Entry toModel(EntryEntity entity);
 
     @Mapping(target = "type", source = "type", qualifiedByName = "entryTypeToString")
@@ -35,6 +38,7 @@ public interface EntryMapper {
     @Mapping(target = "priceCurrency", source = "priceCurrency", qualifiedByName = "priceCurrencyToString")
     @Mapping(target = "pricingMode", source = "pricingMode", qualifiedByName = "pricingModeToString")
     @Mapping(target = "paymentSplits", source = "paymentSplits", qualifiedByName = "splitsToEntities")
+    @Mapping(target = "statusHistory", source = "statusHistory", qualifiedByName = "statusHistoryToEntities")
     EntryEntity toEntity(Entry model);
 
     @Named("stringToEntryType")
@@ -116,6 +120,42 @@ public interface EntryMapper {
         entity.setWallet(split.getWallet());
         entity.setRole(split.getRole() == null ? null : split.getRole().name());
         entity.setPercent(split.getPercent());
+        return entity;
+    }
+
+    // ── StatusChangeRecord ↔ StatusChangeRecordEntity ──
+
+    @Named("entitiesToStatusHistory")
+    default List<StatusChangeRecord> entitiesToStatusHistory(List<StatusChangeRecordEntity> entities) {
+        if (entities == null) return null;
+        return entities.stream().map(this::toStatusChangeModel).toList();
+    }
+
+    @Named("statusHistoryToEntities")
+    default List<StatusChangeRecordEntity> statusHistoryToEntities(List<StatusChangeRecord> records) {
+        if (records == null) return null;
+        return records.stream().map(this::toStatusChangeEntity).toList();
+    }
+
+    default StatusChangeRecord toStatusChangeModel(StatusChangeRecordEntity entity) {
+        if (entity == null) return null;
+        StatusChangeRecord record = new StatusChangeRecord();
+        record.setFromStatus(entity.getFromStatus() == null ? null : EntryStatus.valueOf(entity.getFromStatus()));
+        record.setToStatus(entity.getToStatus() == null ? null : EntryStatus.valueOf(entity.getToStatus()));
+        record.setActor(entity.getActor());
+        record.setReason(entity.getReason());
+        record.setTimestamp(entity.getTimestamp());
+        return record;
+    }
+
+    default StatusChangeRecordEntity toStatusChangeEntity(StatusChangeRecord record) {
+        if (record == null) return null;
+        StatusChangeRecordEntity entity = new StatusChangeRecordEntity();
+        entity.setFromStatus(record.getFromStatus() == null ? null : record.getFromStatus().name());
+        entity.setToStatus(record.getToStatus() == null ? null : record.getToStatus().name());
+        entity.setActor(record.getActor());
+        entity.setReason(record.getReason());
+        entity.setTimestamp(record.getTimestamp());
         return entity;
     }
 }

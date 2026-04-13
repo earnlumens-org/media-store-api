@@ -53,6 +53,10 @@ public class Entry {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private LocalDateTime publishedAt;
+    /** Human-readable feedback shown to the creator (rejection reason, approval note, etc.). */
+    private String moderationFeedback;
+    /** Chronological log of every status transition (audit trail). */
+    private List<StatusChangeRecord> statusHistory = new ArrayList<>();
 
     public Entry() {}
 
@@ -148,4 +152,10 @@ public class Entry {
 
     public LocalDateTime getPublishedAt() { return publishedAt; }
     public void setPublishedAt(LocalDateTime publishedAt) { this.publishedAt = publishedAt; }
+
+    public String getModerationFeedback() { return moderationFeedback; }
+    public void setModerationFeedback(String moderationFeedback) { this.moderationFeedback = moderationFeedback; }
+
+    public List<StatusChangeRecord> getStatusHistory() { return statusHistory; }
+    public void setStatusHistory(List<StatusChangeRecord> statusHistory) { this.statusHistory = statusHistory; }
 }

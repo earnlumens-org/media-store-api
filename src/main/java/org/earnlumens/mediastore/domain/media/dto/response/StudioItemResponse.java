@@ -31,5 +31,7 @@ public record StudioItemResponse(
         String publishedAt,
         /** Transcoding status — only for video entries */
         String transcodingStatus,
-        String sellerWallet
+        String sellerWallet,
+        /** Human-readable moderation feedback (rejection/suspension reason). Null if none. */
+        String moderationFeedback
 ) {}

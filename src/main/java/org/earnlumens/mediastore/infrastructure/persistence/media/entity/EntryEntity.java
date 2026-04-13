@@ -108,6 +108,12 @@ public class EntryEntity {
 
     private LocalDateTime publishedAt;
 
+    /** Human-readable feedback shown to the creator (rejection reason, approval note, etc.). */
+    private String moderationFeedback;
+
+    /** Chronological log of every status transition (audit trail). */
+    private List<StatusChangeRecordEntity> statusHistory = new ArrayList<>();
+
     public EntryEntity() {}
 
     public String getId() { return id; }
@@ -202,4 +208,10 @@ public class EntryEntity {
 
     public LocalDateTime getPublishedAt() { return publishedAt; }
     public void setPublishedAt(LocalDateTime publishedAt) { this.publishedAt = publishedAt; }
+
+    public String getModerationFeedback() { return moderationFeedback; }
+    public void setModerationFeedback(String moderationFeedback) { this.moderationFeedback = moderationFeedback; }
+
+    public List<StatusChangeRecordEntity> getStatusHistory() { return statusHistory; }
+    public void setStatusHistory(List<StatusChangeRecordEntity> statusHistory) { this.statusHistory = statusHistory; }
 }

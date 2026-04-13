@@ -264,7 +264,12 @@ public class ModerationJobService {
     private void handleApproval(ModerationJob job) {
         entryRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId())
                 .ifPresent(entry -> {
+                    EntryStatus previous = entry.getStatus();
                     entry.setStatus(EntryStatus.APPROVED);
+                    // Record audit trail — actor is generic to hide bot vs human
+                    entry.getStatusHistory().add(
+                            new org.earnlumens.mediastore.domain.media.model.StatusChangeRecord(
+                                    previous, EntryStatus.APPROVED, "EarnLumens", job.getDecisionReason()));
                     entryRepository.save(entry);
                     logger.info("moderation: entry {} approved → status=APPROVED", entry.getId());
 
@@ -297,7 +302,14 @@ public class ModerationJobService {
     private void handleRejection(ModerationJob job) {
         entryRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId())
                 .ifPresent(entry -> {
+                    EntryStatus previous = entry.getStatus();
                     entry.setStatus(EntryStatus.REJECTED);
+                    // Propagate rejection reason so the creator sees feedback
+                    entry.setModerationFeedback(job.getDecisionReason());
+                    // Record audit trail — actor is generic to hide bot vs human
+                    entry.getStatusHistory().add(
+                            new org.earnlumens.mediastore.domain.media.model.StatusChangeRecord(
+                                    previous, EntryStatus.REJECTED, "EarnLumens", job.getDecisionReason()));
                     entryRepository.save(entry);
                     logger.info("moderation: entry {} rejected — status=REJECTED, reason={}",
                             entry.getId(), job.getDecisionReason());

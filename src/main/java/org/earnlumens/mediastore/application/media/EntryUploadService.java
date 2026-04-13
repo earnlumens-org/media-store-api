@@ -456,11 +456,18 @@ public class EntryUploadService {
             entry.setPreviousStatus(entry.getStatus());
         }
 
-        // When publishing, stamp the author's active badge on the entry
+        // When publishing, stamp the author's active badge and publishedAt timestamp
         if (newStatus == EntryStatus.PUBLISHED) {
             userBadgeService.getActiveBadgeKey(tenantId, userId)
                     .ifPresent(entry::setAuthorBadge);
+            entry.setPublishedAt(java.time.LocalDateTime.now());
         }
+
+        // Record audit trail
+        EntryStatus previousStatus = entry.getStatus();
+        entry.getStatusHistory().add(
+                new org.earnlumens.mediastore.domain.media.model.StatusChangeRecord(
+                        previousStatus, newStatus, entry.getAuthorUsername(), null));
 
         entry.setStatus(newStatus);
         entryRepository.save(entry);
@@ -555,6 +562,9 @@ public class EntryUploadService {
                 : EntryStatus.DRAFT;
 
         logger.info("unarchiveEntry: entryId={}, ARCHIVED → {}", entryId, restoreTo);
+        entry.getStatusHistory().add(
+                new org.earnlumens.mediastore.domain.media.model.StatusChangeRecord(
+                        EntryStatus.ARCHIVED, restoreTo, entry.getAuthorUsername(), null));
         entry.setStatus(restoreTo);
         entry.setPreviousStatus(null);
         entryRepository.save(entry);
@@ -726,7 +736,8 @@ public class EntryUploadService {
                     fmtDate.apply("updatedAt"),
                     fmtDate.apply("publishedAt"),
                     transcodingMap.get(id),
-                    doc.getString("sellerWallet")
+                    doc.getString("sellerWallet"),
+                    doc.getString("moderationFeedback")
             );
         }).toList();
 
@@ -775,7 +786,8 @@ public class EntryUploadService {
                 entry.getUpdatedAt() != null ? entry.getUpdatedAt().format(fmt) : null,
                 entry.getPublishedAt() != null ? entry.getPublishedAt().format(fmt) : null,
                 transcodingStatus,
-                entry.getSellerWallet()
+                entry.getSellerWallet(),
+                entry.getModerationFeedback()
         );
     }
 
