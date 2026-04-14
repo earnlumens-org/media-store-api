@@ -125,9 +125,9 @@ class RateLimitFilterTest {
         }
 
         @Test
-        void entriesEndpoint_blockedAfter10PerMinute() throws ServletException, IOException {
+        void entriesEndpoint_blockedAfter60PerMinute() throws ServletException, IOException {
             String ip = "10.0.0.4";
-            for (int i = 0; i < 10; i++) {
+            for (int i = 0; i < 60; i++) {
                 var req = request("/api/entries", ip);
                 req.setMethod("POST");
                 filter.doFilter(req, new MockHttpServletResponse(), chain);

@@ -156,6 +156,13 @@ public class Entry {
     public String getModerationFeedback() { return moderationFeedback; }
     public void setModerationFeedback(String moderationFeedback) { this.moderationFeedback = moderationFeedback; }
 
-    public List<StatusChangeRecord> getStatusHistory() { return statusHistory; }
+    public List<StatusChangeRecord> getStatusHistory() {
+        if (statusHistory == null) {
+            statusHistory = new ArrayList<>();
+        } else if (!(statusHistory instanceof ArrayList)) {
+            statusHistory = new ArrayList<>(statusHistory);
+        }
+        return statusHistory;
+    }
     public void setStatusHistory(List<StatusChangeRecord> statusHistory) { this.statusHistory = statusHistory; }
 }

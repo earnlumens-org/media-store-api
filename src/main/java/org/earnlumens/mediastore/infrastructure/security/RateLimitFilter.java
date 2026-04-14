@@ -14,6 +14,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -45,7 +46,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
     // ── Rate limit tiers ──────────────────────────────────────────
     private enum Tier {
         AUTH(10),
-        ENTRIES(10),
+        ENTRIES(60),
         UPLOAD(30),
         WAITLIST(10),
         INTERNAL(300),
@@ -62,6 +63,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final ConcurrentHashMap<String, WindowCounter> counters = new ConcurrentHashMap<>();
     private final AtomicLong lastCleanup = new AtomicLong(System.currentTimeMillis());
     private static final long CLEANUP_INTERVAL_MS = 120_000; // 2 minutes
+
+    private static final Set<String> ALLOWED_ORIGINS = Set.of(
+            "https://app-dev.earnlumens.org",
+            "http://localhost:3000",
+            "https://earnlumens.org"
+    );
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -95,6 +102,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         if (count > tier.maxPerMinute) {
             logger.warn("Rate limited: ip={}, tier={}, count={}, path={}",
                     ip, tier, count, path);
+            addCorsHeaders(request, response);
             response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
             response.setContentType("application/json");
             response.setHeader("Retry-After", "60");
@@ -148,6 +156,16 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
         long currentMinute = now / 60_000;
         counters.entrySet().removeIf(e -> e.getValue().minute < currentMinute - 1);
+    }
+
+    // ── CORS helper for rejected responses ───────────────────────
+
+    private void addCorsHeaders(HttpServletRequest request, HttpServletResponse response) {
+        String origin = request.getHeader("Origin");
+        if (origin != null && ALLOWED_ORIGINS.contains(origin)) {
+            response.setHeader("Access-Control-Allow-Origin", origin);
+            response.setHeader("Access-Control-Allow-Credentials", "true");
+        }
     }
 
     // ── Counter record ────────────────────────────────────────────
