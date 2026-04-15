@@ -62,11 +62,14 @@ public class CloudRunDispatchAdapter implements TranscodingDispatchPort {
 
     @Override
     public void dispatch(TranscodingJob job) {
+        if (credentials == null) {
+            logger.info("Google credentials not available — retrying ADC init for transcoding dispatch");
+            initCredentials();
+        }
         if (!isConfigured()) {
-            logger.warn("Cloud Run dispatch not configured — skipping job {}. "
-                    + "Set mediastore.transcoding.cloud-run-* properties and ensure "
-                    + "Google ADC is available.", job.getId());
-            return;
+            throw new IllegalStateException(
+                    "Cloud Run transcoding dispatch not configured — cannot dispatch job " + job.getId()
+                    + ". Set mediastore.transcoding.cloud-run-* properties and ensure Google ADC is available.");
         }
 
         String url = String.format(

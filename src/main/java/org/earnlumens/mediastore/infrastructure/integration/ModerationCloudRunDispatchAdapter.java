@@ -89,11 +89,14 @@ public class ModerationCloudRunDispatchAdapter implements ModerationDispatchPort
 
     @Override
     public void dispatch(ModerationJob job) {
+        if (credentials == null) {
+            logger.info("Google credentials not available — retrying ADC init for moderation dispatch");
+            initCredentials();
+        }
         if (!isConfigured()) {
-            logger.warn("Cloud Run moderation dispatch not configured — skipping job {}. "
-                    + "Set mediastore.moderation.cloud-run-* properties and ensure "
-                    + "Google ADC is available.", job.getId());
-            return;
+            throw new IllegalStateException(
+                    "Cloud Run moderation dispatch not configured — cannot dispatch job " + job.getId()
+                    + ". Set mediastore.moderation.cloud-run-* properties and ensure Google ADC is available.");
         }
 
         String url = String.format(
