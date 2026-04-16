@@ -331,24 +331,37 @@ public class EntryUploadService {
             logger.info("finalizeUpload: set previewR2Key on entry {}: {}", request.entryId(), request.r2Key());
         }
 
-        // ── Re-moderation: visual asset change on a reviewed entry triggers re-review ──
+        // ── Re-moderation: visual asset change on a non-draft entry triggers re-review ──
+        // This must also handle entries already IN_REVIEW (e.g. from updateEntryMetadata)
+        // because the existing moderation job has a stale thumbnailR2Key.
         if (kind == MediaKind.THUMBNAIL || kind == MediaKind.PREVIEW) {
             boolean needsReReview = entry.getStatus() != EntryStatus.DRAFT
-                    && entry.getStatus() != EntryStatus.IN_REVIEW
                     && entry.getStatus() != EntryStatus.ARCHIVED;
             if (needsReReview) {
-                EntryStatus previousStatus = entry.getStatus();
-                entry.getStatusHistory().add(
-                        new org.earnlumens.mediastore.domain.media.model.StatusChangeRecord(
-                                previousStatus, EntryStatus.IN_REVIEW, null,
-                                kind == MediaKind.THUMBNAIL ? "thumbnail changed" : "preview changed"));
-                entry.setStatus(EntryStatus.IN_REVIEW);
-                entry.setModerationFeedback(null);
-                entry.setUpdatedAt(java.time.LocalDateTime.now());
-                entryRepository.save(entry);
+                // Cancel any active moderation job — it has the old thumbnailR2Key
+                // and may already be dispatched to Cloud Run with stale env vars.
+                moderationJobService.findActiveByTenantIdAndEntryId(tenantId, entry.getId())
+                        .ifPresent(activeJob -> {
+                            moderationJobService.cancelJob(activeJob,
+                                    "Superseded by new " + kind.name().toLowerCase() + " upload");
+                            logger.info("finalizeUpload: cancelled active moderation job {} (superseded by {} change)",
+                                    activeJob.getId(), kind);
+                        });
+
+                if (entry.getStatus() != EntryStatus.IN_REVIEW) {
+                    EntryStatus previousStatus = entry.getStatus();
+                    entry.getStatusHistory().add(
+                            new org.earnlumens.mediastore.domain.media.model.StatusChangeRecord(
+                                    previousStatus, EntryStatus.IN_REVIEW, null,
+                                    kind == MediaKind.THUMBNAIL ? "thumbnail changed" : "preview changed"));
+                    entry.setStatus(EntryStatus.IN_REVIEW);
+                    entry.setModerationFeedback(null);
+                    entry.setUpdatedAt(java.time.LocalDateTime.now());
+                    entryRepository.save(entry);
+                }
                 createModerationJob(tenantId, entry);
-                logger.info("finalizeUpload: auto-transition {} → IN_REVIEW for entry={} ({})",
-                        previousStatus, request.entryId(), kind);
+                logger.info("finalizeUpload: triggered re-moderation for entry={} ({}, status was {})",
+                        request.entryId(), kind, entry.getStatus());
             }
         }
 

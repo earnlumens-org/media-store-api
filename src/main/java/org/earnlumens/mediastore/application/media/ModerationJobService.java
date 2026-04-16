@@ -201,6 +201,20 @@ public class ModerationJobService {
         return jobRepository.findActiveByTenantIdAndEntryId(tenantId, entryId);
     }
 
+    /**
+     * Cancels an active moderation job, marking it as FAILED.
+     * Used when a new thumbnail/preview upload supersedes the existing job.
+     */
+    public void cancelJob(ModerationJob job, String reason) {
+        ModerationJobStatus previousStatus = job.getStatus();
+        job.setStatus(ModerationJobStatus.FAILED);
+        job.setErrorMessage(reason);
+        job.setCompletedAt(LocalDateTime.now());
+        jobRepository.save(job);
+        logger.info("Cancelled moderation job: id={}, entry={}, previous={}, reason={}",
+                job.getId(), job.getEntryId(), previousStatus, reason);
+    }
+
     public List<ModerationJob> findByStatus(ModerationJobStatus status) {
         return jobRepository.findAllByStatus(status, 100);
     }
