@@ -331,6 +331,27 @@ public class EntryUploadService {
             logger.info("finalizeUpload: set previewR2Key on entry {}: {}", request.entryId(), request.r2Key());
         }
 
+        // ── Re-moderation: visual asset change on a reviewed entry triggers re-review ──
+        if (kind == MediaKind.THUMBNAIL || kind == MediaKind.PREVIEW) {
+            boolean needsReReview = entry.getStatus() != EntryStatus.DRAFT
+                    && entry.getStatus() != EntryStatus.IN_REVIEW
+                    && entry.getStatus() != EntryStatus.ARCHIVED;
+            if (needsReReview) {
+                EntryStatus previousStatus = entry.getStatus();
+                entry.getStatusHistory().add(
+                        new org.earnlumens.mediastore.domain.media.model.StatusChangeRecord(
+                                previousStatus, EntryStatus.IN_REVIEW, null,
+                                kind == MediaKind.THUMBNAIL ? "thumbnail changed" : "preview changed"));
+                entry.setStatus(EntryStatus.IN_REVIEW);
+                entry.setModerationFeedback(null);
+                entry.setUpdatedAt(java.time.LocalDateTime.now());
+                entryRepository.save(entry);
+                createModerationJob(tenantId, entry);
+                logger.info("finalizeUpload: auto-transition {} → IN_REVIEW for entry={} ({})",
+                        previousStatus, request.entryId(), kind);
+            }
+        }
+
         // Denormalize duration onto the entry for feed display (from the FULL asset)
         if (kind == MediaKind.FULL && request.durationSec() != null && request.durationSec() > 0) {
             entry.setDurationSec(request.durationSec());
@@ -411,8 +432,32 @@ public class EntryUploadService {
             entry.setContentLanguage(request.contentLanguage());
         }
 
+        if (request.resourceContent() != null) {
+            entry.setResourceContent(request.resourceContent());
+        }
+
+        // ── Auto-moderation: any edit on a non-DRAFT entry triggers re-review ──
+        boolean requiresReReview = entry.getStatus() != EntryStatus.DRAFT
+                && entry.getStatus() != EntryStatus.IN_REVIEW
+                && entry.getStatus() != EntryStatus.ARCHIVED;
+
+        if (requiresReReview) {
+            EntryStatus previousStatus = entry.getStatus();
+            entry.getStatusHistory().add(
+                    new org.earnlumens.mediastore.domain.media.model.StatusChangeRecord(
+                            previousStatus, EntryStatus.IN_REVIEW, null, "metadata edited"));
+            entry.setStatus(EntryStatus.IN_REVIEW);
+            logger.info("updateEntryMetadata: auto-transition {} → IN_REVIEW for entry={}",
+                    previousStatus, entryId);
+        }
+
         entry.setUpdatedAt(java.time.LocalDateTime.now());
         entryRepository.save(entry);
+
+        // Create moderation job after save so the job sees the updated content
+        if (requiresReReview) {
+            createModerationJob(tenantId, entry);
+        }
 
         logger.info("updateEntryMetadata: entryId={}, title={}", entryId, entry.getTitle());
         return true;
@@ -737,7 +782,8 @@ public class EntryUploadService {
                     fmtDate.apply("publishedAt"),
                     transcodingMap.get(id),
                     doc.getString("sellerWallet"),
-                    doc.getString("moderationFeedback")
+                    doc.getString("moderationFeedback"),
+                    doc.getString("resourceContent")
             );
         }).toList();
 
@@ -828,9 +874,10 @@ public class EntryUploadService {
         return switch (current) {
             case DRAFT -> target == EntryStatus.IN_REVIEW;
             case IN_REVIEW -> target == EntryStatus.APPROVED || target == EntryStatus.REJECTED;
-            case APPROVED -> target == EntryStatus.PUBLISHED;
-            case REJECTED -> target == EntryStatus.DRAFT;
-            case PUBLISHED -> target == EntryStatus.UNLISTED || target == EntryStatus.SUSPENDED;
+            case APPROVED -> target == EntryStatus.PUBLISHED || target == EntryStatus.IN_REVIEW;
+            case REJECTED -> target == EntryStatus.DRAFT || target == EntryStatus.IN_REVIEW;
+            case PUBLISHED -> target == EntryStatus.UNLISTED || target == EntryStatus.SUSPENDED
+                    || target == EntryStatus.IN_REVIEW;
             case UNLISTED -> target == EntryStatus.PUBLISHED || target == EntryStatus.SUSPENDED;
             case SUSPENDED -> target == EntryStatus.PUBLISHED || target == EntryStatus.DRAFT;
             case ARCHIVED -> target == EntryStatus.DRAFT;

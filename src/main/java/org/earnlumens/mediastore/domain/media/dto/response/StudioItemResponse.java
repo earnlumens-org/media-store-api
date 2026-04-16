@@ -33,5 +33,7 @@ public record StudioItemResponse(
         String transcodingStatus,
         String sellerWallet,
         /** Human-readable moderation feedback (rejection/suspension reason). Null if none. */
-        String moderationFeedback
+        String moderationFeedback,
+        /** Resource-type body text. Null for non-resource entries. */
+        String resourceContent
 ) {}

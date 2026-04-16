@@ -128,7 +128,8 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
                 "isPaid": 1, "priceXlm": 1, "priceUsd": 1, "priceCurrency": 1,
                 "contentLanguage": 1, "durationSec": 1, "viewCount": 1,
                 "itemCount": 1, "createdAt": 1, "updatedAt": 1, "publishedAt": 1,
-                "sellerWallet": 1, "sortDate": 1, "moderationFeedback": 1
+                "sellerWallet": 1, "sortDate": 1, "moderationFeedback": 1,
+                "resourceContent": 1
             }}
             """));
 
