@@ -54,7 +54,6 @@ public class ModerationJobEntity {
     private List<String> categoriesDetected;
     private String decisionReason;
     private String decidingStep;
-    private String fingerprintHash;
 
     private int retryCount;
     private int maxRetries;
@@ -117,9 +116,6 @@ public class ModerationJobEntity {
 
     public String getDecidingStep() { return decidingStep; }
     public void setDecidingStep(String decidingStep) { this.decidingStep = decidingStep; }
-
-    public String getFingerprintHash() { return fingerprintHash; }
-    public void setFingerprintHash(String fingerprintHash) { this.fingerprintHash = fingerprintHash; }
 
     public int getRetryCount() { return retryCount; }
     public void setRetryCount(int retryCount) { this.retryCount = retryCount; }

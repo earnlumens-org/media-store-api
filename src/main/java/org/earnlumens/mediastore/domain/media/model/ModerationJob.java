@@ -11,8 +11,6 @@ import java.util.List;
  *
  * <p>Pipeline order (varies by entry type):
  * <ol>
- *   <li>Fingerprint — pHash/SHA-256 duplicate detection</li>
- *   <li>NudeNet — NSFW visual detection (VIDEO, IMAGE)</li>
  *   <li>ACRCloud — audio copyright detection (VIDEO, AUDIO)</li>
  *   <li>Gemini Flash — business rules + text analysis (ALL types)</li>
  * </ol>
@@ -53,9 +51,6 @@ public class ModerationJob {
 
     /** Which pipeline step produced the final decision. */
     private String decidingStep;
-
-    /** Content fingerprint hash (pHash or SHA-256). */
-    private String fingerprintHash;
 
     /** Number of times this job has been retried after failure. */
     private int retryCount;
@@ -129,9 +124,6 @@ public class ModerationJob {
 
     public String getDecidingStep() { return decidingStep; }
     public void setDecidingStep(String decidingStep) { this.decidingStep = decidingStep; }
-
-    public String getFingerprintHash() { return fingerprintHash; }
-    public void setFingerprintHash(String fingerprintHash) { this.fingerprintHash = fingerprintHash; }
 
     public int getRetryCount() { return retryCount; }
     public void setRetryCount(int retryCount) { this.retryCount = retryCount; }
