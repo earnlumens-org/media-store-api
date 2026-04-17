@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
  * Periodic watchdog that detects stale moderation jobs (crashed workers)
  * and triggers retry or dead-letter via {@link ModerationJobService}.
  *
- * <p>Runs on a fixed delay (default 30 s, configurable via
+ * <p>Runs on a fixed delay (default 15 s, configurable via
  * {@code mediastore.moderation.watchdog-interval-ms}).
  */
 @Component
@@ -24,8 +24,8 @@ public class ModerationJobWatchdog {
         this.jobService = jobService;
     }
 
-    @Scheduled(fixedDelayString = "${mediastore.moderation.watchdog-interval-ms:30000}",
-               initialDelayString = "${mediastore.moderation.watchdog-interval-ms:30000}")
+    @Scheduled(fixedDelayString = "${mediastore.moderation.watchdog-interval-ms:15000}",
+               initialDelayString = "${mediastore.moderation.watchdog-interval-ms:15000}")
     public void run() {
         TenantContext.runWithoutTenant(() -> {
             try {

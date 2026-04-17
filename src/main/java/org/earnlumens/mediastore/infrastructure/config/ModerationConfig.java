@@ -8,12 +8,13 @@ import org.springframework.context.annotation.Configuration;
  * <p>
  * Read from application properties:
  * <pre>
- *   mediastore.moderation.max-retries=2
- *   mediastore.moderation.heartbeat-timeout-seconds=120
- *   mediastore.moderation.watchdog-interval-ms=30000
- *   mediastore.moderation.dispatch-batch-size=5
- *   mediastore.moderation.dispatch-interval-ms=15000
- *   mediastore.moderation.stale-batch-size=10
+ *   mediastore.moderation.max-retries=3
+ *   mediastore.moderation.heartbeat-timeout-seconds=90
+ *   mediastore.moderation.watchdog-interval-ms=15000
+ *   mediastore.moderation.dispatch-batch-size=20
+ *   mediastore.moderation.dispatch-interval-ms=5000
+ *   mediastore.moderation.dispatch-threads=4
+ *   mediastore.moderation.stale-batch-size=20
  *   mediastore.moderation.cloud-run-project-id=...
  *   mediastore.moderation.cloud-run-region=europe-west1
  *   mediastore.moderation.cloud-run-job-name=moderate-content
@@ -24,12 +25,13 @@ import org.springframework.context.annotation.Configuration;
 @ConfigurationProperties(prefix = "mediastore.moderation")
 public class ModerationConfig {
 
-    private int maxRetries = 2;
-    private int heartbeatTimeoutSeconds = 120;
-    private long watchdogIntervalMs = 30_000;
-    private int dispatchBatchSize = 5;
-    private long dispatchIntervalMs = 15_000;
-    private int staleBatchSize = 10;
+    private int maxRetries = 3;
+    private int heartbeatTimeoutSeconds = 90;
+    private long watchdogIntervalMs = 15_000;
+    private int dispatchBatchSize = 20;
+    private long dispatchIntervalMs = 5_000;
+    private int dispatchThreads = 4;
+    private int staleBatchSize = 20;
     private String cloudRunProjectId = "";
     private String cloudRunRegion = "europe-west1";
     private String cloudRunJobName = "";
@@ -49,6 +51,9 @@ public class ModerationConfig {
 
     public long getDispatchIntervalMs() { return dispatchIntervalMs; }
     public void setDispatchIntervalMs(long dispatchIntervalMs) { this.dispatchIntervalMs = dispatchIntervalMs; }
+
+    public int getDispatchThreads() { return dispatchThreads; }
+    public void setDispatchThreads(int dispatchThreads) { this.dispatchThreads = dispatchThreads; }
 
     public int getStaleBatchSize() { return staleBatchSize; }
     public void setStaleBatchSize(int staleBatchSize) { this.staleBatchSize = staleBatchSize; }

@@ -2,22 +2,25 @@ package org.earnlumens.mediastore.application.media;
 
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
+import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.model.ModerationDecision;
 import org.earnlumens.mediastore.domain.media.model.ModerationJob;
 import org.earnlumens.mediastore.domain.media.model.ModerationJobStatus;
-import org.earnlumens.mediastore.domain.media.model.TranscodingJob;
-import org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus;
 import org.earnlumens.mediastore.domain.media.port.ModerationDispatchPort;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.ModerationJobRepository;
 import org.earnlumens.mediastore.infrastructure.config.ModerationConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Application service for managing content moderation job lifecycle.
@@ -36,17 +39,20 @@ public class ModerationJobService {
     private final ModerationConfig config;
     private final ModerationDispatchPort dispatchPort;
     private final TranscodingJobService transcodingJobService;
+    private final Executor dispatchExecutor;
 
     public ModerationJobService(ModerationJobRepository jobRepository,
                                  EntryRepository entryRepository,
                                  ModerationConfig config,
                                  ModerationDispatchPort dispatchPort,
-                                 TranscodingJobService transcodingJobService) {
+                                 TranscodingJobService transcodingJobService,
+                                 @Qualifier("moderationDispatchExecutor") Executor dispatchExecutor) {
         this.jobRepository = jobRepository;
         this.entryRepository = entryRepository;
         this.config = config;
         this.dispatchPort = dispatchPort;
         this.transcodingJobService = transcodingJobService;
+        this.dispatchExecutor = dispatchExecutor;
     }
 
     // ─── Job creation (called by EntryUploadService) ───────────
@@ -68,21 +74,27 @@ public class ModerationJobService {
             return 0;
         }
 
-        int dispatched = 0;
-        for (ModerationJob job : pending) {
-            try {
-                dispatchJob(job);
-                dispatched++;
-            } catch (Exception e) {
-                logger.error("Failed to dispatch moderation job id={}, entry={}: {}",
-                        job.getId(), job.getEntryId(), e.getMessage(), e);
-            }
-        }
+        AtomicInteger dispatched = new AtomicInteger(0);
 
-        if (dispatched > 0) {
-            logger.info("Dispatched {}/{} pending moderation job(s)", dispatched, pending.size());
+        CompletableFuture<?>[] futures = pending.stream()
+                .map(job -> CompletableFuture.runAsync(() -> {
+                    try {
+                        dispatchJob(job);
+                        dispatched.incrementAndGet();
+                    } catch (Exception e) {
+                        logger.error("Failed to dispatch moderation job id={}, entry={}: {}",
+                                job.getId(), job.getEntryId(), e.getMessage(), e);
+                    }
+                }, dispatchExecutor))
+                .toArray(CompletableFuture[]::new);
+
+        CompletableFuture.allOf(futures).join();
+
+        int count = dispatched.get();
+        if (count > 0) {
+            logger.info("Dispatched {}/{} pending moderation job(s)", count, pending.size());
         }
-        return dispatched;
+        return count;
     }
 
     private void dispatchJob(ModerationJob job) {

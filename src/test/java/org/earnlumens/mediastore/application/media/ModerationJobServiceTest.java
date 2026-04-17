@@ -18,6 +18,8 @@ import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -36,6 +38,7 @@ class ModerationJobServiceTest {
     private ModerationConfig config;
     private ModerationDispatchPort dispatchPort;
     private TranscodingJobService transcodingJobService;
+    private Executor dispatchExecutor;
     private ModerationJobService service;
 
     @BeforeEach
@@ -44,12 +47,13 @@ class ModerationJobServiceTest {
         entryRepository = mock(EntryRepository.class);
         dispatchPort = mock(ModerationDispatchPort.class);
         transcodingJobService = mock(TranscodingJobService.class);
+        dispatchExecutor = Executors.newFixedThreadPool(2);
         config = new ModerationConfig();
         config.setMaxRetries(2);
         config.setHeartbeatTimeoutSeconds(120);
         config.setStaleBatchSize(10);
         config.setDispatchBatchSize(5);
-        service = new ModerationJobService(jobRepository, entryRepository, config, dispatchPort, transcodingJobService);
+        service = new ModerationJobService(jobRepository, entryRepository, config, dispatchPort, transcodingJobService, dispatchExecutor);
 
         when(jobRepository.save(any(ModerationJob.class)))
                 .thenAnswer(inv -> inv.getArgument(0));

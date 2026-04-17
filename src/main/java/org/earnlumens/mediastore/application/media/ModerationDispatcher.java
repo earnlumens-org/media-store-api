@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
  * Periodic dispatcher that picks up PENDING moderation jobs and dispatches
  * them to the Cloud Run worker via {@link ModerationJobService}.
  *
- * <p>Runs on a fixed delay (default 15 s, configurable via
+ * <p>Runs on a fixed delay (default 5 s, configurable via
  * {@code mediastore.moderation.dispatch-interval-ms}).
  */
 @Component
@@ -24,8 +24,8 @@ public class ModerationDispatcher {
         this.jobService = jobService;
     }
 
-    @Scheduled(fixedDelayString = "${mediastore.moderation.dispatch-interval-ms:15000}",
-               initialDelayString = "${mediastore.moderation.dispatch-interval-ms:15000}")
+    @Scheduled(fixedDelayString = "${mediastore.moderation.dispatch-interval-ms:5000}",
+               initialDelayString = "${mediastore.moderation.dispatch-interval-ms:5000}")
     public void run() {
         TenantContext.runWithoutTenant(() -> {
             try {
