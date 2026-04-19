@@ -553,6 +553,8 @@ public class EntryUploadService {
 
         // Find the source R2 key — for VIDEO/AUDIO/IMAGE it's the FULL asset
         String sourceR2Key = null;
+        String sourceContentType = null;
+        String sourceFileName = null;
         var optAsset = assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
                 tenantId, entry.getId(), MediaKind.FULL, AssetStatus.UPLOADED);
         if (optAsset.isEmpty()) {
@@ -561,6 +563,8 @@ public class EntryUploadService {
         }
         if (optAsset.isPresent()) {
             sourceR2Key = optAsset.get().getR2Key();
+            sourceContentType = optAsset.get().getContentType();
+            sourceFileName = optAsset.get().getFileName();
         }
 
         if (sourceR2Key == null && entry.getType() != org.earnlumens.mediastore.domain.media.model.EntryType.RESOURCE) {
@@ -578,10 +582,17 @@ public class EntryUploadService {
         job.setTenantId(tenantId);
         job.setEntryId(entry.getId());
         job.setSourceR2Key(sourceR2Key);
+        job.setSourceContentType(sourceContentType);
+        job.setSourceFileName(sourceFileName);
         job.setThumbnailR2Key(entry.getThumbnailR2Key());
         job.setEntryType(entry.getType());
         job.setEntryTitle(entry.getTitle());
         job.setEntryDescription(entry.getDescription());
+        // Pass resourceContent for RESOURCE entries so Gemini can analyze the full text body
+        if (entry.getType() == org.earnlumens.mediastore.domain.media.model.EntryType.RESOURCE
+                && entry.getResourceContent() != null) {
+            job.setResourceContent(entry.getResourceContent());
+        }
         // Tags are stored differently per entry — pass title + description for now
         job.setStatus(ModerationJobStatus.PENDING);
         job.setRetryCount(0);

@@ -115,6 +115,8 @@ public class ModerationCloudRunDispatchAdapter implements ModerationDispatchPort
         envVars.add(env("TENANT_ID", job.getTenantId()));
         envVars.add(env("ENTRY_TYPE", job.getEntryType().name()));
         envVars.add(env("SOURCE_R2_KEY", job.getSourceR2Key()));
+        if (job.getSourceContentType() != null) envVars.add(env("SOURCE_CONTENT_TYPE", job.getSourceContentType()));
+        if (job.getSourceFileName() != null) envVars.add(env("SOURCE_FILE_NAME", job.getSourceFileName()));
         envVars.add(env("CALLBACK_URL", callbackUrl));
         envVars.add(env("HEARTBEAT_URL", heartbeatUrl));
         envVars.add(env("MODERATION_SECRET", moderationSecret));
@@ -130,6 +132,7 @@ public class ModerationCloudRunDispatchAdapter implements ModerationDispatchPort
         if (job.getEntryDescription() != null) envVars.add(env("ENTRY_DESCRIPTION", job.getEntryDescription()));
         if (job.getEntryTags() != null) envVars.add(env("ENTRY_TAGS", job.getEntryTags()));
         if (job.getThumbnailR2Key() != null) envVars.add(env("THUMBNAIL_R2_KEY", job.getThumbnailR2Key()));
+        if (job.getResourceContent() != null) envVars.add(env("RESOURCE_CONTENT", job.getResourceContent()));
 
         // ACRCloud credentials
         if (isNotBlank(acrcloudHost)) envVars.add(env("ACRCLOUD_HOST", acrcloudHost));

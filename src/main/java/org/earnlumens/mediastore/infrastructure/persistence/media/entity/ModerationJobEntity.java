@@ -37,6 +37,10 @@ public class ModerationJobEntity {
     @NotBlank
     private String sourceR2Key;
 
+    private String sourceContentType;
+
+    private String sourceFileName;
+
     private String thumbnailR2Key;
 
     @NotBlank
@@ -45,6 +49,8 @@ public class ModerationJobEntity {
     private String entryTitle;
     private String entryDescription;
     private String entryTags;
+
+    private String resourceContent;
 
     @NotBlank
     private String status;
@@ -84,6 +90,12 @@ public class ModerationJobEntity {
     public String getSourceR2Key() { return sourceR2Key; }
     public void setSourceR2Key(String sourceR2Key) { this.sourceR2Key = sourceR2Key; }
 
+    public String getSourceContentType() { return sourceContentType; }
+    public void setSourceContentType(String sourceContentType) { this.sourceContentType = sourceContentType; }
+
+    public String getSourceFileName() { return sourceFileName; }
+    public void setSourceFileName(String sourceFileName) { this.sourceFileName = sourceFileName; }
+
     public String getThumbnailR2Key() { return thumbnailR2Key; }
     public void setThumbnailR2Key(String thumbnailR2Key) { this.thumbnailR2Key = thumbnailR2Key; }
 
@@ -98,6 +110,9 @@ public class ModerationJobEntity {
 
     public String getEntryTags() { return entryTags; }
     public void setEntryTags(String entryTags) { this.entryTags = entryTags; }
+
+    public String getResourceContent() { return resourceContent; }
+    public void setResourceContent(String resourceContent) { this.resourceContent = resourceContent; }
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }

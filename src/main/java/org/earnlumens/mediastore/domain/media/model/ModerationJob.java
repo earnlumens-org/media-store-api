@@ -24,6 +24,12 @@ public class ModerationJob {
     /** R2 key of the source file to moderate. */
     private String sourceR2Key;
 
+    /** MIME type of the source file (e.g. "application/pdf", "audio/mpeg"). */
+    private String sourceContentType;
+
+    /** Original file name of the source file. */
+    private String sourceFileName;
+
     /** R2 key of the thumbnail (if present). */
     private String thumbnailR2Key;
 
@@ -34,6 +40,9 @@ public class ModerationJob {
     private String entryTitle;
     private String entryDescription;
     private String entryTags;
+
+    /** Rich text body for RESOURCE entries. Sent to Gemini for content analysis. */
+    private String resourceContent;
 
     private ModerationJobStatus status;
 
@@ -92,6 +101,12 @@ public class ModerationJob {
     public String getSourceR2Key() { return sourceR2Key; }
     public void setSourceR2Key(String sourceR2Key) { this.sourceR2Key = sourceR2Key; }
 
+    public String getSourceContentType() { return sourceContentType; }
+    public void setSourceContentType(String sourceContentType) { this.sourceContentType = sourceContentType; }
+
+    public String getSourceFileName() { return sourceFileName; }
+    public void setSourceFileName(String sourceFileName) { this.sourceFileName = sourceFileName; }
+
     public String getThumbnailR2Key() { return thumbnailR2Key; }
     public void setThumbnailR2Key(String thumbnailR2Key) { this.thumbnailR2Key = thumbnailR2Key; }
 
@@ -106,6 +121,9 @@ public class ModerationJob {
 
     public String getEntryTags() { return entryTags; }
     public void setEntryTags(String entryTags) { this.entryTags = entryTags; }
+
+    public String getResourceContent() { return resourceContent; }
+    public void setResourceContent(String resourceContent) { this.resourceContent = resourceContent; }
 
     public ModerationJobStatus getStatus() { return status; }
     public void setStatus(ModerationJobStatus status) { this.status = status; }
