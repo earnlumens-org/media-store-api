@@ -243,10 +243,11 @@ class EntryUploadServiceTest {
 
         assertTrue(result.isPresent());
         assertEquals("asset-001", result.get().assetId());
-        // VIDEO FULL assets start as UPLOADED (pending transcoding)
+        // VIDEO FULL assets start as UPLOADED (pending transcoding after moderation)
         assertEquals("UPLOADED", result.get().status());
         verify(assetRepository).save(any(Asset.class));
-        verify(transcodingJobService).createJob(any(TranscodingJob.class));
+        // Transcoding is deferred until moderation approval
+        verify(transcodingJobService, never()).createJob(any(TranscodingJob.class));
     }
 
     @Test
@@ -467,7 +468,7 @@ class EntryUploadServiceTest {
     // ─── finalizeUpload: transcoding ───────────────────────────
 
     @Test
-    void finalizeUpload_videoFull_createsTranscodingJob() {
+    void finalizeUpload_videoFull_defersTranscoding() {
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
                 .thenReturn(Optional.of(draftEntry()));
         when(assetRepository.save(any(Asset.class))).thenAnswer(invocation -> {
@@ -487,17 +488,8 @@ class EntryUploadServiceTest {
         assertTrue(result.isPresent());
         assertEquals("UPLOADED", result.get().status());
 
-        // Verify transcoding job was created with correct fields
-        verify(transcodingJobService).createJob(argThat(job -> {
-            assertEquals(TENANT, job.getTenantId());
-            assertEquals(ENTRY_ID, job.getEntryId());
-            assertEquals("asset-v1", job.getAssetId());
-            assertEquals("private/media/entry-abc/full/uuid-video.mp4", job.getSourceR2Key());
-            assertEquals(org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus.PENDING, job.getStatus());
-            assertEquals(0, job.getRetryCount());
-            assertEquals(3, job.getMaxRetries());
-            return true;
-        }));
+        // Transcoding is deferred until after moderation approval
+        verify(transcodingJobService, never()).createJob(any());
     }
 
     @Test

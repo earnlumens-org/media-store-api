@@ -33,6 +33,9 @@ public class ModerationJob {
     /** R2 key of the thumbnail (if present). */
     private String thumbnailR2Key;
 
+    /** R2 key of the preview (if present). */
+    private String previewR2Key;
+
     /** Entry type determines which pipeline steps run. */
     private EntryType entryType;
 
@@ -109,6 +112,9 @@ public class ModerationJob {
 
     public String getThumbnailR2Key() { return thumbnailR2Key; }
     public void setThumbnailR2Key(String thumbnailR2Key) { this.thumbnailR2Key = thumbnailR2Key; }
+
+    public String getPreviewR2Key() { return previewR2Key; }
+    public void setPreviewR2Key(String previewR2Key) { this.previewR2Key = previewR2Key; }
 
     public EntryType getEntryType() { return entryType; }
     public void setEntryType(EntryType entryType) { this.entryType = entryType; }

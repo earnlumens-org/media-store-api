@@ -31,6 +31,7 @@ public class Collection {
     private List<CollectionItem> items = new ArrayList<>();
     /** ISO 639-1 language code of the content (e.g. "es", "en"). Nullable for legacy collections. */
     private String contentLanguage;
+    private String moderationFeedback;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private LocalDateTime publishedAt;
@@ -82,6 +83,8 @@ public class Collection {
     }
     public String getContentLanguage() { return contentLanguage; }
     public void setContentLanguage(String contentLanguage) { this.contentLanguage = contentLanguage; }
+    public String getModerationFeedback() { return moderationFeedback; }
+    public void setModerationFeedback(String moderationFeedback) { this.moderationFeedback = moderationFeedback; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }

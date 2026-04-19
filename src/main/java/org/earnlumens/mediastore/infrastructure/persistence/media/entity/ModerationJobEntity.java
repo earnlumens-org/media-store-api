@@ -43,6 +43,8 @@ public class ModerationJobEntity {
 
     private String thumbnailR2Key;
 
+    private String previewR2Key;
+
     @NotBlank
     private String entryType;
 
@@ -98,6 +100,9 @@ public class ModerationJobEntity {
 
     public String getThumbnailR2Key() { return thumbnailR2Key; }
     public void setThumbnailR2Key(String thumbnailR2Key) { this.thumbnailR2Key = thumbnailR2Key; }
+
+    public String getPreviewR2Key() { return previewR2Key; }
+    public void setPreviewR2Key(String previewR2Key) { this.previewR2Key = previewR2Key; }
 
     public String getEntryType() { return entryType; }
     public void setEntryType(String entryType) { this.entryType = entryType; }

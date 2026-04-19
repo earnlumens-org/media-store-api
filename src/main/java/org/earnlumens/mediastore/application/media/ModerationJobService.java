@@ -1,12 +1,21 @@
 package org.earnlumens.mediastore.application.media;
 
+import org.earnlumens.mediastore.domain.media.model.Asset;
+import org.earnlumens.mediastore.domain.media.model.AssetStatus;
+import org.earnlumens.mediastore.domain.media.model.Collection;
+import org.earnlumens.mediastore.domain.media.model.CollectionStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
+import org.earnlumens.mediastore.domain.media.model.MediaKind;
 import org.earnlumens.mediastore.domain.media.model.ModerationDecision;
 import org.earnlumens.mediastore.domain.media.model.ModerationJob;
 import org.earnlumens.mediastore.domain.media.model.ModerationJobStatus;
+import org.earnlumens.mediastore.domain.media.model.TranscodingJob;
+import org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus;
 import org.earnlumens.mediastore.domain.media.port.ModerationDispatchPort;
+import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
+import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.ModerationJobRepository;
 import org.earnlumens.mediastore.infrastructure.config.ModerationConfig;
@@ -36,6 +45,8 @@ public class ModerationJobService {
 
     private final ModerationJobRepository jobRepository;
     private final EntryRepository entryRepository;
+    private final CollectionRepository collectionRepository;
+    private final AssetRepository assetRepository;
     private final ModerationConfig config;
     private final ModerationDispatchPort dispatchPort;
     private final TranscodingJobService transcodingJobService;
@@ -43,12 +54,16 @@ public class ModerationJobService {
 
     public ModerationJobService(ModerationJobRepository jobRepository,
                                  EntryRepository entryRepository,
+                                 CollectionRepository collectionRepository,
+                                 AssetRepository assetRepository,
                                  ModerationConfig config,
                                  ModerationDispatchPort dispatchPort,
                                  TranscodingJobService transcodingJobService,
                                  @Qualifier("moderationDispatchExecutor") Executor dispatchExecutor) {
         this.jobRepository = jobRepository;
         this.entryRepository = entryRepository;
+        this.collectionRepository = collectionRepository;
+        this.assetRepository = assetRepository;
         this.config = config;
         this.dispatchPort = dispatchPort;
         this.transcodingJobService = transcodingJobService;
@@ -288,21 +303,33 @@ public class ModerationJobService {
      * On approval: transition entry to APPROVED and create a TranscodingJob for videos.
      */
     private void handleApproval(ModerationJob job) {
+        if (job.getEntryType() == EntryType.COLLECTION) {
+            handleCollectionApproval(job);
+            return;
+        }
         entryRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId())
                 .ifPresent(entry -> {
                     EntryStatus previous = entry.getStatus();
                     entry.setStatus(EntryStatus.APPROVED);
-                    // Record audit trail — actor is generic to hide bot vs human
                     entry.getStatusHistory().add(
                             new org.earnlumens.mediastore.domain.media.model.StatusChangeRecord(
                                     previous, EntryStatus.APPROVED, "EarnLumens", job.getDecisionReason()));
                     entryRepository.save(entry);
                     logger.info("moderation: entry {} approved → status=APPROVED", entry.getId());
 
-                    // For VIDEO entries, create a transcoding job so the HLS pipeline picks it up
                     if (entry.getType() == org.earnlumens.mediastore.domain.media.model.EntryType.VIDEO) {
                         createTranscodingJobForEntry(job.getTenantId(), entry);
                     }
+                });
+    }
+
+    private void handleCollectionApproval(ModerationJob job) {
+        collectionRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId())
+                .ifPresent(collection -> {
+                    collection.setStatus(CollectionStatus.PUBLISHED);
+                    collection.setPublishedAt(java.time.LocalDateTime.now());
+                    collectionRepository.save(collection);
+                    logger.info("moderation: collection {} approved → status=PUBLISHED", collection.getId());
                 });
     }
 
@@ -318,27 +345,55 @@ public class ModerationJobService {
             return;
         }
 
-        // The FULL asset's r2Key is the source for transcoding — same as in EntryUploadService
-        // We reuse the sourceR2Key from the moderation job
-        // (the moderation job was created with the FULL asset's R2 key)
-        logger.info("moderation: VIDEO entry {} approved — TranscodingJob will be created when " +
-                "publish flow runs (existing EntryUploadService handles this)", entry.getId());
+        // Look up the FULL asset (still UPLOADED because transcoding was deferred)
+        var optAsset = assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
+                tenantId, entry.getId(), MediaKind.FULL, AssetStatus.UPLOADED);
+        if (optAsset.isEmpty()) {
+            logger.warn("moderation: no UPLOADED FULL asset found for VIDEO entry={}", entry.getId());
+            return;
+        }
+
+        Asset asset = optAsset.get();
+        TranscodingJob job = new TranscodingJob();
+        job.setTenantId(tenantId);
+        job.setEntryId(entry.getId());
+        job.setAssetId(asset.getId());
+        job.setSourceR2Key(asset.getR2Key());
+        job.setStatus(TranscodingJobStatus.PENDING);
+        job.setRetryCount(0);
+        job.setMaxRetries(transcodingJobService.getMaxRetries());
+        transcodingJobService.createJob(job);
+        logger.info("moderation: created TranscodingJob for approved VIDEO entry={}, asset={}",
+                entry.getId(), asset.getId());
     }
 
     private void handleRejection(ModerationJob job) {
+        if (job.getEntryType() == EntryType.COLLECTION) {
+            handleCollectionRejection(job);
+            return;
+        }
         entryRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId())
                 .ifPresent(entry -> {
                     EntryStatus previous = entry.getStatus();
                     entry.setStatus(EntryStatus.REJECTED);
-                    // Propagate rejection reason so the creator sees feedback
                     entry.setModerationFeedback(job.getDecisionReason());
-                    // Record audit trail — actor is generic to hide bot vs human
                     entry.getStatusHistory().add(
                             new org.earnlumens.mediastore.domain.media.model.StatusChangeRecord(
                                     previous, EntryStatus.REJECTED, "EarnLumens", job.getDecisionReason()));
                     entryRepository.save(entry);
                     logger.info("moderation: entry {} rejected — status=REJECTED, reason={}",
                             entry.getId(), job.getDecisionReason());
+                });
+    }
+
+    private void handleCollectionRejection(ModerationJob job) {
+        collectionRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId())
+                .ifPresent(collection -> {
+                    collection.setStatus(CollectionStatus.REJECTED);
+                    collection.setModerationFeedback(job.getDecisionReason());
+                    collectionRepository.save(collection);
+                    logger.info("moderation: collection {} rejected — status=REJECTED, reason={}",
+                            collection.getId(), job.getDecisionReason());
                 });
     }
 

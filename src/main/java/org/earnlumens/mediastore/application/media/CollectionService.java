@@ -12,7 +12,10 @@ import org.earnlumens.mediastore.domain.media.model.CollectionType;
 import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
+import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
+import org.earnlumens.mediastore.domain.media.model.ModerationJob;
+import org.earnlumens.mediastore.domain.media.model.ModerationJobStatus;
 import org.earnlumens.mediastore.domain.media.model.PriceCurrency;
 import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
 import org.earnlumens.mediastore.domain.media.model.SplitRole;
@@ -51,19 +54,22 @@ public class CollectionService {
     private final UserRepository userRepository;
     private final R2PresignedUrlService r2PresignedUrlService;
     private final UserBadgeService userBadgeService;
+    private final ModerationJobService moderationJobService;
 
     public CollectionService(CollectionRepository collectionRepository,
                              EntryRepository entryRepository,
                              EntitlementRepository entitlementRepository,
                              UserRepository userRepository,
                              R2PresignedUrlService r2PresignedUrlService,
-                             UserBadgeService userBadgeService) {
+                             UserBadgeService userBadgeService,
+                             ModerationJobService moderationJobService) {
         this.collectionRepository = collectionRepository;
         this.entryRepository = entryRepository;
         this.entitlementRepository = entitlementRepository;
         this.userRepository = userRepository;
         this.r2PresignedUrlService = r2PresignedUrlService;
         this.userBadgeService = userBadgeService;
+        this.moderationJobService = moderationJobService;
     }
 
     // ── CRUD ──
@@ -155,8 +161,9 @@ public class CollectionService {
 
         Collection collection = opt.get();
         if (collection.getStatus() != CollectionStatus.DRAFT
-                && collection.getStatus() != CollectionStatus.ARCHIVED) {
-            throw new IllegalArgumentException("Only DRAFT or ARCHIVED collections can be published");
+                && collection.getStatus() != CollectionStatus.ARCHIVED
+                && collection.getStatus() != CollectionStatus.REJECTED) {
+            throw new IllegalArgumentException("Only DRAFT, ARCHIVED or REJECTED collections can be published");
         }
 
         if (collection.isPaid() && (collection.getSellerWallet() == null || collection.getSellerWallet().isBlank())) {
@@ -177,16 +184,44 @@ public class CollectionService {
             }
         }
 
-        collection.setStatus(CollectionStatus.PUBLISHED);
-        collection.setPublishedAt(LocalDateTime.now());
-
         // Stamp the author's active badge on the collection
         userBadgeService.getActiveBadgeKey(tenantId, collection.getUserId())
                 .ifPresent(collection::setAuthorBadge);
 
+        // Send to moderation instead of publishing directly
+        collection.setStatus(CollectionStatus.IN_REVIEW);
+        collection.setModerationFeedback(null);
         collectionRepository.save(collection);
-        logger.info("Published collection id={}", collectionId);
+
+        createCollectionModerationJob(tenantId, collection);
+
+        logger.info("Collection id={} submitted for moderation (IN_REVIEW)", collectionId);
         return true;
+    }
+
+    private void createCollectionModerationJob(String tenantId, Collection collection) {
+        // Skip if there's already an active moderation job for this collection
+        if (moderationJobService.findActiveByTenantIdAndEntryId(tenantId, collection.getId()).isPresent()) {
+            logger.debug("createCollectionModerationJob: skipping — active job exists for collection={}",
+                    collection.getId());
+            return;
+        }
+
+        ModerationJob job = new ModerationJob();
+        job.setTenantId(tenantId);
+        job.setEntryId(collection.getId());
+        job.setSourceR2Key("");
+        job.setThumbnailR2Key(collection.getCoverR2Key());
+        job.setEntryType(EntryType.COLLECTION);
+        job.setEntryTitle(collection.getTitle());
+        job.setEntryDescription(collection.getDescription());
+        job.setStatus(ModerationJobStatus.PENDING);
+        job.setRetryCount(0);
+        job.setMaxRetries(moderationJobService.getMaxRetries());
+        moderationJobService.createJob(job);
+
+        logger.info("createCollectionModerationJob: created moderation job for collection={}",
+                collection.getId());
     }
 
     public boolean archiveCollection(String tenantId, String userId, String collectionId) {
@@ -226,8 +261,9 @@ public class CollectionService {
         }
 
         Collection collection = opt.get();
-        if (collection.getStatus() != CollectionStatus.DRAFT) {
-            throw new IllegalArgumentException("Only DRAFT collections can be deleted");
+        if (collection.getStatus() != CollectionStatus.DRAFT
+                && collection.getStatus() != CollectionStatus.REJECTED) {
+            throw new IllegalArgumentException("Only DRAFT or REJECTED collections can be deleted");
         }
 
         collectionRepository.deleteByTenantIdAndId(tenantId, collectionId);

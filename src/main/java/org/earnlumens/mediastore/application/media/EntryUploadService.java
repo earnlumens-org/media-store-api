@@ -25,8 +25,6 @@ import org.earnlumens.mediastore.domain.media.model.PriceCurrency;
 import org.earnlumens.mediastore.domain.media.model.SplitRole;
 import org.earnlumens.mediastore.domain.media.model.ModerationJob;
 import org.earnlumens.mediastore.domain.media.model.ModerationJobStatus;
-import org.earnlumens.mediastore.domain.media.model.TranscodingJob;
-import org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
@@ -303,20 +301,8 @@ public class EntryUploadService {
 
         Asset saved = assetRepository.save(asset);
 
-        // Create a transcoding job for videos so the pipeline picks it up
-        if (needsTranscoding) {
-            TranscodingJob job = new TranscodingJob();
-            job.setTenantId(tenantId);
-            job.setEntryId(request.entryId());
-            job.setAssetId(saved.getId());
-            job.setSourceR2Key(request.r2Key());
-            job.setStatus(TranscodingJobStatus.PENDING);
-            job.setRetryCount(0);
-            job.setMaxRetries(transcodingJobService.getMaxRetries());
-            transcodingJobService.createJob(job);
-            logger.info("finalizeUpload: created transcoding job for video asset={}, entry={}",
-                    saved.getId(), request.entryId());
-        }
+        // NOTE: Transcoding for VIDEO assets is deferred until AFTER moderation approval.
+        // ModerationJobService.createTranscodingJobForEntry() handles this.
 
         // If a THUMBNAIL was finalized, denormalize its R2 key onto the entry for fast reads
         if (kind == MediaKind.THUMBNAIL) {
@@ -585,15 +571,19 @@ public class EntryUploadService {
         job.setSourceContentType(sourceContentType);
         job.setSourceFileName(sourceFileName);
         job.setThumbnailR2Key(entry.getThumbnailR2Key());
+        job.setPreviewR2Key(entry.getPreviewR2Key());
         job.setEntryType(entry.getType());
         job.setEntryTitle(entry.getTitle());
         job.setEntryDescription(entry.getDescription());
+        // Join tags list into comma-separated string for the worker
+        if (entry.getTags() != null && !entry.getTags().isEmpty()) {
+            job.setEntryTags(String.join(", ", entry.getTags()));
+        }
         // Pass resourceContent for RESOURCE entries so Gemini can analyze the full text body
         if (entry.getType() == org.earnlumens.mediastore.domain.media.model.EntryType.RESOURCE
                 && entry.getResourceContent() != null) {
             job.setResourceContent(entry.getResourceContent());
         }
-        // Tags are stored differently per entry — pass title + description for now
         job.setStatus(ModerationJobStatus.PENDING);
         job.setRetryCount(0);
         job.setMaxRetries(moderationJobService.getMaxRetries());

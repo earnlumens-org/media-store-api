@@ -1,12 +1,18 @@
 package org.earnlumens.mediastore.application.media;
 
+import org.earnlumens.mediastore.domain.media.model.Asset;
+import org.earnlumens.mediastore.domain.media.model.AssetStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
+import org.earnlumens.mediastore.domain.media.model.MediaKind;
 import org.earnlumens.mediastore.domain.media.model.ModerationDecision;
 import org.earnlumens.mediastore.domain.media.model.ModerationJob;
 import org.earnlumens.mediastore.domain.media.model.ModerationJobStatus;
+import org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus;
 import org.earnlumens.mediastore.domain.media.port.ModerationDispatchPort;
+import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
+import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.ModerationJobRepository;
 import org.earnlumens.mediastore.infrastructure.config.ModerationConfig;
@@ -24,6 +30,8 @@ import java.util.concurrent.Executors;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.*;
 
 /**
@@ -35,6 +43,8 @@ class ModerationJobServiceTest {
 
     private ModerationJobRepository jobRepository;
     private EntryRepository entryRepository;
+    private CollectionRepository collectionRepository;
+    private AssetRepository assetRepository;
     private ModerationConfig config;
     private ModerationDispatchPort dispatchPort;
     private TranscodingJobService transcodingJobService;
@@ -45,6 +55,8 @@ class ModerationJobServiceTest {
     void setUp() {
         jobRepository = mock(ModerationJobRepository.class);
         entryRepository = mock(EntryRepository.class);
+        collectionRepository = mock(CollectionRepository.class);
+        assetRepository = mock(AssetRepository.class);
         dispatchPort = mock(ModerationDispatchPort.class);
         transcodingJobService = mock(TranscodingJobService.class);
         dispatchExecutor = Executors.newFixedThreadPool(2);
@@ -53,7 +65,7 @@ class ModerationJobServiceTest {
         config.setHeartbeatTimeoutSeconds(120);
         config.setStaleBatchSize(10);
         config.setDispatchBatchSize(5);
-        service = new ModerationJobService(jobRepository, entryRepository, config, dispatchPort, transcodingJobService, dispatchExecutor);
+        service = new ModerationJobService(jobRepository, entryRepository, collectionRepository, assetRepository, config, dispatchPort, transcodingJobService, dispatchExecutor);
 
         when(jobRepository.save(any(ModerationJob.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
@@ -286,14 +298,22 @@ class ModerationJobServiceTest {
         }
 
         @Test
-        void approve_video_logsTranscodingNote() {
+        void approve_video_createsTranscodingJob() {
             ModerationJob job = staleJob(ModerationJobStatus.PROCESSING, 0, 2);
             Entry entry = testEntry(EntryType.VIDEO);
+            Asset fullAsset = new Asset();
+            fullAsset.setId("asset-full-1");
+            fullAsset.setR2Key("private/media/entry-1/full/video.mp4");
+
             when(jobRepository.findByTenantIdAndId(TENANT, "mod-1")).thenReturn(Optional.of(job));
             when(entryRepository.findByTenantIdAndId(TENANT, "entry-1")).thenReturn(Optional.of(entry));
             when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
-            when(transcodingJobService.findLatestByTenantIdAndEntryId(anyString(), anyString()))
+            when(transcodingJobService.findLatestByTenantIdAndEntryId(TENANT, "entry-1"))
                     .thenReturn(Optional.empty());
+            when(assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
+                    TENANT, "entry-1", MediaKind.FULL, AssetStatus.UPLOADED))
+                    .thenReturn(Optional.of(fullAsset));
+            when(transcodingJobService.getMaxRetries()).thenReturn(2);
 
             Optional<ModerationJob> result = service.completeJob(
                     TENANT, "mod-1", "APPROVE", 0.92,
@@ -301,6 +321,10 @@ class ModerationJobServiceTest {
 
             assertTrue(result.isPresent());
             assertEquals(EntryStatus.APPROVED, entry.getStatus());
+            verify(transcodingJobService).createJob(argThat(tj ->
+                    tj.getAssetId().equals("asset-full-1")
+                    && tj.getSourceR2Key().equals("private/media/entry-1/full/video.mp4")
+                    && tj.getStatus() == TranscodingJobStatus.PENDING));
         }
     }
 

@@ -71,6 +71,8 @@ public class CollectionEntity {
     /** ISO 639-1 language code of the content (e.g. "es", "en"). */
     private String contentLanguage;
 
+    private String moderationFeedback;
+
     @CreatedDate
     private LocalDateTime createdAt;
 
@@ -140,6 +142,9 @@ public class CollectionEntity {
 
     public String getContentLanguage() { return contentLanguage; }
     public void setContentLanguage(String contentLanguage) { this.contentLanguage = contentLanguage; }
+
+    public String getModerationFeedback() { return moderationFeedback; }
+    public void setModerationFeedback(String moderationFeedback) { this.moderationFeedback = moderationFeedback; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

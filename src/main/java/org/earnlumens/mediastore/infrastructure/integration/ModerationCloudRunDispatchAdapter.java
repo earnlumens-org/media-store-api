@@ -132,6 +132,7 @@ public class ModerationCloudRunDispatchAdapter implements ModerationDispatchPort
         if (job.getEntryDescription() != null) envVars.add(env("ENTRY_DESCRIPTION", job.getEntryDescription()));
         if (job.getEntryTags() != null) envVars.add(env("ENTRY_TAGS", job.getEntryTags()));
         if (job.getThumbnailR2Key() != null) envVars.add(env("THUMBNAIL_R2_KEY", job.getThumbnailR2Key()));
+        if (job.getPreviewR2Key() != null) envVars.add(env("PREVIEW_R2_KEY", job.getPreviewR2Key()));
         if (job.getResourceContent() != null) envVars.add(env("RESOURCE_CONTENT", job.getResourceContent()));
 
         // ACRCloud credentials

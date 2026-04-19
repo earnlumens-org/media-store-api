@@ -163,6 +163,7 @@ public class PublicEntryService {
             case AUDIO -> "audio";
             case IMAGE -> "image";
             case RESOURCE -> "resource";
+            case COLLECTION -> "collection";
         };
     }
 
