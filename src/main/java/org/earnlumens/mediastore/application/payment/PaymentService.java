@@ -11,6 +11,8 @@ import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.earnlumens.mediastore.infrastructure.config.StellarConfig;
 import org.earnlumens.mediastore.infrastructure.external.pricing.XlmUsdPriceService;
+import org.earnlumens.mediastore.infrastructure.tenant.read.TenantConfigService;
+import org.earnlumens.mediastore.infrastructure.tenant.read.TenantReadModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -24,6 +26,7 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Orchestrates the two-phase payment flow:
@@ -52,6 +55,7 @@ public class PaymentService {
     private final StellarConfig stellarConfig;
     private final PlatformConfig platformConfig;
     private final XlmUsdPriceService xlmUsdPriceService;
+    private final TenantConfigService tenantConfigService;
 
     public PaymentService(EntryRepository entryRepository,
                           CollectionRepository collectionRepository,
@@ -60,7 +64,8 @@ public class PaymentService {
                           StellarTransactionService stellarTxService,
                           StellarConfig stellarConfig,
                           PlatformConfig platformConfig,
-                          XlmUsdPriceService xlmUsdPriceService) {
+                          XlmUsdPriceService xlmUsdPriceService,
+                          TenantConfigService tenantConfigService) {
         this.entryRepository = entryRepository;
         this.collectionRepository = collectionRepository;
         this.orderRepository = orderRepository;
@@ -69,6 +74,7 @@ public class PaymentService {
         this.stellarConfig = stellarConfig;
         this.platformConfig = platformConfig;
         this.xlmUsdPriceService = xlmUsdPriceService;
+        this.tenantConfigService = tenantConfigService;
     }
 
     /**
@@ -205,8 +211,8 @@ public class PaymentService {
             }
         }
 
-        // Build the full payment splits (platform + seller/collaborator)
-        List<PaymentSplit> splits = buildFullSplits(targetSplits);
+        // Build the full payment splits (platform + optional tenant + seller/collaborator)
+        List<PaymentSplit> splits = buildFullSplits(tenantId, targetSplits);
 
         // Build the MEMO
         String memo = "TOTAL: " + totalXlm.toPlainString() + " XLM";
@@ -390,27 +396,64 @@ public class PaymentService {
     }
 
     /**
-     * Builds the full payment split list by combining the platform split (from env config)
-     * with the entry's non-platform splits (SELLER, COLLABORATOR).
-     * The platform fee% comes from PLATFORM_FEE_PERCENT and the platform wallet from PLATFORM_WALLET.
-     * Non-platform splits are re-scaled so that all splits (platform + others) sum to 100%.
+     * Builds the full payment split list combining:
+     * <ul>
+     *   <li>PLATFORM — EarnLumens fee. Sourced from the tenant's
+     *       {@code platformFeePercent} when an ACTIVE tenant doc exists,
+     *       otherwise from the global {@link PlatformConfig}.</li>
+     *   <li>TENANT — optional fee for the tenant operator (only when
+     *       {@code tenantFeePercent > 0} and {@code tenantWallet} is set).</li>
+     *   <li>SELLER / COLLABORATOR — the entry's own splits, re-scaled so all
+     *       percentages (platform + tenant + entry) sum to 100%.</li>
+     * </ul>
+     * If the tenant doc is missing or BLOCKED we fall back to a two-way split
+     * (PLATFORM + entry) using the global config so purchases keep working.
      */
-    private List<PaymentSplit> buildFullSplits(List<PaymentSplit> entrySplits) {
+    private List<PaymentSplit> buildFullSplits(String tenantId, List<PaymentSplit> entrySplits) {
         BigDecimal platformPercent = platformConfig.getFeePercent();
-        BigDecimal nonPlatformTotal = ONE_HUNDRED.subtract(platformPercent);
+        String platformWallet = platformConfig.getWallet();
+        BigDecimal tenantPercent = BigDecimal.ZERO;
+        String tenantWallet = null;
 
-        // Sum of entry split percentages (should be ~nonPlatformTotal, but normalize just in case)
+        Optional<TenantReadModel> tenantConfig = tenantConfigService.findActiveBySubdomain(tenantId);
+        if (tenantConfig.isPresent()) {
+            TenantReadModel t = tenantConfig.get();
+            if (t.getPlatformFeePercent() != null) {
+                platformPercent = t.getPlatformFeePercent();
+            }
+            if (t.getTenantFeePercent() != null
+                    && t.getTenantFeePercent().compareTo(BigDecimal.ZERO) > 0
+                    && t.getTenantWallet() != null
+                    && !t.getTenantWallet().isBlank()) {
+                tenantPercent = t.getTenantFeePercent();
+                tenantWallet = t.getTenantWallet();
+            }
+        }
+
+        BigDecimal reservedPercent = platformPercent.add(tenantPercent);
+        if (reservedPercent.compareTo(ONE_HUNDRED) >= 0) {
+            throw new IllegalStateException(
+                    "Invalid fee configuration for tenant=" + tenantId
+                            + ": platform% + tenant% must be < 100 (got " + reservedPercent + ")");
+        }
+        BigDecimal nonReservedTotal = ONE_HUNDRED.subtract(reservedPercent);
+
         BigDecimal entryTotal = entrySplits.stream()
                 .map(PaymentSplit::getPercent)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (entryTotal.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalStateException("Entry splits total is zero — invalid configuration");
+        }
 
         List<PaymentSplit> fullSplits = new ArrayList<>();
-        fullSplits.add(new PaymentSplit(platformConfig.getWallet(), SplitRole.PLATFORM, platformPercent));
+        fullSplits.add(new PaymentSplit(platformWallet, SplitRole.PLATFORM, platformPercent));
+        if (tenantWallet != null) {
+            fullSplits.add(new PaymentSplit(tenantWallet, SplitRole.TENANT, tenantPercent));
+        }
 
         for (PaymentSplit split : entrySplits) {
-            // Normalize: if entry splits don't sum to nonPlatformTotal, scale proportionally
             BigDecimal normalizedPercent = split.getPercent()
-                    .multiply(nonPlatformTotal)
+                    .multiply(nonReservedTotal)
                     .divide(entryTotal, 2, RoundingMode.HALF_UP);
             fullSplits.add(new PaymentSplit(split.getWallet(), split.getRole(), normalizedPercent));
         }
