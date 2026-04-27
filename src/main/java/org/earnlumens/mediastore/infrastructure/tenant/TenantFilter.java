@@ -24,7 +24,7 @@ import java.io.IOException;
  * resolve tenant themselves — they simply call {@link TenantContext#require()}.
  */
 @Component
-@Order(Ordered.HIGHEST_PRECEDENCE)
+@Order(Ordered.HIGHEST_PRECEDENCE + 10)
 public class TenantFilter extends OncePerRequestFilter {
 
     private static final Logger logger = LoggerFactory.getLogger(TenantFilter.class);
