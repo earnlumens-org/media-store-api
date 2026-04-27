@@ -89,6 +89,14 @@ A `@Component` servlet filter annotated with `@Order(Ordered.HIGHEST_PRECEDENCE)
 
 Resolves the `tenantId` from the request's `Host` header (via `request.getServerName()`). Spring's `ForwardedHeaderFilter` ensures `X-Forwarded-Host` is correctly reflected behind proxies/load balancers.
 
+> **Edge note:** in production, requests for `*.earnlumens.org` first hit the
+> `tenants-router` Cloudflare Worker (separate repo dir). That Worker proxies
+> the request to the `media-store-ui` Pages deployment **without rewriting
+> the `Host` header**, so by the time the call reaches `media-store-api` the
+> tenant subdomain is still present in `X-Forwarded-Host` and `TenantResolver`
+> behaves exactly as if Pages had served the request natively. The Worker is
+> required because Cloudflare Pages does not support wildcard custom domains.
+
 Current mapping:
 
 | Host pattern | Resolved tenant |

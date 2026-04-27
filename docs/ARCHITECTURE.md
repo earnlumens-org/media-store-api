@@ -39,6 +39,24 @@ The codebase follows **Clean Architecture / Hexagonal Architecture** principles.
 
 **Golden rule:** a layer may depend only on inner layers. Inner layers never import outer layers.
 
+### Edge layer (outside this repo)
+
+The Spring Boot service does not see traffic directly. Two Cloudflare Workers
+sit at the edge of the platform and are part of the request path that
+materialises tenants:
+
+| Worker (separate repo dir) | Route | Responsibility |
+|---|---|---|
+| `cdn-worker` | `cdn.earnlumens.org/*` | Signed/HMAC-protected R2 reads. |
+| `tenants-router` | `*.earnlumens.org/*` | Wildcard tenant fan-out. Cloudflare Pages does **not** support wildcard custom domains, so this Worker proxies every tenant subdomain to the same `media-store-ui` Pages deployment, **preserving the visitor's `Host` header**. That is why `TenantResolver` (see below) keeps working unchanged: by the time the request reaches `media-store-api`, `X-Forwarded-Host` still carries the tenant subdomain. |
+
+System subdomains (`admin`, `api`, `api.admin`, `cdn`, `www`, `app-dev`,
+…) must be **explicitly excluded** from the wildcard Worker route via
+*Cloudflare → Workers Routes* (more specific routes with worker = "None").
+Worker routes intercept by URL pattern and ignore DNS, so a CNAME alone
+is not enough. The Worker also keeps an in-code `SYSTEM_HOSTS` denylist
+that returns HTTP 502 as a defence-in-depth net.
+
 ---
 
 ## Package Layout

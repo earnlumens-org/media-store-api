@@ -74,11 +74,54 @@ class JwtUtilsTest {
         user.setOauthProvider("x");
         user.setFollowersCount(42);
 
-        String token = jwtUtils.generateRefreshToken(user);
+        String token = jwtUtils.generateRefreshToken(user, "acme");
         Claims claims = jwtUtils.getAllClaimsFromToken(token);
 
         long deltaMs = claims.getExpiration().getTime() - claims.getIssuedAt().getTime();
         assertTrue(deltaMs >= 4_500 && deltaMs <= 7_000, "refresh expiration delta out of expected range: " + deltaMs);
+    }
+
+    @Test
+    void generateRefreshToken_embedsTenantIdClaim() {
+        User user = new User();
+        user.setOauthUserId("oauth-id");
+        user.setUsername("user123");
+        user.setOauthProvider("x");
+
+        String token = jwtUtils.generateRefreshToken(user, "acme");
+        Claims claims = jwtUtils.getAllClaimsFromToken(token);
+
+        assertEquals("acme", jwtUtils.getTenantIdFromClaims(claims));
+    }
+
+    @Test
+    void generateRefreshToken_whenTenantNullOrBlank_throws() {
+        User user = new User();
+        user.setOauthUserId("oauth-id");
+        user.setUsername("user123");
+        user.setOauthProvider("x");
+
+        assertThrows(IllegalArgumentException.class, () -> jwtUtils.generateRefreshToken(user, null));
+        assertThrows(IllegalArgumentException.class, () -> jwtUtils.generateRefreshToken(user, ""));
+        assertThrows(IllegalArgumentException.class, () -> jwtUtils.generateRefreshToken(user, "   "));
+    }
+
+    @Test
+    void getTenantIdFromClaims_whenClaimMissing_returnsNull() {
+        // Use a generous expiration so the access token is still valid by the
+        // time we parse its claims back; the default 1s in setUp() can race.
+        ReflectionTestUtils.setField(jwtUtils, "jwtExpirationMs", 60_000);
+
+        User user = new User();
+        user.setOauthUserId("oauth-id");
+        user.setUsername("user123");
+        user.setOauthProvider("x");
+
+        // Access tokens deliberately do NOT carry the tenant claim.
+        String access = jwtUtils.generateJwtToken(user);
+        Claims claims = jwtUtils.getAllClaimsFromToken(access);
+
+        assertNull(jwtUtils.getTenantIdFromClaims(claims));
     }
 
     @Test
@@ -118,7 +161,7 @@ class JwtUtilsTest {
         user.setOauthProvider("x");
         user.setFollowersCount(42);
 
-        String refresh = jwtUtils.generateRefreshToken(user);
+        String refresh = jwtUtils.generateRefreshToken(user, "earnlumens");
         Claims refreshClaims = jwtUtils.getAllClaimsFromToken(refresh);
 
         String access = jwtUtils.generateAccessTokenFromClaims(refreshClaims);
