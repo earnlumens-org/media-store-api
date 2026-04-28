@@ -17,7 +17,11 @@ import org.springframework.context.annotation.Configuration;
  *   mediastore.transcoding.cloud-run-project-id=...
  *   mediastore.transcoding.cloud-run-region=europe-west1
  *   mediastore.transcoding.cloud-run-job-name=transcode-video
- *   mediastore.transcoding.callback-base-url=https://api.earnlumens.org
+ *   # Origin the transcoder will POST job callbacks back to. In production
+ *   # this is the per-tenant origin (e.g. https://acme.earnlumens.org) so
+ *   # the request flows through the tenants-router Worker, exactly like
+ *   # any browser request — there is NO tenant-agnostic apex API host.
+ *   mediastore.transcoding.callback-base-url=https://<tenant>.<apex-domain>
  * </pre>
  */
 @Configuration

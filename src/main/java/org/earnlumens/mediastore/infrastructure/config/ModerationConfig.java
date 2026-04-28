@@ -18,7 +18,11 @@ import org.springframework.context.annotation.Configuration;
  *   mediastore.moderation.cloud-run-project-id=...
  *   mediastore.moderation.cloud-run-region=europe-west1
  *   mediastore.moderation.cloud-run-job-name=moderate-content
- *   mediastore.moderation.callback-base-url=https://api.earnlumens.org
+ *   # Origin the moderator job will POST callbacks back to. In production
+ *   # this is the per-tenant origin (e.g. https://acme.earnlumens.org) so
+ *   # the request flows through the tenants-router Worker, exactly like
+ *   # any browser request — there is NO tenant-agnostic apex API host.
+ *   mediastore.moderation.callback-base-url=https://<tenant>.<apex-domain>
  * </pre>
  */
 @Configuration
