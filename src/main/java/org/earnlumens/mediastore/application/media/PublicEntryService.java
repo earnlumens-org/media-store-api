@@ -49,12 +49,25 @@ public class PublicEntryService {
     }
 
     /**
-     * Returns a single PUBLISHED entry by ID for the given tenant.
-     * Returns empty if the entry doesn't exist or is not published.
+     * Returns a single entry by ID for the given tenant.
+     * <p>
+     * Visibility rules:
+     * <ul>
+     *   <li>{@code PUBLISHED} / {@code UNLISTED} — visible to everyone (anonymous included).</li>
+     *   <li>{@code ARCHIVED} — visible only to the owner or to users who have an
+     *       ACTIVE entry- or collection-level entitlement (i.e. they paid for it
+     *       before it was archived). This keeps purchased content reachable even
+     *       after the creator hides it from the public listings.</li>
+     *   <li>Any other status (DRAFT / IN_REVIEW / REJECTED) — empty.</li>
+     * </ul>
+     *
+     * @param tenantId the tenant identifier
+     * @param entryId  the entry identifier
+     * @param viewerUserId optional OAuth user ID of the requester; {@code null} if anonymous
      */
-    public Optional<PublicEntryResponse> getPublishedEntryById(String tenantId, String entryId) {
+    public Optional<PublicEntryResponse> getPublishedEntryById(String tenantId, String entryId, String viewerUserId) {
         return entryRepository.findByTenantIdAndId(tenantId, entryId)
-                .filter(entry -> entry.getStatus() == EntryStatus.PUBLISHED || entry.getStatus() == EntryStatus.UNLISTED)
+                .filter(entry -> isVisibleToViewer(tenantId, entry, viewerUserId))
                 .map(entry -> {
                     // Atomically increment view count (fire-and-forget)
                     entryRepository.incrementViewCount(tenantId, entryId);
@@ -66,6 +79,59 @@ public class PublicEntryService {
                             .orElse(null);
                     return toPublicResponse(entry, assetInfo);
                 });
+    }
+
+    /**
+     * Backwards-compatible overload (anonymous viewer).
+     */
+    public Optional<PublicEntryResponse> getPublishedEntryById(String tenantId, String entryId) {
+        return getPublishedEntryById(tenantId, entryId, null);
+    }
+
+    private boolean isVisibleToViewer(String tenantId, Entry entry, String viewerUserId) {
+        EntryStatus status = entry.getStatus();
+        if (status == EntryStatus.PUBLISHED || status == EntryStatus.UNLISTED) {
+            return true;
+        }
+        if (status != EntryStatus.ARCHIVED) {
+            return false;
+        }
+        // ARCHIVED: keep accessible for owner and prior buyers so a creator
+        // archiving an item does not strand customers who already paid for it.
+        if (viewerUserId == null) {
+            return false;
+        }
+        if (viewerUserId.equals(entry.getUserId())) {
+            return true;
+        }
+        // Free archived entries stay hidden from the public — only owner sees them.
+        if (!entry.isPaid()) {
+            return false;
+        }
+        boolean entryEntitled = entitlementRepository
+                .existsByTenantIdAndUserIdAndEntryIdAndStatus(
+                        tenantId, viewerUserId, entry.getId(), EntitlementStatus.ACTIVE);
+        if (entryEntitled) {
+            return true;
+        }
+        // Check collection-level entitlement (collection purchase that included this entry).
+        var parentCollections = collectionRepository.findByTenantIdAndStatusAndItemsEntryId(
+                tenantId,
+                org.earnlumens.mediastore.domain.media.model.CollectionStatus.PUBLISHED,
+                entry.getId());
+        if (parentCollections.isEmpty()) {
+            return false;
+        }
+        List<String> paidCollIds = parentCollections.stream()
+                .filter(org.earnlumens.mediastore.domain.media.model.Collection::isPaid)
+                .map(org.earnlumens.mediastore.domain.media.model.Collection::getId)
+                .toList();
+        if (paidCollIds.isEmpty()) {
+            return false;
+        }
+        Set<String> entitledCollIds = entitlementRepository.findEntitledCollectionIds(
+                tenantId, viewerUserId, paidCollIds, EntitlementStatus.ACTIVE);
+        return !entitledCollIds.isEmpty();
     }
 
     /**

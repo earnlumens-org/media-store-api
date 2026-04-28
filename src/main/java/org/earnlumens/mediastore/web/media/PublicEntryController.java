@@ -97,7 +97,11 @@ public class PublicEntryController {
             HttpServletRequest request
     ) {
         String tenantId = tenantResolver.resolve(request);
-        return publicEntryService.getPublishedEntryById(tenantId, id)
+        // Pass viewer userId so ARCHIVED entries remain visible to the
+        // owner and to users who already paid for them (entry- or
+        // collection-level entitlement). Anonymous viewers still get 404.
+        String viewerUserId = extractOptionalUserId();
+        return publicEntryService.getPublishedEntryById(tenantId, id, viewerUserId)
                 .map(ResponseEntity::ok)
                 .orElse(ResponseEntity.notFound().build());
     }
