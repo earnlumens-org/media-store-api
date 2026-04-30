@@ -19,7 +19,7 @@ import java.util.Set;
  *
  * <h3>Severity mapping (from reason):</h3>
  * <ul>
- *   <li>HIGH: SCAM, PHISHING, MALWARE, DOXXING, EXTREME_VIOLENCE, ILLEGAL, CSAM</li>
+ *   <li>HIGH: SCAM, PHISHING, MALWARE, DOXXING, EXTREME_VIOLENCE, ILLEGAL, CSAM, SELF_HARM</li>
  *   <li>MEDIUM: HATE_SPEECH, NSFW, SPAM, IMPERSONATION</li>
  *   <li>LOW: COPYRIGHT, STOLEN_CONTENT, DUPLICATE, OFF_TOPIC, OTHER</li>
  * </ul>
@@ -54,7 +54,7 @@ public class ReportService {
     private static final Set<ReportReason> HIGH_SEVERITY = EnumSet.of(
             ReportReason.SCAM, ReportReason.PHISHING, ReportReason.MALWARE,
             ReportReason.DOXXING, ReportReason.EXTREME_VIOLENCE, ReportReason.ILLEGAL,
-            ReportReason.CSAM
+            ReportReason.CSAM, ReportReason.SELF_HARM
     );
     private static final Set<ReportReason> MEDIUM_SEVERITY = EnumSet.of(
             ReportReason.HATE_SPEECH, ReportReason.NSFW, ReportReason.SPAM,

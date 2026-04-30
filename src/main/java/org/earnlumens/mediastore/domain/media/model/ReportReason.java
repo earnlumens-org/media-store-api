@@ -9,6 +9,7 @@ public enum ReportReason {
     EXTREME_VIOLENCE,
     ILLEGAL,
     CSAM,
+    SELF_HARM,
 
     // Medium severity
     HATE_SPEECH,
