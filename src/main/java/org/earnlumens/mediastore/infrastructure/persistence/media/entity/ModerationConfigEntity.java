@@ -15,10 +15,13 @@ public class ModerationConfigEntity {
 
     private String tenantId;
     private String businessRulesPrompt;
+    private String tenantPublishingNotes;
 
     public String getId() { return id; }
 
     public String getTenantId() { return tenantId; }
 
     public String getBusinessRulesPrompt() { return businessRulesPrompt; }
+
+    public String getTenantPublishingNotes() { return tenantPublishingNotes; }
 }
