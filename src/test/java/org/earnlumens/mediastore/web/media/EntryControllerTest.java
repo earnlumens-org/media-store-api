@@ -7,7 +7,7 @@ import org.earnlumens.mediastore.domain.media.dto.request.UpdateEntryStatusReque
 import org.earnlumens.mediastore.domain.media.dto.response.CreateEntryResponse;
 import org.earnlumens.mediastore.infrastructure.security.jwt.AuthTokenFilter;
 import org.earnlumens.mediastore.infrastructure.security.jwt.JwtUtils;
-import org.earnlumens.mediastore.infrastructure.tenant.TenantResolver;
+import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,18 +37,17 @@ class EntryControllerTest {
 
     private MockMvc mockMvc;
     private JwtUtils jwtUtils;
-    private TenantResolver tenantResolver;
     private EntryUploadService entryUploadService;
 
     @BeforeEach
     void setUp() {
         SecurityContextHolder.clearContext();
+        TenantContext.set(TENANT_ID);
 
         jwtUtils = mock(JwtUtils.class);
-        tenantResolver = mock(TenantResolver.class);
         entryUploadService = mock(EntryUploadService.class);
 
-        EntryController controller = new EntryController(tenantResolver, entryUploadService);
+        EntryController controller = new EntryController(entryUploadService);
 
         AuthTokenFilter authFilter = new AuthTokenFilter();
         ReflectionTestUtils.setField(authFilter, "jwtUtils", jwtUtils);
@@ -56,13 +55,12 @@ class EntryControllerTest {
         mockMvc = MockMvcBuilders.standaloneSetup(controller)
                 .addFilters(authFilter)
                 .build();
-
-        when(tenantResolver.resolve(any())).thenReturn(TENANT_ID);
     }
 
     @AfterEach
     void tearDown() {
         SecurityContextHolder.clearContext();
+        TenantContext.clear();
     }
 
     private void configureValidToken() {

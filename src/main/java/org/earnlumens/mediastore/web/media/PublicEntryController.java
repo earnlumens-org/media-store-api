@@ -1,11 +1,10 @@
 package org.earnlumens.mediastore.web.media;
 
-import jakarta.servlet.http.HttpServletRequest;
 import org.earnlumens.mediastore.application.media.PublicEntryService;
 import org.earnlumens.mediastore.domain.media.dto.response.PublicEntryPageResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PublicEntryResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PublicFeedPageResponse;
-import org.earnlumens.mediastore.infrastructure.tenant.TenantResolver;
+import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -24,11 +23,9 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/public/entries")
 public class PublicEntryController {
 
-    private final TenantResolver tenantResolver;
     private final PublicEntryService publicEntryService;
 
-    public PublicEntryController(TenantResolver tenantResolver, PublicEntryService publicEntryService) {
-        this.tenantResolver = tenantResolver;
+    public PublicEntryController(PublicEntryService publicEntryService) {
         this.publicEntryService = publicEntryService;
     }
 
@@ -40,10 +37,9 @@ public class PublicEntryController {
     @GetMapping
     public ResponseEntity<PublicEntryPageResponse> getPublishedEntries(
             @RequestParam(value = "page", defaultValue = "0") int page,
-            @RequestParam(value = "size", defaultValue = "48") int size,
-            HttpServletRequest request
+            @RequestParam(value = "size", defaultValue = "48") int size
     ) {
-        String tenantId = tenantResolver.resolve(request);
+        String tenantId = TenantContext.require();
         PublicEntryPageResponse response = publicEntryService.getPublishedEntries(tenantId, page, size);
         return ResponseEntity.ok(response);
     }
@@ -59,10 +55,9 @@ public class PublicEntryController {
             @RequestParam(value = "pricing", required = false) String pricing,
             @RequestParam(value = "sort", defaultValue = "newest") String sort,
             @RequestParam(value = "page", defaultValue = "0") int page,
-            @RequestParam(value = "size", defaultValue = "48") int size,
-            HttpServletRequest request
+            @RequestParam(value = "size", defaultValue = "48") int size
     ) {
-        String tenantId = tenantResolver.resolve(request);
+        String tenantId = TenantContext.require();
         PublicFeedPageResponse response = publicEntryService.getCommunityFeed(tenantId, type, pricing, sort, page, size);
         return ResponseEntity.ok(response);
     }
@@ -78,10 +73,9 @@ public class PublicEntryController {
             @RequestParam(value = "pricing", required = false) String pricing,
             @RequestParam(value = "sort", defaultValue = "newest") String sort,
             @RequestParam(value = "page", defaultValue = "0") int page,
-            @RequestParam(value = "size", defaultValue = "48") int size,
-            HttpServletRequest request
+            @RequestParam(value = "size", defaultValue = "48") int size
     ) {
-        String tenantId = tenantResolver.resolve(request);
+        String tenantId = TenantContext.require();
         PublicFeedPageResponse response = publicEntryService.getExploreFeed(tenantId, type, pricing, sort, page, size);
         return ResponseEntity.ok(response);
     }
@@ -93,10 +87,9 @@ public class PublicEntryController {
      */
     @GetMapping("/{id}")
     public ResponseEntity<PublicEntryResponse> getPublishedEntryById(
-            @PathVariable("id") String id,
-            HttpServletRequest request
+            @PathVariable("id") String id
     ) {
-        String tenantId = tenantResolver.resolve(request);
+        String tenantId = TenantContext.require();
         // Pass viewer userId so ARCHIVED entries remain visible to the
         // owner and to users who already paid for them (entry- or
         // collection-level entitlement). Anonymous viewers still get 404.
@@ -116,10 +109,9 @@ public class PublicEntryController {
             @PathVariable("username") String username,
             @RequestParam(value = "type", required = false) String type,
             @RequestParam(value = "page", defaultValue = "0") int page,
-            @RequestParam(value = "size", defaultValue = "48") int size,
-            HttpServletRequest request
+            @RequestParam(value = "size", defaultValue = "48") int size
     ) {
-        String tenantId = tenantResolver.resolve(request);
+        String tenantId = TenantContext.require();
         PublicEntryPageResponse response = publicEntryService.getPublishedEntriesByUser(tenantId, username, type, page, size);
         return ResponseEntity.ok(response);
     }
@@ -136,10 +128,9 @@ public class PublicEntryController {
             @RequestParam(value = "search", required = false) String search,
             @RequestParam(value = "sort", defaultValue = "newest") String sort,
             @RequestParam(value = "page", defaultValue = "0") int page,
-            @RequestParam(value = "size", defaultValue = "24") int size,
-            HttpServletRequest request
+            @RequestParam(value = "size", defaultValue = "24") int size
     ) {
-        String tenantId = tenantResolver.resolve(request);
+        String tenantId = TenantContext.require();
         String userId = extractOptionalUserId();
         String viewerUsername = extractOptionalUsername();
         PublicFeedPageResponse response = publicEntryService.getProfileFeed(

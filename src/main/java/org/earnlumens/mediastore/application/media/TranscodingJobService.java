@@ -13,7 +13,6 @@ import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.TranscodingJobRepository;
 import org.earnlumens.mediastore.infrastructure.config.TranscodingConfig;
-import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -361,6 +360,22 @@ public class TranscodingJobService {
         }
 
         TranscodingJob job = opt.get();
+
+        // Defence in depth: the worker controls the body of the callback,
+        // so even with a valid shared secret it could submit an arbitrary
+        // R2 prefix and pin a tenant's entry to another tenant's media.
+        // Enforce the layout the worker is expected to produce
+        // (`private/media/{tenantId}/{entryId}/hls`) and reject anything
+        // else without mutating any state.
+        String expectedPrefix = "private/media/" + job.getTenantId()
+                + "/" + job.getEntryId() + "/hls";
+        if (hlsR2Prefix == null || !hlsR2Prefix.equals(expectedPrefix)) {
+            logger.error("completeJob: hlsR2Prefix mismatch — job={}, tenant={}, entry={}, "
+                            + "expected={}, got={}",
+                    jobId, job.getTenantId(), job.getEntryId(), expectedPrefix, hlsR2Prefix);
+            return Optional.empty();
+        }
+
         job.setStatus(TranscodingJobStatus.COMPLETED);
         job.setHlsR2Prefix(hlsR2Prefix);
         job.setCompletedAt(LocalDateTime.now());

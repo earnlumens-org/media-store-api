@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -58,6 +59,20 @@ public class TenantConfigService {
             cache.remove(subdomain);
             logger.debug("TenantConfigService: cache invalidated for subdomain={}", subdomain);
         }
+    }
+
+    /**
+     * Returns the canonical {@code tenantId} (i.e. subdomain) of every
+     * ACTIVE tenant on the platform. Intended for cross-tenant
+     * maintenance jobs that must iterate over every tenant exactly once
+     * (e.g. badge expiration). Always hits Mongo — there is no caching
+     * here because the result drives mutation, not per-request lookups.
+     */
+    public List<String> findAllActiveTenantIds() {
+        return repository.findByStatus("ACTIVE").stream()
+                .map(TenantReadModel::getSubdomain)
+                .filter(s -> s != null && !s.isBlank())
+                .toList();
     }
 
     private record CacheEntry(Optional<TenantReadModel> value, Instant expiresAt) {}

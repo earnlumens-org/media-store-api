@@ -22,7 +22,12 @@ import java.time.LocalDateTime;
 @CompoundIndex(name = "idx_status_createdAt", def = "{'status': 1, 'createdAt': 1}")
 @CompoundIndex(name = "idx_tenantId_assetId", def = "{'tenantId': 1, 'assetId': 1}", unique = true)
 @CompoundIndex(name = "idx_tenantId_entryId_status", def = "{'tenantId': 1, 'entryId': 1, 'status': 1}")
-@CompoundIndex(name = "idx_status_lastHeartbeat", def = "{'status': 1, 'lastHeartbeat': 1}")
+// Watchdog query is intentionally cross-tenant (allowlisted in
+// TenantIsolationArchTest); we still prefix the index with tenantId so the
+// tenant-scoped lookups (`findByTenantIdAndId`, etc.) on the same fields
+// stay selective and so the index hints align with our isolation invariant.
+@CompoundIndex(name = "idx_tenantId_status_lastHeartbeat",
+        def = "{'tenantId': 1, 'status': 1, 'lastHeartbeat': 1}")
 public class TranscodingJobEntity {
 
     @Id

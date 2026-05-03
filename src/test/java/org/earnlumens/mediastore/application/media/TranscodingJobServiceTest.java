@@ -293,11 +293,12 @@ class TranscodingJobServiceTest {
             when(assetRepository.findByTenantIdAndEntryId("earnlumens", "entry-1"))
                     .thenReturn(List.of(asset));
 
-            Optional<TranscodingJob> result = service.completeJob("earnlumens", "job-1", "public/media/entry-1/hls/", null, null, null);
+            String prefix = "private/media/earnlumens/entry-1/hls";
+            Optional<TranscodingJob> result = service.completeJob("earnlumens", "job-1", prefix, null, null, null);
 
             assertTrue(result.isPresent());
             assertEquals(TranscodingJobStatus.COMPLETED, result.get().getStatus());
-            assertEquals("public/media/entry-1/hls/", result.get().getHlsR2Prefix());
+            assertEquals(prefix, result.get().getHlsR2Prefix());
             assertNotNull(result.get().getCompletedAt());
             assertEquals(AssetStatus.READY, asset.getStatus());
             verify(assetRepository).save(asset);
@@ -320,10 +321,25 @@ class TranscodingJobServiceTest {
             when(assetRepository.findByTenantIdAndEntryId("earnlumens", "entry-1"))
                     .thenReturn(Collections.emptyList());
 
-            Optional<TranscodingJob> result = service.completeJob("earnlumens", "job-1", "prefix/", null, null, null);
+            Optional<TranscodingJob> result = service.completeJob("earnlumens", "job-1",
+                    "private/media/earnlumens/entry-1/hls", null, null, null);
 
             assertTrue(result.isPresent());
             assertEquals(TranscodingJobStatus.COMPLETED, result.get().getStatus());
+            verify(assetRepository, never()).save(any());
+        }
+
+        @Test
+        void rejectsCallbackWithMismatchedPrefix() {
+            TranscodingJob job = staleJob(TranscodingJobStatus.PROCESSING, 0, 3);
+            when(jobRepository.findByTenantIdAndId("earnlumens", "job-1")).thenReturn(Optional.of(job));
+
+            // Caller tries to point this tenant's job at another tenant's prefix.
+            Optional<TranscodingJob> result = service.completeJob("earnlumens", "job-1",
+                    "private/media/other-tenant/entry-1/hls", null, null, null);
+
+            assertTrue(result.isEmpty(), "completeJob must reject mismatched hlsR2Prefix");
+            verify(jobRepository, never()).save(any());
             verify(assetRepository, never()).save(any());
         }
     }

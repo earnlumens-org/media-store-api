@@ -1,6 +1,5 @@
 package org.earnlumens.mediastore.web.media;
 
-import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.earnlumens.mediastore.application.media.EntryUploadService;
 import org.earnlumens.mediastore.domain.media.dto.request.CreateEntryRequest;
@@ -10,23 +9,22 @@ import org.earnlumens.mediastore.domain.media.dto.response.CreateEntryResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.OwnerEntryPageResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.OwnerStatsResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.StudioPageResponse;
-import org.earnlumens.mediastore.infrastructure.tenant.TenantResolver;
+import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.core.user.OAuth2User;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PutMapping;
 
 import java.util.Map;
 
@@ -34,6 +32,12 @@ import java.util.Map;
  * REST controller for entry lifecycle management.
  * <p>
  * Authenticated via Bearer JWT (AuthTokenFilter).
+ * <p>
+ * The tenant for the current request is read from {@link TenantContext},
+ * which is populated by {@code TenantFilter} at the highest filter
+ * precedence. Controllers MUST NOT call {@code TenantResolver.resolve}
+ * directly — the only authoritative source of the request tenant is the
+ * thread-local set by the filter.
  */
 @RestController
 @RequestMapping("/api/entries")
@@ -41,11 +45,9 @@ public class EntryController {
 
     private static final Logger logger = LoggerFactory.getLogger(EntryController.class);
 
-    private final TenantResolver tenantResolver;
     private final EntryUploadService entryUploadService;
 
-    public EntryController(TenantResolver tenantResolver, EntryUploadService entryUploadService) {
-        this.tenantResolver = tenantResolver;
+    public EntryController(EntryUploadService entryUploadService) {
         this.entryUploadService = entryUploadService;
     }
 
@@ -54,15 +56,14 @@ public class EntryController {
      */
     @PostMapping
     public ResponseEntity<?> createEntry(
-            @Valid @RequestBody CreateEntryRequest request,
-            HttpServletRequest httpRequest
+            @Valid @RequestBody CreateEntryRequest request
     ) {
         String userId = extractUserId();
         if (userId == null) {
             return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
         }
 
-        String tenantId = tenantResolver.resolve(httpRequest);
+        String tenantId = TenantContext.require();
 
         try {
             CreateEntryResponse response = entryUploadService.createEntry(tenantId, userId, request);
@@ -82,15 +83,14 @@ public class EntryController {
     @PutMapping("/{id}")
     public ResponseEntity<?> updateEntryMetadata(
             @PathVariable("id") String id,
-            @RequestBody UpdateEntryMetadataRequest request,
-            HttpServletRequest httpRequest
+            @RequestBody UpdateEntryMetadataRequest request
     ) {
         String userId = extractUserId();
         if (userId == null) {
             return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
         }
 
-        String tenantId = tenantResolver.resolve(httpRequest);
+        String tenantId = TenantContext.require();
         boolean updated = entryUploadService.updateEntryMetadata(tenantId, userId, id, request);
         if (!updated) {
             return ResponseEntity.status(404).body(Map.of("error", "Entry not found or not owned"));
@@ -104,15 +104,14 @@ public class EntryController {
     @PatchMapping("/{id}/status")
     public ResponseEntity<?> updateEntryStatus(
             @PathVariable("id") String id,
-            @Valid @RequestBody UpdateEntryStatusRequest request,
-            HttpServletRequest httpRequest
+            @Valid @RequestBody UpdateEntryStatusRequest request
     ) {
         String userId = extractUserId();
         if (userId == null) {
             return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
         }
 
-        String tenantId = tenantResolver.resolve(httpRequest);
+        String tenantId = TenantContext.require();
 
         try {
             boolean updated = entryUploadService.updateEntryStatus(tenantId, userId, id, request);
@@ -134,15 +133,14 @@ public class EntryController {
      */
     @PatchMapping("/{id}/unarchive")
     public ResponseEntity<?> unarchiveEntry(
-            @PathVariable("id") String id,
-            HttpServletRequest httpRequest
+            @PathVariable("id") String id
     ) {
         String userId = extractUserId();
         if (userId == null) {
             return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
         }
 
-        String tenantId = tenantResolver.resolve(httpRequest);
+        String tenantId = TenantContext.require();
         boolean unarchived = entryUploadService.unarchiveEntry(tenantId, userId, id);
         if (!unarchived) {
             return ResponseEntity.status(404).body(Map.of("error", "Entry not found, not owned, or not archived"));
@@ -154,13 +152,13 @@ public class EntryController {
      * GET /api/entries/mine/stats — Aggregated dashboard stats for the authenticated creator.
      */
     @GetMapping("/mine/stats")
-    public ResponseEntity<?> getMyStats(HttpServletRequest httpRequest) {
+    public ResponseEntity<?> getMyStats() {
         String userId = extractUserId();
         if (userId == null) {
             return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
         }
 
-        String tenantId = tenantResolver.resolve(httpRequest);
+        String tenantId = TenantContext.require();
         OwnerStatsResponse stats = entryUploadService.getOwnerStats(tenantId, userId);
         return ResponseEntity.ok(stats);
     }
@@ -176,15 +174,14 @@ public class EntryController {
             @RequestParam(value = "search", required = false) String search,
             @RequestParam(value = "sort", defaultValue = "newest") String sort,
             @RequestParam(value = "page", defaultValue = "0") int page,
-            @RequestParam(value = "size", defaultValue = "20") int size,
-            HttpServletRequest httpRequest
+            @RequestParam(value = "size", defaultValue = "20") int size
     ) {
         String userId = extractUserId();
         if (userId == null) {
             return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
         }
 
-        String tenantId = tenantResolver.resolve(httpRequest);
+        String tenantId = TenantContext.require();
         StudioPageResponse response = entryUploadService.getStudioItems(
                 tenantId, userId, status, type, search, sort, page, size);
         return ResponseEntity.ok(response);
@@ -199,15 +196,14 @@ public class EntryController {
             @RequestParam(value = "status", required = false) String status,
             @RequestParam(value = "type", required = false) String type,
             @RequestParam(value = "page", defaultValue = "0") int page,
-            @RequestParam(value = "size", defaultValue = "50") int size,
-            HttpServletRequest httpRequest
+            @RequestParam(value = "size", defaultValue = "50") int size
     ) {
         String userId = extractUserId();
         if (userId == null) {
             return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
         }
 
-        String tenantId = tenantResolver.resolve(httpRequest);
+        String tenantId = TenantContext.require();
         OwnerEntryPageResponse response = entryUploadService.getEntriesByOwner(
                 tenantId, userId, status, type, page, size);
         return ResponseEntity.ok(response);
@@ -218,13 +214,13 @@ public class EntryController {
      * Returns orders where the current user is the seller, with payment split breakdown.
      */
     @GetMapping("/mine/sales")
-    public ResponseEntity<?> getMySales(HttpServletRequest httpRequest) {
+    public ResponseEntity<?> getMySales() {
         String userId = extractUserId();
         if (userId == null) {
             return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
         }
 
-        String tenantId = tenantResolver.resolve(httpRequest);
+        String tenantId = TenantContext.require();
         var sales = entryUploadService.getSellerSales(tenantId, userId);
         return ResponseEntity.ok(sales);
     }

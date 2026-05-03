@@ -1,13 +1,12 @@
 package org.earnlumens.mediastore.web.payment;
 
-import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import org.earnlumens.mediastore.application.payment.PaymentService;
 import org.earnlumens.mediastore.domain.media.dto.request.PreparePaymentRequest;
 import org.earnlumens.mediastore.domain.media.dto.request.SubmitPaymentRequest;
 import org.earnlumens.mediastore.domain.media.dto.response.PreparePaymentResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.SubmitPaymentResponse;
-import org.earnlumens.mediastore.infrastructure.tenant.TenantResolver;
+import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -31,25 +30,22 @@ public class PaymentController {
 
     private static final Logger logger = LoggerFactory.getLogger(PaymentController.class);
 
-    private final TenantResolver tenantResolver;
     private final PaymentService paymentService;
 
-    public PaymentController(TenantResolver tenantResolver, PaymentService paymentService) {
-        this.tenantResolver = tenantResolver;
+    public PaymentController(PaymentService paymentService) {
         this.paymentService = paymentService;
     }
 
     @PostMapping("/prepare")
     public ResponseEntity<?> prepare(
-            @Valid @RequestBody PreparePaymentRequest request,
-            HttpServletRequest httpRequest
+            @Valid @RequestBody PreparePaymentRequest request
     ) {
         String userId = extractUserId();
         if (userId == null) {
             return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
         }
 
-        String tenantId = tenantResolver.resolve(httpRequest);
+        String tenantId = TenantContext.require();
 
         try {
             PreparePaymentResponse response = paymentService.prepare(tenantId, userId, request);
@@ -68,15 +64,14 @@ public class PaymentController {
 
     @PostMapping("/submit")
     public ResponseEntity<?> submit(
-            @Valid @RequestBody SubmitPaymentRequest request,
-            HttpServletRequest httpRequest
+            @Valid @RequestBody SubmitPaymentRequest request
     ) {
         String userId = extractUserId();
         if (userId == null) {
             return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
         }
 
-        String tenantId = tenantResolver.resolve(httpRequest);
+        String tenantId = TenantContext.require();
 
         try {
             SubmitPaymentResponse response = paymentService.submit(tenantId, userId, request);
