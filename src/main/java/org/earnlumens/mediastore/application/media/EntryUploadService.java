@@ -25,6 +25,7 @@ import org.earnlumens.mediastore.domain.media.model.PriceCurrency;
 import org.earnlumens.mediastore.domain.media.model.SplitRole;
 import org.earnlumens.mediastore.domain.media.model.ModerationJob;
 import org.earnlumens.mediastore.domain.media.model.ModerationJobStatus;
+import org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
@@ -389,6 +390,12 @@ public class EntryUploadService {
             return false;
         }
 
+        // ── Block edits while transcoding to avoid races between worker output and entry state ──
+        if (isTranscodingInProgress(tenantId, entry)) {
+            logger.warn("updateEntryMetadata: blocked, transcoding in progress for entry={}", entryId);
+            throw new IllegalArgumentException("TRANSCODING_IN_PROGRESS");
+        }
+
         if (request.title() != null) {
             entry.setTitle(request.title());
         }
@@ -482,6 +489,16 @@ public class EntryUploadService {
             logger.warn("updateEntryStatus: invalid transition {} → {} for entry {}",
                     entry.getStatus(), newStatus, entryId);
             return false;
+        }
+
+        // ── Block submit-for-review and publish while transcoding ──
+        // Archiving / unarchiving / re-edit transitions remain permitted so the
+        // creator is never locked out of their own draft mid-encode.
+        if ((newStatus == EntryStatus.IN_REVIEW || newStatus == EntryStatus.PUBLISHED)
+                && isTranscodingInProgress(tenantId, entry)) {
+            logger.warn("updateEntryStatus: blocked transition to {}, transcoding in progress for entry={}",
+                    newStatus, entryId);
+            throw new IllegalArgumentException("TRANSCODING_IN_PROGRESS");
         }
 
         // ── Abuse prevention: burst detection on submit for review ────
@@ -823,6 +840,27 @@ public class EntryUploadService {
         return transcodingJobService.findLatestByTenantIdAndEntryId(tenantId, entry.getId())
                 .map(job -> job.getStatus().name())
                 .orElse(null);
+    }
+
+    /**
+     * Returns true when the latest transcoding job for a VIDEO entry is still
+     * pending/dispatched/processing. Used to block edits and submit-for-review /
+     * publish transitions until the worker finishes, so creators do not mutate
+     * the source asset or move the entry forward while output paths are being
+     * written under {@code private/media/{tenantId}/{entryId}/hls}.
+     */
+    private boolean isTranscodingInProgress(String tenantId, Entry entry) {
+        if (entry.getType() != EntryType.VIDEO) {
+            return false;
+        }
+        return transcodingJobService.findLatestByTenantIdAndEntryId(tenantId, entry.getId())
+                .map(job -> {
+                    TranscodingJobStatus s = job.getStatus();
+                    return s == TranscodingJobStatus.PENDING
+                            || s == TranscodingJobStatus.DISPATCHED
+                            || s == TranscodingJobStatus.PROCESSING;
+                })
+                .orElse(false);
     }
 
     private OwnerEntryResponse toOwnerResponse(Entry entry, String transcodingStatus) {

@@ -91,11 +91,19 @@ public class EntryController {
         }
 
         String tenantId = TenantContext.require();
-        boolean updated = entryUploadService.updateEntryMetadata(tenantId, userId, id, request);
-        if (!updated) {
-            return ResponseEntity.status(404).body(Map.of("error", "Entry not found or not owned"));
+        try {
+            boolean updated = entryUploadService.updateEntryMetadata(tenantId, userId, id, request);
+            if (!updated) {
+                return ResponseEntity.status(404).body(Map.of("error", "Entry not found or not owned"));
+            }
+            return ResponseEntity.noContent().build();
+        } catch (IllegalArgumentException e) {
+            logger.warn("updateEntryMetadata: invalid request: {}", e.getMessage());
+            if ("TRANSCODING_IN_PROGRESS".equals(e.getMessage())) {
+                return ResponseEntity.status(409).body(Map.of("error", e.getMessage()));
+            }
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
-        return ResponseEntity.noContent().build();
     }
 
     /**
@@ -123,6 +131,9 @@ public class EntryController {
             logger.warn("updateEntryStatus: invalid request: {}", e.getMessage());
             if ("TOO_MANY_PENDING_REVIEWS".equals(e.getMessage())) {
                 return ResponseEntity.status(429).body(Map.of("error", e.getMessage()));
+            }
+            if ("TRANSCODING_IN_PROGRESS".equals(e.getMessage())) {
+                return ResponseEntity.status(409).body(Map.of("error", e.getMessage()));
             }
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }
