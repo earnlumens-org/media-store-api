@@ -35,7 +35,15 @@ public record CreateCollectionRequest(
         @Pattern(regexp = "^G[A-Z2-7]{55}$", message = "Invalid Stellar public key")
         String sellerWallet,
 
-        /** ISO 639-1 language code of the content (e.g. "es", "en"). Optional. */
-        @Size(min = 2, max = 5)
+        /**
+         * Content language. Either an ISO 639-1 code ("es", "en", "zh-cn", ...)
+         * or the special value "multi" for collections that mix languages or
+         * have no dominant language.
+         * <p>
+         * This is the user-declared default. The moderation pipeline is the
+         * source of truth and may overwrite this value.
+         */
+        @Pattern(regexp = "^(multi|[a-z]{2}(-[a-z]{2})?)$",
+                message = "contentLanguage must be 'multi' or an ISO 639-1 code")
         String contentLanguage
 ) {}

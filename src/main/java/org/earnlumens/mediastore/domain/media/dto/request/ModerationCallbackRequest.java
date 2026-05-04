@@ -15,6 +15,13 @@ import java.util.List;
  * @param reason             human-readable explanation
  * @param step               which pipeline step produced the decision
  * @param errorMessage       error description (if status=FAILED)
+ * @param detectedLanguage   ISO 639-1 code (e.g. "en", "es", "zh-cn") or
+ *                           the special value "multi" for content with no
+ *                           dominant language. {@code null} if the worker
+ *                           could not determine a language; in that case
+ *                           the user-declared default is preserved.
+ *                           This is the source of truth and overrides the
+ *                           uploader's declaration.
  */
 public record ModerationCallbackRequest(
 
@@ -32,5 +39,6 @@ public record ModerationCallbackRequest(
         List<String> categoriesDetected,
         String reason,
         String step,
-        String errorMessage
+        String errorMessage,
+        String detectedLanguage
 ) {}

@@ -434,9 +434,9 @@ public class EntryUploadService {
             }
         }
 
-        if (request.contentLanguage() != null) {
-            entry.setContentLanguage(request.contentLanguage());
-        }
+        // contentLanguage is intentionally NOT user-editable here.
+        // Initial value comes from upload (user-declared default) and is
+        // overridden later by the moderation pipeline (source of truth).
 
         if (request.resourceContent() != null) {
             entry.setResourceContent(request.resourceContent());

@@ -2,7 +2,6 @@ package org.earnlumens.mediastore.application.media;
 
 import org.earnlumens.mediastore.domain.media.model.Asset;
 import org.earnlumens.mediastore.domain.media.model.AssetStatus;
-import org.earnlumens.mediastore.domain.media.model.Collection;
 import org.earnlumens.mediastore.domain.media.model.CollectionStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
@@ -259,7 +258,8 @@ public class ModerationJobService {
     public Optional<ModerationJob> completeJob(String tenantId, String jobId,
                                                 String decision, Double confidence,
                                                 List<String> categoriesDetected,
-                                                String reason, String step) {
+                                                String reason, String step,
+                                                String detectedLanguage) {
         Optional<ModerationJob> opt = jobRepository.findByTenantIdAndId(tenantId, jobId);
         if (opt.isEmpty()) {
             logger.warn("moderation completeJob: job not found id={}", jobId);
@@ -281,8 +281,19 @@ public class ModerationJobService {
         job.setCategoriesDetected(categoriesDetected);
         job.setDecisionReason(reason);
         job.setDecidingStep(step);
+        job.setDetectedLanguage(detectedLanguage);
         job.setCompletedAt(LocalDateTime.now());
         jobRepository.save(job);
+
+        // Apply detected language to the entry/collection.
+        // Source-of-truth rule: the moderation pipeline overrides the
+        // user-declared default whenever it has a verdict. We skip on
+        // REJECT (the entry will not be public anyway) and on null
+        // (no signal — keep the user's default for human review).
+        if (detectedLanguage != null && !detectedLanguage.isBlank()
+                && moderationDecision != ModerationDecision.REJECT) {
+            applyDetectedLanguage(job, detectedLanguage);
+        }
 
         // Act on the decision
         switch (moderationDecision) {
@@ -293,10 +304,36 @@ public class ModerationJobService {
         }
 
         logger.info("moderation completeJob: job COMPLETED — id={}, decision={}, confidence={}, "
-                        + "categories={}, entry={}, step={}",
+                        + "categories={}, entry={}, step={}, detectedLanguage={}",
                 jobId, moderationDecision, confidence, categoriesDetected,
-                job.getEntryId(), step);
+                job.getEntryId(), step, detectedLanguage);
         return Optional.of(job);
+    }
+
+    /**
+     * Writes the AI-detected content language onto the entry or collection.
+     * Called from {@link #completeJob} for any non-REJECT verdict that
+     * carries a detected language. This is the source-of-truth path — the
+     * uploader's declared default is overwritten.
+     */
+    private void applyDetectedLanguage(ModerationJob job, String detectedLanguage) {
+        if (job.getEntryType() == EntryType.COLLECTION) {
+            collectionRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId())
+                    .ifPresent(collection -> {
+                        collection.setContentLanguage(detectedLanguage);
+                        collectionRepository.save(collection);
+                        logger.info("moderation: collection {} contentLanguage → {} (AI-detected)",
+                                collection.getId(), detectedLanguage);
+                    });
+        } else {
+            entryRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId())
+                    .ifPresent(entry -> {
+                        entry.setContentLanguage(detectedLanguage);
+                        entryRepository.save(entry);
+                        logger.info("moderation: entry {} contentLanguage → {} (AI-detected)",
+                                entry.getId(), detectedLanguage);
+                    });
+        }
     }
 
     /**

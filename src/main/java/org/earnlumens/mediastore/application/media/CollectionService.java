@@ -138,7 +138,9 @@ public class CollectionService {
             collection.setPriceCurrency(PriceCurrency.valueOf(request.priceCurrency().toUpperCase()));
         }
         if (request.sellerWallet() != null) collection.setSellerWallet(request.sellerWallet());
-        if (request.contentLanguage() != null) collection.setContentLanguage(request.contentLanguage());
+        // contentLanguage is intentionally NOT user-editable here.
+        // Initial value comes from creation (user-declared default) and is
+        // overridden later by the moderation pipeline (source of truth).
 
         // Rebuild payment splits when paid status or wallet changes
         if (collection.isPaid() && collection.getSellerWallet() != null && !collection.getSellerWallet().isBlank()) {

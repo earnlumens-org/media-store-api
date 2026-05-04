@@ -65,7 +65,7 @@ public class ModerationCallbackController {
                         request.tenantId(), request.jobId(),
                         request.decision(), request.confidence(),
                         request.categoriesDetected(), request.reason(),
-                        request.step());
+                        request.step(), request.detectedLanguage());
                 yield job.isPresent()
                         ? ResponseEntity.ok(Map.of(
                                 "status", "COMPLETED",

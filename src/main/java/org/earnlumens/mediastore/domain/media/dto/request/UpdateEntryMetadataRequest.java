@@ -13,7 +13,6 @@ public record UpdateEntryMetadataRequest(
         BigDecimal priceXlm,
         BigDecimal priceUsd,
         String priceCurrency,
-        String contentLanguage,
         String sellerWallet,
         String resourceContent
 ) {}

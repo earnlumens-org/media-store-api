@@ -64,6 +64,15 @@ public class ModerationJob {
     /** Which pipeline step produced the final decision. */
     private String decidingStep;
 
+    /**
+     * Content language detected by the moderation pipeline (ISO 639-1
+     * code or "multi"). Null when the pipeline could not determine a
+     * language; in that case the entry/collection keeps the user-declared
+     * default. This value is the system's source of truth and overrides
+     * the uploader's declaration.
+     */
+    private String detectedLanguage;
+
     /** Number of times this job has been retried after failure. */
     private int retryCount;
 
@@ -148,6 +157,9 @@ public class ModerationJob {
 
     public String getDecidingStep() { return decidingStep; }
     public void setDecidingStep(String decidingStep) { this.decidingStep = decidingStep; }
+
+    public String getDetectedLanguage() { return detectedLanguage; }
+    public void setDetectedLanguage(String detectedLanguage) { this.detectedLanguage = detectedLanguage; }
 
     public int getRetryCount() { return retryCount; }
     public void setRetryCount(int retryCount) { this.retryCount = retryCount; }

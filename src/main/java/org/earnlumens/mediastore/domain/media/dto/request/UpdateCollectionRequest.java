@@ -14,6 +14,5 @@ public record UpdateCollectionRequest(
         BigDecimal priceXlm,
         BigDecimal priceUsd,
         String priceCurrency,
-        String sellerWallet,
-        String contentLanguage
+        String sellerWallet
 ) {}

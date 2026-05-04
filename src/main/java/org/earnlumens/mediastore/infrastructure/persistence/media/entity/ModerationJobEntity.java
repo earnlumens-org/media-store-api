@@ -62,6 +62,7 @@ public class ModerationJobEntity {
     private List<String> categoriesDetected;
     private String decisionReason;
     private String decidingStep;
+    private String detectedLanguage;
 
     private int retryCount;
     private int maxRetries;
@@ -136,6 +137,9 @@ public class ModerationJobEntity {
 
     public String getDecidingStep() { return decidingStep; }
     public void setDecidingStep(String decidingStep) { this.decidingStep = decidingStep; }
+
+    public String getDetectedLanguage() { return detectedLanguage; }
+    public void setDetectedLanguage(String detectedLanguage) { this.detectedLanguage = detectedLanguage; }
 
     public int getRetryCount() { return retryCount; }
     public void setRetryCount(int retryCount) { this.retryCount = retryCount; }
