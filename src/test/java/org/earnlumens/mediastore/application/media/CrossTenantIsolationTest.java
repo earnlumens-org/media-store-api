@@ -193,7 +193,7 @@ class CrossTenantIsolationTest {
     @Test
     void crossTenant_updateMetadata_returnsFalse_andDoesNotMutate() {
         UpdateEntryMetadataRequest req = new UpdateEntryMetadataRequest(
-                "evil-title", null, null, null, null, null, null, null, null);
+                "evil-title", null, null, null, null, null, null, null);
 
         boolean updated = uploadService.updateEntryMetadata(TENANT_A, USER_A, ENTRY_B, req);
 

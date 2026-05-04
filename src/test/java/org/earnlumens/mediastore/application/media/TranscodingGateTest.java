@@ -76,7 +76,7 @@ class TranscodingGateTest {
         seedJob(TranscodingJobStatus.PROCESSING);
 
         UpdateEntryMetadataRequest req = new UpdateEntryMetadataRequest(
-                "new-title", null, null, null, null, null, null, null, null);
+                "new-title", null, null, null, null, null, null, null);
 
         IllegalArgumentException ex = assertThrows(
                 IllegalArgumentException.class,
@@ -92,7 +92,7 @@ class TranscodingGateTest {
         seedJob(TranscodingJobStatus.PENDING);
 
         UpdateEntryMetadataRequest req = new UpdateEntryMetadataRequest(
-                "new-title", null, null, null, null, null, null, null, null);
+                "new-title", null, null, null, null, null, null, null);
 
         assertThrows(IllegalArgumentException.class,
                 () -> uploadService.updateEntryMetadata(TENANT, USER, ENTRY, req));
@@ -105,7 +105,7 @@ class TranscodingGateTest {
         seedJob(TranscodingJobStatus.COMPLETED);
 
         UpdateEntryMetadataRequest req = new UpdateEntryMetadataRequest(
-                "new-title", null, null, null, null, null, null, null, null);
+                "new-title", null, null, null, null, null, null, null);
 
         boolean ok = uploadService.updateEntryMetadata(TENANT, USER, ENTRY, req);
         assertTrue(ok);
@@ -120,7 +120,7 @@ class TranscodingGateTest {
         // No job stub: the gate must short-circuit on entry.type != VIDEO.
 
         UpdateEntryMetadataRequest req = new UpdateEntryMetadataRequest(
-                "new-title", null, null, null, null, null, null, null, null);
+                "new-title", null, null, null, null, null, null, null);
 
         assertTrue(uploadService.updateEntryMetadata(TENANT, USER, ENTRY, req));
         verifyNoInteractions(transcodingJobService);

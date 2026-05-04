@@ -58,7 +58,7 @@ class ModerationCallbackControllerTest {
         @Test
         void missingSecret_returns403() {
             ModerationCallbackRequest req = new ModerationCallbackRequest(
-                    "mod-1", TENANT, "COMPLETED", "APPROVE", 0.95, List.of(), "ok", "GEMINI", null);
+                    "mod-1", TENANT, "COMPLETED", "APPROVE", 0.95, List.of(), "ok", "GEMINI", null, null);
 
             ResponseEntity<?> resp = controller.handleCallback(null, req);
 
@@ -69,7 +69,7 @@ class ModerationCallbackControllerTest {
         @Test
         void wrongSecret_returns403() {
             ModerationCallbackRequest req = new ModerationCallbackRequest(
-                    "mod-1", TENANT, "COMPLETED", "APPROVE", 0.95, List.of(), "ok", "GEMINI", null);
+                    "mod-1", TENANT, "COMPLETED", "APPROVE", 0.95, List.of(), "ok", "GEMINI", null, null);
 
             ResponseEntity<?> resp = controller.handleCallback("wrong-secret", req);
 
@@ -80,11 +80,11 @@ class ModerationCallbackControllerTest {
         @Test
         void correctSecret_proceeds() {
             when(jobService.completeJob(eq(TENANT), eq("mod-1"), eq("APPROVE"), eq(0.95),
-                    anyList(), eq("ok"), eq("GEMINI")))
+                    anyList(), eq("ok"), eq("GEMINI"), any()))
                     .thenReturn(Optional.of(completedJob(ModerationDecision.APPROVE)));
 
             ModerationCallbackRequest req = new ModerationCallbackRequest(
-                    "mod-1", TENANT, "COMPLETED", "APPROVE", 0.95, List.of(), "ok", "GEMINI", null);
+                    "mod-1", TENANT, "COMPLETED", "APPROVE", 0.95, List.of(), "ok", "GEMINI", null, null);
 
             ResponseEntity<?> resp = controller.handleCallback(SECRET, req);
 
@@ -100,12 +100,12 @@ class ModerationCallbackControllerTest {
         @Test
         void approve_returns200WithDecision() {
             when(jobService.completeJob(eq(TENANT), eq("mod-1"), eq("APPROVE"), eq(0.92),
-                    anyList(), eq("Content approved"), eq("GEMINI")))
+                    anyList(), eq("Content approved"), eq("GEMINI"), any()))
                     .thenReturn(Optional.of(completedJob(ModerationDecision.APPROVE)));
 
             ModerationCallbackRequest req = new ModerationCallbackRequest(
                     "mod-1", TENANT, "COMPLETED", "APPROVE", 0.92,
-                    List.of("NONE"), "Content approved", "GEMINI", null);
+                    List.of("NONE"), "Content approved", "GEMINI", null, null);
 
             ResponseEntity<?> resp = controller.handleCallback(SECRET, req);
 
@@ -119,12 +119,12 @@ class ModerationCallbackControllerTest {
         @Test
         void reject_returns200WithDecision() {
             when(jobService.completeJob(eq(TENANT), eq("mod-1"), eq("REJECT"), eq(0.99),
-                    anyList(), eq("NSFW"), eq("NUDENET")))
+                    anyList(), eq("NSFW"), eq("NUDENET"), any()))
                     .thenReturn(Optional.of(completedJob(ModerationDecision.REJECT)));
 
             ModerationCallbackRequest req = new ModerationCallbackRequest(
                     "mod-1", TENANT, "COMPLETED", "REJECT", 0.99,
-                    List.of("NSFW"), "NSFW", "NUDENET", null);
+                    List.of("NSFW"), "NSFW", "NUDENET", null, null);
 
             ResponseEntity<?> resp = controller.handleCallback(SECRET, req);
 
@@ -138,12 +138,12 @@ class ModerationCallbackControllerTest {
         @Test
         void jobNotFound_returns404() {
             when(jobService.completeJob(eq(TENANT), eq("no-id"), anyString(), any(),
-                    anyList(), anyString(), anyString()))
+                    anyList(), anyString(), anyString(), any()))
                     .thenReturn(Optional.empty());
 
             ModerationCallbackRequest req = new ModerationCallbackRequest(
                     "no-id", TENANT, "COMPLETED", "APPROVE", 0.9,
-                    List.of(), "ok", "GEMINI", null);
+                    List.of(), "ok", "GEMINI", null, null);
 
             ResponseEntity<?> resp = controller.handleCallback(SECRET, req);
 
@@ -163,7 +163,7 @@ class ModerationCallbackControllerTest {
 
             ModerationCallbackRequest req = new ModerationCallbackRequest(
                     "mod-1", TENANT, "FAILED", null, null,
-                    null, null, null, "NudeNet OOM");
+                    null, null, null, "NudeNet OOM", null);
 
             ResponseEntity<?> resp = controller.handleCallback(SECRET, req);
 
@@ -181,7 +181,7 @@ class ModerationCallbackControllerTest {
 
             ModerationCallbackRequest req = new ModerationCallbackRequest(
                     "no-id", TENANT, "FAILED", null, null,
-                    null, null, null, "crash");
+                    null, null, null, "crash", null);
 
             ResponseEntity<?> resp = controller.handleCallback(SECRET, req);
 
@@ -195,7 +195,7 @@ class ModerationCallbackControllerTest {
     void invalidStatus_returns400() {
         ModerationCallbackRequest req = new ModerationCallbackRequest(
                 "mod-1", TENANT, "BANANA", null, null,
-                null, null, null, null);
+                null, null, null, null, null);
 
         ResponseEntity<?> resp = controller.handleCallback(SECRET, req);
 

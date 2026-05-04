@@ -286,7 +286,7 @@ class ModerationJobServiceTest {
 
             Optional<ModerationJob> result = service.completeJob(
                     TENANT, "mod-1", "APPROVE", 0.95,
-                    List.of("NONE"), "Content approved", "GEMINI");
+                    List.of("NONE"), "Content approved", "GEMINI", null);
 
             assertTrue(result.isPresent());
             assertEquals(ModerationJobStatus.COMPLETED, result.get().getStatus());
@@ -317,7 +317,7 @@ class ModerationJobServiceTest {
 
             Optional<ModerationJob> result = service.completeJob(
                     TENANT, "mod-1", "APPROVE", 0.92,
-                    List.of("NONE"), "Approved", "GEMINI");
+                    List.of("NONE"), "Approved", "GEMINI", null);
 
             assertTrue(result.isPresent());
             assertEquals(EntryStatus.APPROVED, entry.getStatus());
@@ -343,7 +343,7 @@ class ModerationJobServiceTest {
 
             Optional<ModerationJob> result = service.completeJob(
                     TENANT, "mod-1", "REJECT", 0.98,
-                    List.of("NSFW", "VIOLENCE"), "NSFW content detected", "NUDENET");
+                    List.of("NSFW", "VIOLENCE"), "NSFW content detected", "NUDENET", null);
 
             assertTrue(result.isPresent());
             assertEquals(ModerationDecision.REJECT, result.get().getDecision());
@@ -364,7 +364,7 @@ class ModerationJobServiceTest {
 
             Optional<ModerationJob> result = service.completeJob(
                     TENANT, "mod-1", "MANUAL_QUEUE", 0.5,
-                    List.of("MISLEADING_FINANCIAL"), "Uncertain", "GEMINI");
+                    List.of("MISLEADING_FINANCIAL"), "Uncertain", "GEMINI", null);
 
             assertTrue(result.isPresent());
             assertEquals(ModerationDecision.MANUAL_QUEUE, result.get().getDecision());
@@ -385,7 +385,7 @@ class ModerationJobServiceTest {
 
             Optional<ModerationJob> result = service.completeJob(
                     TENANT, "mod-1", "BANANA", 0.5,
-                    List.of(), "bug", "GEMINI");
+                    List.of(), "bug", "GEMINI", null);
 
             assertTrue(result.isPresent());
             assertEquals(ModerationDecision.MANUAL_QUEUE, result.get().getDecision());
@@ -399,7 +399,7 @@ class ModerationJobServiceTest {
         when(jobRepository.findByTenantIdAndId(TENANT, "no-id")).thenReturn(Optional.empty());
 
         Optional<ModerationJob> result = service.completeJob(
-                TENANT, "no-id", "APPROVE", 0.9, List.of(), "ok", "GEMINI");
+                TENANT, "no-id", "APPROVE", 0.9, List.of(), "ok", "GEMINI", null);
 
         assertTrue(result.isEmpty());
     }
