@@ -49,6 +49,7 @@ public class ModerationJobService {
     private final ModerationConfig config;
     private final ModerationDispatchPort dispatchPort;
     private final TranscodingJobService transcodingJobService;
+    private final ThumbnailJobService thumbnailJobService;
     private final Executor dispatchExecutor;
 
     public ModerationJobService(ModerationJobRepository jobRepository,
@@ -58,6 +59,7 @@ public class ModerationJobService {
                                  ModerationConfig config,
                                  ModerationDispatchPort dispatchPort,
                                  TranscodingJobService transcodingJobService,
+                                 ThumbnailJobService thumbnailJobService,
                                  @Qualifier("moderationDispatchExecutor") Executor dispatchExecutor) {
         this.jobRepository = jobRepository;
         this.entryRepository = entryRepository;
@@ -66,6 +68,7 @@ public class ModerationJobService {
         this.config = config;
         this.dispatchPort = dispatchPort;
         this.transcodingJobService = transcodingJobService;
+        this.thumbnailJobService = thumbnailJobService;
         this.dispatchExecutor = dispatchExecutor;
     }
 
@@ -357,6 +360,16 @@ public class ModerationJobService {
                     if (entry.getType() == org.earnlumens.mediastore.domain.media.model.EntryType.VIDEO) {
                         createTranscodingJobForEntry(job.getTenantId(), entry);
                     }
+
+                    // Thumbnail processing runs for EVERY approved entry (any type),
+                    // for thumbnail and (when present) preview images. Best-effort:
+                    // a failure never blocks the entry — the original is served as-is.
+                    try {
+                        thumbnailJobService.enqueueForEntry(job.getTenantId(), entry);
+                    } catch (Exception e) {
+                        logger.warn("moderation: failed to enqueue thumbnail jobs for entry={} — {}",
+                                entry.getId(), e.getMessage());
+                    }
                 });
     }
 
@@ -367,6 +380,14 @@ public class ModerationJobService {
                     collection.setPublishedAt(java.time.LocalDateTime.now());
                     collectionRepository.save(collection);
                     logger.info("moderation: collection {} approved → status=PUBLISHED", collection.getId());
+
+                    // Cover-thumbnail processing for the collection grid card.
+                    try {
+                        thumbnailJobService.enqueueForCollection(job.getTenantId(), collection);
+                    } catch (Exception e) {
+                        logger.warn("moderation: failed to enqueue cover thumbnail job for collection={} — {}",
+                                collection.getId(), e.getMessage());
+                    }
                 });
     }
 

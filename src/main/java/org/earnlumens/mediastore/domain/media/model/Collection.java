@@ -20,6 +20,12 @@ public class Collection {
     private String description;
     private CollectionType collectionType;
     private String coverR2Key;
+    /**
+     * R2 prefix containing pre-generated cover variants ({@code 320.webp},
+     * {@code 640.webp}, {@code 1280.webp}). Set by the thumbnail worker after
+     * APPROVE; null when not yet processed, skipped, or failed.
+     */
+    private String coverVariantsPrefix;
     private CollectionStatus status;
     private MediaVisibility visibility;
     private boolean isPaid;
@@ -58,6 +64,8 @@ public class Collection {
     public void setCollectionType(CollectionType collectionType) { this.collectionType = collectionType; }
     public String getCoverR2Key() { return coverR2Key; }
     public void setCoverR2Key(String coverR2Key) { this.coverR2Key = coverR2Key; }
+    public String getCoverVariantsPrefix() { return coverVariantsPrefix; }
+    public void setCoverVariantsPrefix(String coverVariantsPrefix) { this.coverVariantsPrefix = coverVariantsPrefix; }
     public CollectionStatus getStatus() { return status; }
     public void setStatus(CollectionStatus status) { this.status = status; }
     public MediaVisibility getVisibility() { return visibility; }

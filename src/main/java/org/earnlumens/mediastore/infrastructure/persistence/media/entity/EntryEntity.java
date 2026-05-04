@@ -90,6 +90,12 @@ public class EntryEntity {
 
     private String previewR2Key;
 
+    /** R2 prefix containing pre-generated thumbnail variants. */
+    private String thumbnailVariantsPrefix;
+
+    /** R2 prefix containing pre-generated preview-image variants. */
+    private String previewVariantsPrefix;
+
     private Integer durationSec;
 
     /** True when HLS transcoding has completed. */
@@ -187,6 +193,12 @@ public class EntryEntity {
 
     public String getPreviewR2Key() { return previewR2Key; }
     public void setPreviewR2Key(String previewR2Key) { this.previewR2Key = previewR2Key; }
+
+    public String getThumbnailVariantsPrefix() { return thumbnailVariantsPrefix; }
+    public void setThumbnailVariantsPrefix(String thumbnailVariantsPrefix) { this.thumbnailVariantsPrefix = thumbnailVariantsPrefix; }
+
+    public String getPreviewVariantsPrefix() { return previewVariantsPrefix; }
+    public void setPreviewVariantsPrefix(String previewVariantsPrefix) { this.previewVariantsPrefix = previewVariantsPrefix; }
 
     public Integer getDurationSec() { return durationSec; }
     public void setDurationSec(Integer durationSec) { this.durationSec = durationSec; }

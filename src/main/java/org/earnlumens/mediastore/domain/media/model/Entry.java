@@ -42,6 +42,15 @@ public class Entry {
     private List<String> tags = new ArrayList<>();
     private String thumbnailR2Key;
     private String previewR2Key;
+    /**
+     * R2 prefix containing pre-generated thumbnail variants ({@code 320.webp},
+     * {@code 640.webp}, {@code 1280.webp}). Set by the thumbnail worker after
+     * APPROVE; null when processing has not yet run, was skipped (input below
+     * minimum size), or failed (use {@code thumbnailR2Key} as the only source).
+     */
+    private String thumbnailVariantsPrefix;
+    /** R2 prefix for preview-image variants. Same convention as {@link #thumbnailVariantsPrefix}. */
+    private String previewVariantsPrefix;
     /** ISO 639-1 language code of the content (e.g. "es", "en"). Nullable for legacy entries. */
     private String contentLanguage;
     private Integer durationSec;
@@ -128,6 +137,12 @@ public class Entry {
 
     public String getPreviewR2Key() { return previewR2Key; }
     public void setPreviewR2Key(String previewR2Key) { this.previewR2Key = previewR2Key; }
+
+    public String getThumbnailVariantsPrefix() { return thumbnailVariantsPrefix; }
+    public void setThumbnailVariantsPrefix(String thumbnailVariantsPrefix) { this.thumbnailVariantsPrefix = thumbnailVariantsPrefix; }
+
+    public String getPreviewVariantsPrefix() { return previewVariantsPrefix; }
+    public void setPreviewVariantsPrefix(String previewVariantsPrefix) { this.previewVariantsPrefix = previewVariantsPrefix; }
 
     public String getContentLanguage() { return contentLanguage; }
     public void setContentLanguage(String contentLanguage) { this.contentLanguage = contentLanguage; }

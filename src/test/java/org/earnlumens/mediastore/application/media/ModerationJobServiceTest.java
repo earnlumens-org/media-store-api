@@ -48,6 +48,7 @@ class ModerationJobServiceTest {
     private ModerationConfig config;
     private ModerationDispatchPort dispatchPort;
     private TranscodingJobService transcodingJobService;
+    private ThumbnailJobService thumbnailJobService;
     private Executor dispatchExecutor;
     private ModerationJobService service;
 
@@ -59,13 +60,14 @@ class ModerationJobServiceTest {
         assetRepository = mock(AssetRepository.class);
         dispatchPort = mock(ModerationDispatchPort.class);
         transcodingJobService = mock(TranscodingJobService.class);
+        thumbnailJobService = mock(ThumbnailJobService.class);
         dispatchExecutor = Executors.newFixedThreadPool(2);
         config = new ModerationConfig();
         config.setMaxRetries(2);
         config.setHeartbeatTimeoutSeconds(120);
         config.setStaleBatchSize(10);
         config.setDispatchBatchSize(5);
-        service = new ModerationJobService(jobRepository, entryRepository, collectionRepository, assetRepository, config, dispatchPort, transcodingJobService, dispatchExecutor);
+        service = new ModerationJobService(jobRepository, entryRepository, collectionRepository, assetRepository, config, dispatchPort, transcodingJobService, thumbnailJobService, dispatchExecutor);
 
         when(jobRepository.save(any(ModerationJob.class)))
                 .thenAnswer(inv -> inv.getArgument(0));

@@ -48,6 +48,9 @@ public class CollectionEntity {
 
     private String coverR2Key;
 
+    /** R2 prefix containing pre-generated cover variants ({@code 320.webp}, {@code 640.webp}, {@code 1280.webp}). */
+    private String coverVariantsPrefix;
+
     @NotBlank
     private String status;
 
@@ -112,6 +115,9 @@ public class CollectionEntity {
 
     public String getCoverR2Key() { return coverR2Key; }
     public void setCoverR2Key(String coverR2Key) { this.coverR2Key = coverR2Key; }
+
+    public String getCoverVariantsPrefix() { return coverVariantsPrefix; }
+    public void setCoverVariantsPrefix(String coverVariantsPrefix) { this.coverVariantsPrefix = coverVariantsPrefix; }
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
