@@ -443,6 +443,28 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
         }
     }
 
+    /**
+     * Apply consumer-side content language filter (Phase 4).
+     * <p>
+     * Builds a {@code contentLanguage IN […]} match where the IN list is
+     * the user's preferred languages, optionally augmented with
+     * {@code "multi"} so language-free content (instrumental music, images,
+     * mixed-language) is included. Skipped entirely when the filter
+     * doesn't apply (anonymous user, "show all" mode, or empty preferences
+     * without {@code includeMulti} — see {@link org.earnlumens.mediastore.domain.media.model.LanguageFilter#applies()}).
+     */
+    private void addLanguageFilter(List<AggregationOperation> ops,
+                                    org.earnlumens.mediastore.domain.media.model.LanguageFilter filter) {
+        if (filter == null || !filter.applies()) {
+            return;
+        }
+        List<String> in = new ArrayList<>(filter.languages());
+        if (filter.includeMulti() && !in.contains("multi")) {
+            in.add("multi");
+        }
+        ops.add(Aggregation.match(Criteria.where("contentLanguage").in(in)));
+    }
+
     private void addSearchFilter(List<AggregationOperation> ops, String search) {
         if (search != null && !search.isBlank()) {
             String escaped = Pattern.quote(search);
@@ -454,8 +476,9 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
 
     @Override
     public Document findExploreFeed(String tenantId, String type, String pricing, String sort,
+                                     org.earnlumens.mediastore.domain.media.model.LanguageFilter languageFilter,
                                      int skip, int limit) {
-        List<AggregationOperation> ops = buildExploreFeedPipeline(tenantId, type, pricing);
+        List<AggregationOperation> ops = buildExploreFeedPipeline(tenantId, type, pricing, languageFilter);
 
         // Build sort document for use inside $facet
         Document sortDoc = buildSortDocument(sort);
@@ -484,7 +507,8 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
         };
     }
 
-    private List<AggregationOperation> buildExploreFeedPipeline(String tenantId, String type, String pricing) {
+    private List<AggregationOperation> buildExploreFeedPipeline(String tenantId, String type, String pricing,
+                                                                  org.earnlumens.mediastore.domain.media.model.LanguageFilter languageFilter) {
         List<AggregationOperation> ops = new ArrayList<>();
 
         // 1. Match ALL PUBLISHED entries for this tenant
@@ -521,10 +545,13 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
                 new Document("coll", "collections")
                         .append("pipeline", List.of(collMatch, collAddFields))));
 
-        // 4. Optional type filter
+        // 4. Optional content language filter (Phase 4 — consumer prefs).
+        addLanguageFilter(ops, languageFilter);
+
+        // 5. Optional type filter
         addTypeFilter(ops, type);
 
-        // 5. Optional pricing filter
+        // 6. Optional pricing filter
         addPricingFilter(ops, pricing);
 
         return ops;
@@ -534,8 +561,10 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
 
     @Override
     public Document findCommunityFeed(String tenantId, String badgeKey, String type,
-                                       String pricing, String sort, int skip, int limit) {
-        List<AggregationOperation> ops = buildCommunityFeedPipeline(tenantId, badgeKey, type, pricing);
+                                       String pricing, String sort,
+                                       org.earnlumens.mediastore.domain.media.model.LanguageFilter languageFilter,
+                                       int skip, int limit) {
+        List<AggregationOperation> ops = buildCommunityFeedPipeline(tenantId, badgeKey, type, pricing, languageFilter);
 
         Document sortDoc = buildSortDocument(sort);
 
@@ -553,7 +582,8 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
     }
 
     private List<AggregationOperation> buildCommunityFeedPipeline(String tenantId, String badgeKey,
-                                                                    String type, String pricing) {
+                                                                    String type, String pricing,
+                                                                    org.earnlumens.mediastore.domain.media.model.LanguageFilter languageFilter) {
         List<AggregationOperation> ops = new ArrayList<>();
 
         // 1. Match PUBLISHED entries with the given authorBadge
@@ -592,10 +622,13 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
                 new Document("coll", "collections")
                         .append("pipeline", List.of(collMatch, collAddFields))));
 
-        // 4. Optional type filter
+        // 4. Optional content language filter (Phase 4 — consumer prefs).
+        addLanguageFilter(ops, languageFilter);
+
+        // 5. Optional type filter
         addTypeFilter(ops, type);
 
-        // 5. Optional pricing filter
+        // 6. Optional pricing filter
         addPricingFilter(ops, pricing);
 
         return ops;

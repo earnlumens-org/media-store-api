@@ -2,6 +2,7 @@ package org.earnlumens.mediastore.domain.user.model;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.List;
 
 public class User {
 
@@ -20,6 +21,25 @@ public class User {
     private String blockedByRequestId;
     private String tempUUID;
     private Instant tempUUIDCreatedAt;
+
+    /**
+     * Consumer-side content language preferences.
+     * <p>
+     * {@code contentLanguages} — ISO 639-1 codes the user wants to see in
+     * public feeds (e.g. {@code ["en", "es"]}). Empty/null means "no
+     * filter" and behaves like {@code showAllLanguages = true}.
+     * <p>
+     * {@code includeMulti} — when {@code true}, language-free content
+     * tagged {@code "multi"} (instrumental music, images, mixed-language)
+     * is included in addition to {@code contentLanguages}. Default true.
+     * <p>
+     * {@code showAllLanguages} — escape hatch for discovery mode. When
+     * {@code true}, {@code contentLanguages} and {@code includeMulti} are
+     * ignored and the feed returns content in any language. Default false.
+     */
+    private List<String> contentLanguages;
+    private Boolean includeMulti;
+    private Boolean showAllLanguages;
 
     public User() {
         this.blocked = false;
@@ -143,5 +163,29 @@ public class User {
 
     public void setTempUUIDCreatedAt(Instant tempUUIDCreatedAt) {
         this.tempUUIDCreatedAt = tempUUIDCreatedAt;
+    }
+
+    public List<String> getContentLanguages() {
+        return contentLanguages;
+    }
+
+    public void setContentLanguages(List<String> contentLanguages) {
+        this.contentLanguages = contentLanguages;
+    }
+
+    public Boolean getIncludeMulti() {
+        return includeMulti;
+    }
+
+    public void setIncludeMulti(Boolean includeMulti) {
+        this.includeMulti = includeMulti;
+    }
+
+    public Boolean getShowAllLanguages() {
+        return showAllLanguages;
+    }
+
+    public void setShowAllLanguages(Boolean showAllLanguages) {
+        this.showAllLanguages = showAllLanguages;
     }
 }

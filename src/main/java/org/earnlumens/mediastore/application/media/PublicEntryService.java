@@ -254,9 +254,11 @@ public class PublicEntryService {
      * Only content with authorBadge="u1" appears.
      */
     public PublicFeedPageResponse getCommunityFeed(String tenantId, String type, String pricing,
-                                                    String sort, int page, int size) {
+                                                    String sort,
+                                                    org.earnlumens.mediastore.domain.media.model.LanguageFilter languageFilter,
+                                                    int page, int size) {
         int skip = page * size;
-        Document facetResult = entryRepository.findCommunityFeed(tenantId, "u1", type, pricing, sort, skip, size);
+        Document facetResult = entryRepository.findCommunityFeed(tenantId, "u1", type, pricing, sort, languageFilter, skip, size);
 
         List<Document> docs = facetResult != null
                 ? facetResult.getList("data", Document.class, List.of())
@@ -281,9 +283,10 @@ public class PublicEntryService {
      * No entitlement checks — locked/unlocked is resolved client-side via purchasesStore.
      */
     public PublicFeedPageResponse getExploreFeed(String tenantId, String type, String pricing, String sort,
+                                                  org.earnlumens.mediastore.domain.media.model.LanguageFilter languageFilter,
                                                   int page, int size) {
         int skip = page * size;
-        Document facetResult = entryRepository.findExploreFeed(tenantId, type, pricing, sort, skip, size);
+        Document facetResult = entryRepository.findExploreFeed(tenantId, type, pricing, sort, languageFilter, skip, size);
 
         List<Document> docs = facetResult != null
                 ? facetResult.getList("data", Document.class, List.of())

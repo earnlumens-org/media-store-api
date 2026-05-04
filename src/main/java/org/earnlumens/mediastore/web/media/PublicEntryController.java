@@ -1,9 +1,11 @@
 package org.earnlumens.mediastore.web.media;
 
 import org.earnlumens.mediastore.application.media.PublicEntryService;
+import org.earnlumens.mediastore.application.user.UserService;
 import org.earnlumens.mediastore.domain.media.dto.response.PublicEntryPageResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PublicEntryResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PublicFeedPageResponse;
+import org.earnlumens.mediastore.domain.media.model.LanguageFilter;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -24,9 +26,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class PublicEntryController {
 
     private final PublicEntryService publicEntryService;
+    private final UserService userService;
 
-    public PublicEntryController(PublicEntryService publicEntryService) {
+    public PublicEntryController(PublicEntryService publicEntryService, UserService userService) {
         this.publicEntryService = publicEntryService;
+        this.userService = userService;
     }
 
     /**
@@ -54,11 +58,14 @@ public class PublicEntryController {
             @RequestParam(value = "type", required = false) String type,
             @RequestParam(value = "pricing", required = false) String pricing,
             @RequestParam(value = "sort", defaultValue = "newest") String sort,
+            @RequestParam(value = "lang", required = false) String langOverride,
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "48") int size
     ) {
         String tenantId = TenantContext.require();
-        PublicFeedPageResponse response = publicEntryService.getCommunityFeed(tenantId, type, pricing, sort, page, size);
+        LanguageFilter languageFilter = resolveLanguageFilter(langOverride);
+        PublicFeedPageResponse response = publicEntryService.getCommunityFeed(
+                tenantId, type, pricing, sort, languageFilter, page, size);
         return ResponseEntity.ok(response);
     }
 
@@ -72,12 +79,50 @@ public class PublicEntryController {
             @RequestParam(value = "type", required = false) String type,
             @RequestParam(value = "pricing", required = false) String pricing,
             @RequestParam(value = "sort", defaultValue = "newest") String sort,
+            @RequestParam(value = "lang", required = false) String langOverride,
             @RequestParam(value = "page", defaultValue = "0") int page,
             @RequestParam(value = "size", defaultValue = "48") int size
     ) {
         String tenantId = TenantContext.require();
-        PublicFeedPageResponse response = publicEntryService.getExploreFeed(tenantId, type, pricing, sort, page, size);
+        LanguageFilter languageFilter = resolveLanguageFilter(langOverride);
+        PublicFeedPageResponse response = publicEntryService.getExploreFeed(
+                tenantId, type, pricing, sort, languageFilter, page, size);
         return ResponseEntity.ok(response);
+    }
+
+    /**
+     * Resolve the {@link LanguageFilter} to apply for this request.
+     * <p>
+     * Resolution order:
+     * <ol>
+     *   <li>If {@code langOverride == "all"}, return {@link LanguageFilter#NONE}
+     *       (per-request escape hatch — used by the "Show all languages"
+     *       toggle in the UI).</li>
+     *   <li>If unauthenticated, return {@link LanguageFilter#NONE} (anonymous
+     *       users see everything; the UI can prompt them to sign in).</li>
+     *   <li>Otherwise read the persisted user preferences. Missing/null
+     *       fields fall back to {@code includeMulti=true} and
+     *       {@code showAllLanguages=false}.</li>
+     * </ol>
+     */
+    private LanguageFilter resolveLanguageFilter(String langOverride) {
+        if ("all".equalsIgnoreCase(langOverride)) {
+            return LanguageFilter.NONE;
+        }
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth == null || !(auth.getPrincipal() instanceof OAuth2User principal)) {
+            return LanguageFilter.NONE;
+        }
+        Object idAttr = principal.getAttribute("id");
+        if (idAttr == null) {
+            return LanguageFilter.NONE;
+        }
+        return userService.findByOauthUserId(idAttr.toString())
+                .map(user -> new LanguageFilter(
+                        user.getContentLanguages() == null ? java.util.List.of() : user.getContentLanguages(),
+                        user.getIncludeMulti() == null ? true : user.getIncludeMulti(),
+                        user.getShowAllLanguages() == null ? false : user.getShowAllLanguages()))
+                .orElse(LanguageFilter.NONE);
     }
 
     /**

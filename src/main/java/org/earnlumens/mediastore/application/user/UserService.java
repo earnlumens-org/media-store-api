@@ -1,9 +1,11 @@
 package org.earnlumens.mediastore.application.user;
 
+import org.earnlumens.mediastore.domain.user.dto.request.UpdateContentLanguagePreferencesRequest;
 import org.earnlumens.mediastore.domain.user.model.User;
 import org.earnlumens.mediastore.domain.user.repository.UserRepository;
 import org.springframework.stereotype.Service;
 
+import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -38,4 +40,36 @@ public class UserService {
     public Optional<User> findByTempUUID(String tempUUID) {
         return userRepository.findByTempUUID(tempUUID);
     }
+
+    /**
+     * Apply a partial update of the user's consumer-side content language
+     * preferences. Fields that are {@code null} in the request are not
+     * touched. An empty {@code contentLanguages} list is treated as an
+     * explicit "no preferred languages" signal (and is persisted as such);
+     * combined with {@code showAllLanguages = false} this means feeds will
+     * effectively only show {@code multi} content (or nothing if
+     * {@code includeMulti = false}). The UI guards against this footgun.
+     *
+     * @return the saved {@link User} or {@link Optional#empty()} if the
+     *         user does not exist.
+     */
+    public Optional<User> updateContentLanguagePreferences(
+            String oauthUserId,
+            UpdateContentLanguagePreferencesRequest request
+    ) {
+        return userRepository.findByOauthUserId(oauthUserId).map(user -> {
+            List<String> langs = request.contentLanguages();
+            if (langs != null) {
+                user.setContentLanguages(List.copyOf(langs));
+            }
+            if (request.includeMulti() != null) {
+                user.setIncludeMulti(request.includeMulti());
+            }
+            if (request.showAllLanguages() != null) {
+                user.setShowAllLanguages(request.showAllLanguages());
+            }
+            return userRepository.save(user);
+        });
+    }
 }
+

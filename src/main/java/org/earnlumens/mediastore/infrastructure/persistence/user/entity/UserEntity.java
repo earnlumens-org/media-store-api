@@ -8,6 +8,7 @@ import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.List;
 
 @Document(collection = "users")
 public class UserEntity {
@@ -54,6 +55,11 @@ public class UserEntity {
     private String tempUUID;
 
     private Instant tempUUIDCreatedAt;
+
+    /** Consumer-side content language preferences (Phase 4). */
+    private List<String> contentLanguages;
+    private Boolean includeMulti;
+    private Boolean showAllLanguages;
 
     public UserEntity() {}
 
@@ -175,5 +181,29 @@ public class UserEntity {
 
     public void setTempUUIDCreatedAt(Instant tempUUIDCreatedAt) {
         this.tempUUIDCreatedAt = tempUUIDCreatedAt;
+    }
+
+    public List<String> getContentLanguages() {
+        return contentLanguages;
+    }
+
+    public void setContentLanguages(List<String> contentLanguages) {
+        this.contentLanguages = contentLanguages;
+    }
+
+    public Boolean getIncludeMulti() {
+        return includeMulti;
+    }
+
+    public void setIncludeMulti(Boolean includeMulti) {
+        this.includeMulti = includeMulti;
+    }
+
+    public Boolean getShowAllLanguages() {
+        return showAllLanguages;
+    }
+
+    public void setShowAllLanguages(Boolean showAllLanguages) {
+        this.showAllLanguages = showAllLanguages;
     }
 }

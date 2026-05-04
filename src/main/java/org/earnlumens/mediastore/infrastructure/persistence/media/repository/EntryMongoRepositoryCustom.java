@@ -88,6 +88,7 @@ public interface EntryMongoRepositoryCustom {
      * Returns a Document with "data" (List<Document>) and "total" (long).
      */
     Document findExploreFeed(String tenantId, String type, String pricing, String sort,
+                             org.earnlumens.mediastore.domain.media.model.LanguageFilter languageFilter,
                              int skip, int limit);
 
     // ── Community feed ──────────────────────────────────────────────────────
@@ -99,5 +100,7 @@ public interface EntryMongoRepositoryCustom {
      * Returns a Document with "data" (List<Document>) and "total" (long).
      */
     Document findCommunityFeed(String tenantId, String badgeKey, String type,
-                               String pricing, String sort, int skip, int limit);
+                               String pricing, String sort,
+                               org.earnlumens.mediastore.domain.media.model.LanguageFilter languageFilter,
+                               int skip, int limit);
 }

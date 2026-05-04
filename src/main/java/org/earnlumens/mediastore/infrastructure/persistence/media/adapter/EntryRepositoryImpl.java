@@ -199,13 +199,16 @@ public class EntryRepositoryImpl implements EntryRepository {
 
     @Override
     public org.bson.Document findExploreFeed(String tenantId, String type, String pricing, String sort,
+                                              org.earnlumens.mediastore.domain.media.model.LanguageFilter languageFilter,
                                               int skip, int limit) {
-        return entryMongoRepository.findExploreFeed(tenantId, type, pricing, sort, skip, limit);
+        return entryMongoRepository.findExploreFeed(tenantId, type, pricing, sort, languageFilter, skip, limit);
     }
 
     @Override
     public org.bson.Document findCommunityFeed(String tenantId, String badgeKey, String type,
-                                                String pricing, String sort, int skip, int limit) {
-        return entryMongoRepository.findCommunityFeed(tenantId, badgeKey, type, pricing, sort, skip, limit);
+                                                String pricing, String sort,
+                                                org.earnlumens.mediastore.domain.media.model.LanguageFilter languageFilter,
+                                                int skip, int limit) {
+        return entryMongoRepository.findCommunityFeed(tenantId, badgeKey, type, pricing, sort, languageFilter, skip, limit);
     }
 }

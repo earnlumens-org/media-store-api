@@ -43,7 +43,7 @@ public record CreateCollectionRequest(
          * This is the user-declared default. The moderation pipeline is the
          * source of truth and may overwrite this value.
          */
-        @Pattern(regexp = "^(multi|[a-z]{2}(-[a-z]{2})?)$",
-                message = "contentLanguage must be 'multi' or an ISO 639-1 code")
+        @Pattern(regexp = "^[a-z]{2}(-[a-z]{2})?$",
+                message = "contentLanguage must be a lowercase ISO 639-1 code (e.g. 'en', 'es', 'zh-cn'); the value 'multi' is reserved for the moderation pipeline and cannot be set by users")
         String contentLanguage
 ) {}
