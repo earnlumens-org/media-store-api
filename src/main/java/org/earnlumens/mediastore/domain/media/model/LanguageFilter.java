@@ -37,18 +37,21 @@ public record LanguageFilter(
 
     /**
      * @return {@code true} when the filter should be applied to the query.
+     *         <p>
      *         Returns {@code false} for {@link #NONE}, for users that
-     *         explicitly chose "show all languages", and for users with no
-     *         preferred languages AND no {@code multi} fallback (which
-     *         would yield an empty feed — the caller should treat this as
-     *         a no-op rather than match nothing).
+     *         explicitly chose "show all languages", and for users that
+     *         have no preferred languages configured \u2014 we treat the
+     *         empty-prefs case as "user has not opted in yet" and let the
+     *         feed return everything (otherwise first-time logins would
+     *         see an almost empty feed filtered to {@code "multi"} only).
+     *         The dialog still lets the user explicitly enable
+     *         {@code includeMulti} with an empty language list, but that
+     *         configuration is footgun-guarded in the UI.
      */
     public boolean applies() {
         if (showAllLanguages) {
             return false;
         }
-        // Empty list + no multi => filter would match nothing. Treat as no-op
-        // so the user still sees content (the UI guards against this state).
-        return !languages.isEmpty() || includeMulti;
+        return !languages.isEmpty();
     }
 }
