@@ -172,7 +172,9 @@ public class PurchaseListService {
                 entry.getTags(),
                 entitlement.getGrantedAt() != null
                         ? entitlement.getGrantedAt().format(ISO_FORMATTER)
-                        : null
+                        : null,
+                entry.getThumbnailVariantsPrefix(),
+                entry.getPreviewVariantsPrefix()
         );
     }
 
@@ -222,7 +224,8 @@ public class PurchaseListService {
                             coll.getContentLanguage(),
                             ent.getGrantedAt() != null
                                     ? ent.getGrantedAt().format(ISO_FORMATTER)
-                                    : null
+                                    : null,
+                            coll.getCoverVariantsPrefix()
                     );
                 })
                 .toList();
@@ -297,7 +300,10 @@ public class PurchaseListService {
                 doc.getString("priceCurrency"),
                 doc.getInteger("itemCount", 0),
                 false,  // locked: never locked (user owns it)
-                isPaid  // unlocked: true for paid items (user bought it)
+                isPaid,  // unlocked: true for paid items (user bought it)
+                doc.getString("thumbnailVariantsPrefix"),
+                doc.getString("previewVariantsPrefix"),
+                doc.getString("coverVariantsPrefix")
         );
     }
 }

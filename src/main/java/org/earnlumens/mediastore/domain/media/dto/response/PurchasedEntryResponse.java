@@ -21,5 +21,9 @@ public record PurchasedEntryResponse(
         boolean isPaid,
         BigDecimal priceXlm,
         List<String> tags,
-        String purchasedAt
+        String purchasedAt,
+        /** R2 prefix for thumbnail variants. */
+        String thumbnailVariantsPrefix,
+        /** R2 prefix for preview-image variants. */
+        String previewVariantsPrefix
 ) {}

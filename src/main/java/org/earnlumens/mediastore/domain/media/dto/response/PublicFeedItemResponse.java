@@ -31,5 +31,11 @@ public record PublicFeedItemResponse(
         /** Number of items — only for collections */
         int itemCount,
         boolean locked,
-        boolean unlocked
+        boolean unlocked,
+        /** R2 prefix for thumbnail variants (entries). Null until worker completes. */
+        String thumbnailVariantsPrefix,
+        /** R2 prefix for preview-image variants (entries). */
+        String previewVariantsPrefix,
+        /** R2 prefix for cover variants (collections). */
+        String coverVariantsPrefix
 ) {}

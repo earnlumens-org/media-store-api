@@ -35,5 +35,11 @@ public record StudioItemResponse(
         /** Human-readable moderation feedback (rejection/suspension reason). Null if none. */
         String moderationFeedback,
         /** Resource-type body text. Null for non-resource entries. */
-        String resourceContent
+        String resourceContent,
+        /** R2 prefix for thumbnail variants (entries). */
+        String thumbnailVariantsPrefix,
+        /** R2 prefix for preview-image variants (entries). */
+        String previewVariantsPrefix,
+        /** R2 prefix for cover variants (collections). */
+        String coverVariantsPrefix
 ) {}

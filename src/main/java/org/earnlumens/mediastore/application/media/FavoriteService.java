@@ -239,7 +239,9 @@ public class FavoriteService {
                 null, // itemsCount
                 locked,
                 unlocked,
-                fav.getAddedAt() != null ? fav.getAddedAt().format(ISO_FORMATTER) : null
+                fav.getAddedAt() != null ? fav.getAddedAt().format(ISO_FORMATTER) : null,
+                entry.getThumbnailVariantsPrefix(),
+                null // coverVariantsPrefix — entries use thumbnail
         );
     }
 
@@ -262,7 +264,9 @@ public class FavoriteService {
                 collection.getItems() != null ? collection.getItems().size() : null,
                 locked,
                 unlocked,
-                fav.getAddedAt() != null ? fav.getAddedAt().format(ISO_FORMATTER) : null
+                fav.getAddedAt() != null ? fav.getAddedAt().format(ISO_FORMATTER) : null,
+                null, // thumbnailVariantsPrefix — collections use cover
+                collection.getCoverVariantsPrefix()
         );
     }
 

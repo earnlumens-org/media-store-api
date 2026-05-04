@@ -50,7 +50,11 @@ class TenantIsolationArchTest {
             // Platform-level moderation dispatcher picks PENDING jobs across all tenants
             "ModerationJobRepository#findAllByStatus",
             // Platform-level moderation watchdog recovers stale jobs across all tenants
-            "ModerationJobRepository#findAllStaleJobs"
+            "ModerationJobRepository#findAllStaleJobs",
+            // Platform-level thumbnail dispatcher picks PENDING jobs across all tenants
+            "ThumbnailJobRepository#findAllByStatus",
+            // Platform-level thumbnail watchdog recovers stale jobs across all tenants
+            "ThumbnailJobRepository#findAllStaleJobs"
     );
 
     // ── Methods that carry tenantId inside the entity (e.g. save) ──

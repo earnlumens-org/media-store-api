@@ -24,5 +24,7 @@ public record CollectionResponse(
         int itemCount,
         boolean locked,
         boolean unlocked,
-        String contentLanguage
+        String contentLanguage,
+        /** R2 prefix for cover variants (320.webp, 640.webp, 1280.webp). */
+        String coverVariantsPrefix
 ) {}

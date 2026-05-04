@@ -17,5 +17,7 @@ public record PurchasedCollectionResponse(
         BigDecimal priceXlm,
         int itemCount,
         String contentLanguage,
-        String purchasedAt
+        String purchasedAt,
+        /** R2 prefix for cover variants. */
+        String coverVariantsPrefix
 ) {}

@@ -125,6 +125,7 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
             { "$project": {
                 "_id": 1, "kind": 1, "type": 1, "title": 1, "description": 1,
                 "status": 1, "thumbnailR2Key": 1, "coverR2Key": 1,
+                "thumbnailVariantsPrefix": 1, "previewVariantsPrefix": 1, "coverVariantsPrefix": 1,
                 "isPaid": 1, "priceXlm": 1, "priceUsd": 1, "priceCurrency": 1,
                 "contentLanguage": 1, "durationSec": 1, "viewCount": 1,
                 "itemCount": 1, "createdAt": 1, "updatedAt": 1, "publishedAt": 1,
@@ -249,6 +250,7 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
                 "authorUsername": 1, "authorAvatarUrl": 1, "authorBadge": 1,
                 "publishedAt": 1,
                 "thumbnailR2Key": 1, "coverR2Key": 1, "durationSec": 1,
+                "thumbnailVariantsPrefix": 1, "previewVariantsPrefix": 1, "coverVariantsPrefix": 1,
                 "viewCount": 1, "isPaid": 1, "priceXlm": 1, "priceUsd": 1,
                 "priceCurrency": 1, "itemCount": 1, "sortDate": 1
             }}

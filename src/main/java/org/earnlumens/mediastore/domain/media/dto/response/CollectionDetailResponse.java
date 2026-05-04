@@ -28,7 +28,9 @@ public record CollectionDetailResponse(
         boolean unlocked,
         boolean isOwner,
         String contentLanguage,
-        List<CollectionEntryItem> items
+        List<CollectionEntryItem> items,
+        /** R2 prefix for cover variants. */
+        String coverVariantsPrefix
 ) {
     public record CollectionEntryItem(
             String entryId,
@@ -42,6 +44,8 @@ public record CollectionDetailResponse(
             boolean isPaid,
             BigDecimal priceXlm,
             boolean locked,
-            boolean unlocked
+            boolean unlocked,
+            /** R2 prefix for thumbnail variants of this entry. */
+            String thumbnailVariantsPrefix
     ) {}
 }

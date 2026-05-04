@@ -215,7 +215,9 @@ public class PublicEntryService {
                 entry.getContentLanguage(),
                 entry.getTags(),
                 assetInfo,
-                hlsReady
+                hlsReady,
+                entry.getThumbnailVariantsPrefix(),
+                entry.getPreviewVariantsPrefix()
         );
     }
 
@@ -424,7 +426,10 @@ public class PublicEntryService {
                 doc.getString("priceCurrency"),
                 doc.getInteger("itemCount", 0),
                 locked,
-                unlocked
+                unlocked,
+                doc.getString("thumbnailVariantsPrefix"),
+                doc.getString("previewVariantsPrefix"),
+                doc.getString("coverVariantsPrefix")
         );
     }
 }

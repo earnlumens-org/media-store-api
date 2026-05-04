@@ -21,5 +21,9 @@ public record FavoriteItemResponse(
         Integer itemsCount,
         boolean locked,
         boolean unlocked,
-        String addedAt
+        String addedAt,
+        /** R2 prefix for thumbnail variants (entries). */
+        String thumbnailVariantsPrefix,
+        /** R2 prefix for cover variants (collections). */
+        String coverVariantsPrefix
 ) {}

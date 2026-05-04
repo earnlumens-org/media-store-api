@@ -814,7 +814,10 @@ public class EntryUploadService {
                     transcodingMap.get(id),
                     doc.getString("sellerWallet"),
                     doc.getString("moderationFeedback"),
-                    doc.getString("resourceContent")
+                    doc.getString("resourceContent"),
+                    doc.getString("thumbnailVariantsPrefix"),
+                    doc.getString("previewVariantsPrefix"),
+                    doc.getString("coverVariantsPrefix")
             );
         }).toList();
 
@@ -885,7 +888,9 @@ public class EntryUploadService {
                 entry.getPublishedAt() != null ? entry.getPublishedAt().format(fmt) : null,
                 transcodingStatus,
                 entry.getSellerWallet(),
-                entry.getModerationFeedback()
+                entry.getModerationFeedback(),
+                entry.getThumbnailVariantsPrefix(),
+                entry.getPreviewVariantsPrefix()
         );
     }
 

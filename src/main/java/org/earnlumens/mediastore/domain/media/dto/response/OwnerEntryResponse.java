@@ -29,5 +29,9 @@ public record OwnerEntryResponse(
         /** Stellar public key of the seller wallet for paid content. Null for free content. */
         String sellerWallet,
         /** Human-readable moderation feedback (rejection/suspension reason). Null if none. */
-        String moderationFeedback
+        String moderationFeedback,
+        /** R2 prefix for thumbnail variants. */
+        String thumbnailVariantsPrefix,
+        /** R2 prefix for preview-image variants. */
+        String previewVariantsPrefix
 ) {}

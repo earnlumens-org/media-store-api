@@ -463,7 +463,8 @@ public class CollectionService {
                             entry.isPaid(),
                             entry.getPriceXlm(),
                             entryLocked,
-                            entryUnlocked
+                            entryUnlocked,
+                            entry.getThumbnailVariantsPrefix()
                     );
                 })
                 .toList();
@@ -489,7 +490,8 @@ public class CollectionService {
                 collUnlocked,
                 isOwner,
                 collection.getContentLanguage(),
-                entryItems
+                entryItems,
+                collection.getCoverVariantsPrefix()
         ));
     }
 
@@ -593,7 +595,8 @@ public class CollectionService {
                 collection.getItems() != null ? collection.getItems().size() : 0,
                 locked,
                 unlocked,
-                collection.getContentLanguage()
+                collection.getContentLanguage(),
+                collection.getCoverVariantsPrefix()
         );
     }
 }
