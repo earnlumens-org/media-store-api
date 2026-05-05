@@ -5,5 +5,7 @@ public enum CollectionStatus {
     IN_REVIEW,
     PUBLISHED,
     REJECTED,
-    ARCHIVED
+    ARCHIVED,
+    /** Soft-deleted by the creator. Visibility rules mirror ARCHIVED. */
+    DELETED
 }

@@ -164,8 +164,9 @@ public class CollectionService {
         Collection collection = opt.get();
         if (collection.getStatus() != CollectionStatus.DRAFT
                 && collection.getStatus() != CollectionStatus.ARCHIVED
+                && collection.getStatus() != CollectionStatus.DELETED
                 && collection.getStatus() != CollectionStatus.REJECTED) {
-            throw new IllegalArgumentException("Only DRAFT, ARCHIVED or REJECTED collections can be published");
+            throw new IllegalArgumentException("Only DRAFT, ARCHIVED, DELETED or REJECTED collections can be published");
         }
 
         if (collection.isPaid() && (collection.getSellerWallet() == null || collection.getSellerWallet().isBlank())) {
@@ -253,6 +254,41 @@ public class CollectionService {
         collection.setStatus(CollectionStatus.DRAFT);
         collectionRepository.save(collection);
         logger.info("Unarchived collection id={}", collectionId);
+        return true;
+    }
+
+    /**
+     * Soft-delete a collection: same access rules as ARCHIVED (prior buyers keep access)
+     * but tracked as a separate user-facing bucket. Reversible via
+     * {@link #restoreDeletedCollection}.
+     */
+    public boolean softDeleteCollection(String tenantId, String userId, String collectionId) {
+        Optional<Collection> opt = collectionRepository.findByTenantIdAndId(tenantId, collectionId);
+        if (opt.isEmpty() || !opt.get().getUserId().equals(userId)) {
+            return false;
+        }
+
+        Collection collection = opt.get();
+        collection.setStatus(CollectionStatus.DELETED);
+        collectionRepository.save(collection);
+        logger.info("Soft-deleted collection id={}", collectionId);
+        return true;
+    }
+
+    public boolean restoreDeletedCollection(String tenantId, String userId, String collectionId) {
+        Optional<Collection> opt = collectionRepository.findByTenantIdAndId(tenantId, collectionId);
+        if (opt.isEmpty() || !opt.get().getUserId().equals(userId)) {
+            return false;
+        }
+
+        Collection collection = opt.get();
+        if (collection.getStatus() != CollectionStatus.DELETED) {
+            throw new IllegalArgumentException("Only DELETED collections can be restored");
+        }
+
+        collection.setStatus(CollectionStatus.DRAFT);
+        collectionRepository.save(collection);
+        logger.info("Restored soft-deleted collection id={}", collectionId);
         return true;
     }
 

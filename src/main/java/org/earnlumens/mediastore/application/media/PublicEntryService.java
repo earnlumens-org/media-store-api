@@ -93,11 +93,12 @@ public class PublicEntryService {
         if (status == EntryStatus.PUBLISHED || status == EntryStatus.UNLISTED) {
             return true;
         }
-        if (status != EntryStatus.ARCHIVED) {
+        if (status != EntryStatus.ARCHIVED && status != EntryStatus.DELETED) {
             return false;
         }
-        // ARCHIVED: keep accessible for owner and prior buyers so a creator
-        // archiving an item does not strand customers who already paid for it.
+        // ARCHIVED / DELETED: keep accessible for owner and prior buyers so a
+        // creator hiding or soft-deleting an item does not strand customers
+        // who already paid for it.
         if (viewerUserId == null) {
             return false;
         }

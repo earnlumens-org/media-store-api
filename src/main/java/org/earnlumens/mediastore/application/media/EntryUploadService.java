@@ -323,7 +323,8 @@ public class EntryUploadService {
         // because the existing moderation job has a stale thumbnailR2Key.
         if (kind == MediaKind.THUMBNAIL || kind == MediaKind.PREVIEW) {
             boolean needsReReview = entry.getStatus() != EntryStatus.DRAFT
-                    && entry.getStatus() != EntryStatus.ARCHIVED;
+                    && entry.getStatus() != EntryStatus.ARCHIVED
+                    && entry.getStatus() != EntryStatus.DELETED;
             if (needsReReview) {
                 // Cancel any active moderation job — it has the old thumbnailR2Key
                 // and may already be dispatched to Cloud Run with stale env vars.
@@ -445,7 +446,8 @@ public class EntryUploadService {
         // ── Auto-moderation: any edit on a non-DRAFT entry triggers re-review ──
         boolean requiresReReview = entry.getStatus() != EntryStatus.DRAFT
                 && entry.getStatus() != EntryStatus.IN_REVIEW
-                && entry.getStatus() != EntryStatus.ARCHIVED;
+                && entry.getStatus() != EntryStatus.ARCHIVED
+                && entry.getStatus() != EntryStatus.DELETED;
 
         if (requiresReReview) {
             EntryStatus previousStatus = entry.getStatus();
@@ -512,8 +514,8 @@ public class EntryUploadService {
             }
         }
 
-        // When archiving, remember the current status so we can restore it later
-        if (newStatus == EntryStatus.ARCHIVED) {
+        // When archiving or soft-deleting, remember the current status so we can restore it later
+        if (newStatus == EntryStatus.ARCHIVED || newStatus == EntryStatus.DELETED) {
             entry.setPreviousStatus(entry.getStatus());
         }
 
@@ -648,6 +650,43 @@ public class EntryUploadService {
     }
 
     /**
+     * Restores a soft-deleted entry to its previous status.
+     *
+     * @return true if restored, false if entry not found, not owned, or not deleted
+     */
+    public boolean restoreDeletedEntry(String tenantId, String userId, String entryId) {
+        Optional<Entry> optEntry = entryRepository.findByTenantIdAndId(tenantId, entryId);
+        if (optEntry.isEmpty()) {
+            logger.debug("restoreDeletedEntry: entry not found: tenantId={}, entryId={}", tenantId, entryId);
+            return false;
+        }
+
+        Entry entry = optEntry.get();
+        if (!userId.equals(entry.getUserId())) {
+            logger.warn("restoreDeletedEntry: user {} does not own entry {}", userId, entryId);
+            return false;
+        }
+
+        if (entry.getStatus() != EntryStatus.DELETED) {
+            logger.warn("restoreDeletedEntry: entry {} is not deleted (status={})", entryId, entry.getStatus());
+            return false;
+        }
+
+        EntryStatus restoreTo = entry.getPreviousStatus() != null
+                ? entry.getPreviousStatus()
+                : EntryStatus.DRAFT;
+
+        logger.info("restoreDeletedEntry: entryId={}, DELETED → {}", entryId, restoreTo);
+        entry.getStatusHistory().add(
+                new org.earnlumens.mediastore.domain.media.model.StatusChangeRecord(
+                        EntryStatus.DELETED, restoreTo, entry.getAuthorUsername(), null));
+        entry.setStatus(restoreTo);
+        entry.setPreviousStatus(null);
+        entryRepository.save(entry);
+        return true;
+    }
+
+    /**
      * Aggregated dashboard stats for the owner (counts by status + total views).
      * Delegates to a single MongoDB aggregation pipeline for efficiency.
      */
@@ -663,6 +702,7 @@ public class EntryUploadService {
                 raw.getOrDefault("inReview", 0L),
                 raw.getOrDefault("rejected", 0L),
                 raw.getOrDefault("archived", 0L),
+                raw.getOrDefault("deleted", 0L),
                 raw.getOrDefault("totalViews", 0L),
                 totalSales
         );
@@ -927,6 +967,8 @@ public class EntryUploadService {
     private boolean isValidStatusTransition(EntryStatus current, EntryStatus target) {
         // Any status can transition to ARCHIVED (creator can always archive)
         if (target == EntryStatus.ARCHIVED) return true;
+        // Any status can transition to DELETED (creator can always soft-delete)
+        if (target == EntryStatus.DELETED) return true;
 
         return switch (current) {
             case DRAFT -> target == EntryStatus.IN_REVIEW;
@@ -938,6 +980,7 @@ public class EntryUploadService {
             case UNLISTED -> target == EntryStatus.PUBLISHED || target == EntryStatus.SUSPENDED;
             case SUSPENDED -> target == EntryStatus.PUBLISHED || target == EntryStatus.DRAFT;
             case ARCHIVED -> target == EntryStatus.DRAFT;
+            case DELETED -> target == EntryStatus.DRAFT;
         };
     }
 

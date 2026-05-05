@@ -11,6 +11,7 @@ public record OwnerStatsResponse(
         long inReview,
         long rejected,
         long archived,
+        long deleted,
         long totalViews,
         long totalSales
 ) {}

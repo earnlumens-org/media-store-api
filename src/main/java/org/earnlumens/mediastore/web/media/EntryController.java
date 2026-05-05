@@ -160,6 +160,26 @@ public class EntryController {
     }
 
     /**
+     * PATCH /api/entries/{id}/restore-deleted — Restore a soft-deleted entry to its previous status.
+     */
+    @PatchMapping("/{id}/restore-deleted")
+    public ResponseEntity<?> restoreDeletedEntry(
+            @PathVariable("id") String id
+    ) {
+        String userId = extractUserId();
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+
+        String tenantId = TenantContext.require();
+        boolean restored = entryUploadService.restoreDeletedEntry(tenantId, userId, id);
+        if (!restored) {
+            return ResponseEntity.status(404).body(Map.of("error", "Entry not found, not owned, or not deleted"));
+        }
+        return ResponseEntity.noContent().build();
+    }
+
+    /**
      * GET /api/entries/mine/stats — Aggregated dashboard stats for the authenticated creator.
      */
     @GetMapping("/mine/stats")

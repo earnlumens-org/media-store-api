@@ -157,6 +157,50 @@ public class CollectionController {
         }
     }
 
+    /** PATCH /api/collections/{id}/soft-delete — Soft-delete a collection (reversible). */
+    @PatchMapping("/{id}/soft-delete")
+    public ResponseEntity<?> softDeleteCollection(
+            @PathVariable("id") String id,
+            HttpServletRequest httpRequest) {
+
+        String userId = extractUserId();
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+
+        String tenantId = tenantResolver.resolve(httpRequest);
+
+        boolean ok = collectionService.softDeleteCollection(tenantId, userId, id);
+        if (!ok) {
+            return ResponseEntity.status(404).body(Map.of("error", "Collection not found"));
+        }
+        return ResponseEntity.ok(Map.of("message", "Collection soft-deleted"));
+    }
+
+    /** PATCH /api/collections/{id}/restore-deleted — Restore a soft-deleted collection to DRAFT. */
+    @PatchMapping("/{id}/restore-deleted")
+    public ResponseEntity<?> restoreDeletedCollection(
+            @PathVariable("id") String id,
+            HttpServletRequest httpRequest) {
+
+        String userId = extractUserId();
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+
+        String tenantId = tenantResolver.resolve(httpRequest);
+
+        try {
+            boolean result = collectionService.restoreDeletedCollection(tenantId, userId, id);
+            if (!result) {
+                return ResponseEntity.status(404).body(Map.of("error", "Collection not found"));
+            }
+            return ResponseEntity.ok(Map.of("message", "Collection restored"));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
     /** DELETE /api/collections/{id} — Delete a DRAFT collection. */
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteCollection(

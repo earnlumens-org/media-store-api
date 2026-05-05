@@ -59,6 +59,7 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
         stats.put("inReview", 0L);
         stats.put("rejected", 0L);
         stats.put("archived", 0L);
+        stats.put("deleted", 0L);
 
         if (doc == null) {
             return stats;
@@ -82,6 +83,7 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
                     case "IN_REVIEW" -> stats.put("inReview", count);
                     case "REJECTED" -> stats.put("rejected", count);
                     case "ARCHIVED" -> stats.put("archived", count);
+                    case "DELETED" -> stats.put("deleted", count);
                     default -> { /* ignore unknown statuses */ }
                 }
             }
@@ -191,8 +193,8 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
         if (status != null && !status.isBlank()) {
             ops.add(Aggregation.match(Criteria.where("status").is(status)));
         } else {
-            // Default: exclude ARCHIVED
-            ops.add(Aggregation.match(Criteria.where("status").ne("ARCHIVED")));
+            // Default: exclude ARCHIVED and DELETED (each has its own tab)
+            ops.add(Aggregation.match(Criteria.where("status").nin("ARCHIVED", "DELETED")));
         }
 
         // 5. Optional type filter
