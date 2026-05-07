@@ -6,6 +6,7 @@ import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 public record CreateEntryRequest(
 
@@ -50,5 +51,14 @@ public record CreateEntryRequest(
          */
         @Pattern(regexp = "^[a-z]{2}(-[a-z]{2})?$",
                 message = "contentLanguage must be a lowercase ISO 639-1 code (e.g. 'en', 'es', 'zh-cn'); the value 'multi' is reserved for the moderation pipeline and cannot be set by users")
-        String contentLanguage
+        String contentLanguage,
+
+        /**
+         * Optional list of {@code spaceIds} (admin-api owned) where this
+         * entry will be published. Validated by
+         * {@code SpaceValidationService} — each id must resolve to an
+         * ACTIVE space in the same tenant that allows publishing. Capped at
+         * {@code SpaceValidationService.MAX_SPACES_PER_ENTRY}.
+         */
+        List<String> spaceIds
 ) {}

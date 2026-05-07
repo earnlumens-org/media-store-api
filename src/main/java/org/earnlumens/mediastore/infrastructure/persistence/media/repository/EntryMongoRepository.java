@@ -17,6 +17,15 @@ public interface EntryMongoRepository extends MongoRepository<EntryEntity, Strin
 
     Page<EntryEntity> findByTenantIdAndStatusOrderByPublishedAtDesc(String tenantId, String status, Pageable pageable);
 
+    /**
+     * Public space feed query. Matches entries whose {@code spaceIds} array
+     * contains the given space and whose status equals the requested value.
+     * Ordered by publish date descending. Backed by the
+     * {@code idx_tenant_space_status_published} compound index.
+     */
+    Page<EntryEntity> findByTenantIdAndSpaceIdsContainingAndStatusOrderByPublishedAtDesc(
+            String tenantId, String spaceId, String status, Pageable pageable);
+
     Page<EntryEntity> findByTenantIdAndAuthorUsernameIgnoreCaseAndStatusOrderByPublishedAtDesc(String tenantId, String authorUsername, String status, Pageable pageable);
 
     Page<EntryEntity> findByTenantIdAndAuthorUsernameIgnoreCaseAndStatusAndTypeOrderByPublishedAtDesc(String tenantId, String authorUsername, String status, String type, Pageable pageable);

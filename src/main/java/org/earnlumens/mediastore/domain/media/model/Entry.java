@@ -40,6 +40,13 @@ public class Entry {
      */
     private List<PaymentSplit> paymentSplits = new ArrayList<>();
     private List<String> tags = new ArrayList<>();
+    /**
+     * IDs of {@code spaces} (admin-api owned) this entry is published to.
+     * Empty when the entry has no explicit destination — it then appears
+     * only in feeds that don't filter by space (Explore aggregates
+     * everything regardless).
+     */
+    private List<String> spaceIds = new ArrayList<>();
     private String thumbnailR2Key;
     private String previewR2Key;
     /**
@@ -131,6 +138,11 @@ public class Entry {
 
     public List<String> getTags() { return tags; }
     public void setTags(List<String> tags) { this.tags = tags; }
+
+    public List<String> getSpaceIds() { return spaceIds; }
+    public void setSpaceIds(List<String> spaceIds) {
+        this.spaceIds = spaceIds == null ? new ArrayList<>() : spaceIds;
+    }
 
     public String getThumbnailR2Key() { return thumbnailR2Key; }
     public void setThumbnailR2Key(String thumbnailR2Key) { this.thumbnailR2Key = thumbnailR2Key; }

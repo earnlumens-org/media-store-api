@@ -28,6 +28,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 @Configuration
@@ -36,6 +37,17 @@ public class WebSecurityConfig {
 
     @Value("${mediastore.frontend.uri}")
     private String mainDomain;
+
+    /**
+     * Comma-separated allow-list of CORS origins. When empty, only
+     * {@code mediastore.frontend.uri} is allowed. Set
+     * {@code MEDIASTORE_CORS_ALLOWED_ORIGINS} in dev to add
+     * {@code http://localhost:3000} etc.; never include dev origins
+     * in the prod env var (CORS + AllowCredentials=true on a wildcarded
+     * origin set lets a compromised dev host steal session cookies).
+     */
+    @Value("${mediastore.cors.allowed-origins:}")
+    private String allowedOriginsConfig;
 
     private final AuthEntryPointJwt authEntryPointJwt;
     private final OAuth2AuthenticationFailureHandler oAuth2AuthenticationFailureHandler;
@@ -160,11 +172,23 @@ public class WebSecurityConfig {
     @Bean
     public CorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration configuration = new CorsConfiguration();
-        configuration.setAllowedOrigins(Arrays.asList(
-            mainDomain,
-            "http://localhost:3000",
-            "https://app-dev.earnlumens.org"
-        ));
+
+        List<String> origins;
+        if (allowedOriginsConfig == null || allowedOriginsConfig.isBlank()) {
+            origins = List.of(mainDomain);
+        } else {
+            origins = Arrays.stream(allowedOriginsConfig.split(","))
+                    .map(String::strip)
+                    .filter(s -> !s.isEmpty())
+                    .toList();
+        }
+        // Defence-in-depth: never accept a wildcard with AllowCredentials=true.
+        if (origins.stream().anyMatch(o -> o.equals("*") || o.contains("*"))) {
+            throw new IllegalStateException(
+                    "mediastore.cors.allowed-origins must not contain wildcards "
+                  + "(AllowCredentials=true). Got: " + origins);
+        }
+        configuration.setAllowedOrigins(origins);
         configuration.setAllowedMethods(Arrays.asList("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"));
         configuration.setAllowedHeaders(Arrays.asList("*"));
         configuration.setAllowCredentials(true);

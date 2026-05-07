@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.RestController;
 import jakarta.validation.Valid;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 /**
  * Internal callback endpoint for the Cloud Run moderation worker.
@@ -29,6 +30,20 @@ import java.util.Optional;
 public class ModerationCallbackController {
 
     private static final Logger logger = LoggerFactory.getLogger(ModerationCallbackController.class);
+
+    /** RFC-1123 subdomain label — same shape we accept as a tenant slug. */
+    private static final Pattern TENANT_ID_PATTERN =
+            Pattern.compile("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$");
+
+    /**
+     * Allowed jobId shape: alphanumerics plus '-' and '_' up to 64 chars.
+     * Covers both 24-char Mongo ObjectIds (prod) and short test fixtures
+     * ("mod-1"). Defence-in-depth against a worker compromise sending
+     * crafted ids — even with a valid shared secret it cannot reach for
+     * arbitrary documents through path-style payloads.
+     */
+    private static final Pattern JOB_ID_PATTERN =
+            Pattern.compile("^[A-Za-z0-9_-]{1,64}$");
 
     private final ModerationJobService moderationJobService;
     private final String moderationSecret;
@@ -55,6 +70,12 @@ public class ModerationCallbackController {
         if (secret == null || !moderationSecret.equals(secret)) {
             logger.warn("Moderation callback: rejected — invalid or missing X-Moderation-Secret");
             return ResponseEntity.status(403).body(Map.of("error", "Forbidden"));
+        }
+
+        if (!isValidIds(request.tenantId(), request.jobId())) {
+            logger.warn("Moderation callback: rejected — malformed tenantId/jobId (tenantId={}, jobId={})",
+                    request.tenantId(), request.jobId());
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid tenantId or jobId"));
         }
 
         String status = request.status().toUpperCase();
@@ -103,6 +124,11 @@ public class ModerationCallbackController {
             return ResponseEntity.status(403).body(Map.of("error", "Forbidden"));
         }
 
+        if (!isValidIds(request.tenantId(), request.jobId())) {
+            logger.warn("Moderation heartbeat: rejected — malformed tenantId/jobId");
+            return ResponseEntity.badRequest().body(Map.of("error", "Invalid tenantId or jobId"));
+        }
+
         moderationJobService.heartbeat(request.jobId(), request.tenantId());
         return ResponseEntity.ok(Map.of("status", "ok"));
     }
@@ -133,5 +159,11 @@ public class ModerationCallbackController {
                 "COMPLETED", completed.size(),
                 "DEAD", dead.size()
         ));
+    }
+
+    private static boolean isValidIds(String tenantId, String jobId) {
+        return tenantId != null && jobId != null
+                && TENANT_ID_PATTERN.matcher(tenantId).matches()
+                && JOB_ID_PATTERN.matcher(jobId).matches();
     }
 }

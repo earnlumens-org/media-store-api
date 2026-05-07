@@ -6,6 +6,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.http.HttpStatus;
@@ -13,7 +14,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.Map;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -64,11 +67,29 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final AtomicLong lastCleanup = new AtomicLong(System.currentTimeMillis());
     private static final long CLEANUP_INTERVAL_MS = 120_000; // 2 minutes
 
-    private static final Set<String> ALLOWED_ORIGINS = Set.of(
-            "https://app-dev.earnlumens.org",
-            "http://localhost:3000",
-            "https://earnlumens.org"
-    );
+    /**
+     * CORS allow-list for 429 responses. Loaded from the same config as
+     * {@link WebSecurityConfig#corsConfigurationSource()} so the two stay in
+     * sync; defaults to the frontend URI alone if no override is set.
+     */
+    private final Set<String> allowedCorsOrigins;
+
+    public RateLimitFilter(
+            @Value("${mediastore.frontend.uri:}") String frontendUri,
+            @Value("${mediastore.cors.allowed-origins:}") String allowedOriginsConfig
+    ) {
+        Set<String> origins = new HashSet<>();
+        if (allowedOriginsConfig != null && !allowedOriginsConfig.isBlank()) {
+            Arrays.stream(allowedOriginsConfig.split(","))
+                    .map(String::strip)
+                    .filter(s -> !s.isEmpty() && !s.contains("*"))
+                    .forEach(origins::add);
+        }
+        if (frontendUri != null && !frontendUri.isBlank()) {
+            origins.add(frontendUri.strip());
+        }
+        this.allowedCorsOrigins = Collections.unmodifiableSet(origins);
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -76,11 +97,12 @@ public class RateLimitFilter extends OncePerRequestFilter {
                                     FilterChain filterChain)
             throws ServletException, IOException {
 
-        // Skip rate limiting for error pages and OAuth2 callbacks
+        // Skip rate limiting for the error page only. OAuth2 endpoints get
+        // a higher tier (DEFAULT) but ARE rate limited — leaving them open
+        // to brute-force / abuse via the callback was a finding in the
+        // 2026-05 audit.
         String path = request.getRequestURI();
-        if ("/error".equals(path)
-                || path.startsWith("/oauth2/")
-                || path.startsWith("/login/oauth2/")) {
+        if ("/error".equals(path)) {
             filterChain.doFilter(request, response);
             return;
         }
@@ -162,7 +184,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private void addCorsHeaders(HttpServletRequest request, HttpServletResponse response) {
         String origin = request.getHeader("Origin");
-        if (origin != null && ALLOWED_ORIGINS.contains(origin)) {
+        if (origin != null && allowedCorsOrigins.contains(origin)) {
             response.setHeader("Access-Control-Allow-Origin", origin);
             response.setHeader("Access-Control-Allow-Credentials", "true");
         }

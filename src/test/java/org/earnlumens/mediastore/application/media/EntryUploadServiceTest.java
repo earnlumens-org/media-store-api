@@ -56,6 +56,7 @@ class EntryUploadServiceTest {
     private TranscodingJobService transcodingJobService;
     private ModerationJobService moderationJobService;
     private UserBadgeService userBadgeService;
+    private org.earnlumens.mediastore.application.space.SpaceValidationService spaceValidationService;
     private EntryUploadService service;
 
     @BeforeEach
@@ -68,10 +69,12 @@ class EntryUploadServiceTest {
         transcodingJobService = mock(TranscodingJobService.class);
         moderationJobService = mock(ModerationJobService.class);
         userBadgeService = mock(UserBadgeService.class);
+        spaceValidationService = mock(org.earnlumens.mediastore.application.space.SpaceValidationService.class);
+        when(spaceValidationService.validateForPublish(any(), any())).thenReturn(java.util.List.of());
         platformConfig = new PlatformConfig();
         platformConfig.setWallet(PLATFORM_WALLET);
         platformConfig.setFeePercent(new BigDecimal("10.00"));
-        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, r2PresignedUrlService, platformConfig, transcodingJobService, moderationJobService, userBadgeService, 20, 10);
+        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, r2PresignedUrlService, platformConfig, transcodingJobService, moderationJobService, userBadgeService, spaceValidationService, 20, 10);
         when(userRepository.findAllById(any())).thenReturn(java.util.List.of());
         when(transcodingJobService.getMaxRetries()).thenReturn(3);
         when(transcodingJobService.createJob(any(TranscodingJob.class)))
@@ -111,7 +114,7 @@ class EntryUploadServiceTest {
         });
 
         CreateEntryRequest request = new CreateEntryRequest(
-                "My Video", "A description", null, "VIDEO", true, new BigDecimal("10.5"), null, null, SELLER_WALLET, null);
+                "My Video", "A description", null, "VIDEO", true, new BigDecimal("10.5"), null, null, SELLER_WALLET, null, null);
 
         CreateEntryResponse response = service.createEntry(TENANT, USER_ID, request);
 
@@ -138,7 +141,7 @@ class EntryUploadServiceTest {
         });
 
         CreateEntryRequest request = new CreateEntryRequest(
-                "Track", null, null, "AUDIO", false, null, null, null, null, null);
+                "Track", null, null, "AUDIO", false, null, null, null, null, null, null);
 
         service.createEntry(TENANT, USER_ID, request);
 
@@ -148,7 +151,7 @@ class EntryUploadServiceTest {
     @Test
     void createEntry_invalidType_throwsException() {
         CreateEntryRequest request = new CreateEntryRequest(
-                "Bad", null, null, "INVALID_TYPE", false, null, null, null, null, null);
+                "Bad", null, null, "INVALID_TYPE", false, null, null, null, null, null, null);
 
         assertThrows(IllegalArgumentException.class,
                 () -> service.createEntry(TENANT, USER_ID, request));
@@ -406,7 +409,7 @@ class EntryUploadServiceTest {
                 .thenReturn(20L);
 
         CreateEntryRequest request = new CreateEntryRequest(
-                "Spam Entry", null, null, "VIDEO", false, null, null, null, null, null);
+                "Spam Entry", null, null, "VIDEO", false, null, null, null, null, null, null);
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> service.createEntry(TENANT, USER_ID, request));
@@ -423,7 +426,7 @@ class EntryUploadServiceTest {
         });
 
         CreateEntryRequest request = new CreateEntryRequest(
-                "OK Entry", null, null, "AUDIO", false, null, null, null, null, null);
+                "OK Entry", null, null, "AUDIO", false, null, null, null, null, null, null);
 
         CreateEntryResponse response = service.createEntry(TENANT, USER_ID, request);
         assertNotNull(response);

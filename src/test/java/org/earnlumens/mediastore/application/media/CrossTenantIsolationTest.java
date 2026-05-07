@@ -131,6 +131,7 @@ class CrossTenantIsolationTest {
                 mock(TranscodingJobService.class),
                 mock(ModerationJobService.class),
                 mock(UserBadgeService.class),
+                mock(org.earnlumens.mediastore.application.space.SpaceValidationService.class),
                 /* dailyEntryLimit  */ 20,
                 /* maxConcurrentReview */ 10
         );
@@ -193,7 +194,7 @@ class CrossTenantIsolationTest {
     @Test
     void crossTenant_updateMetadata_returnsFalse_andDoesNotMutate() {
         UpdateEntryMetadataRequest req = new UpdateEntryMetadataRequest(
-                "evil-title", null, null, null, null, null, null, null);
+                "evil-title", null, null, null, null, null, null, null, null);
 
         boolean updated = uploadService.updateEntryMetadata(TENANT_A, USER_A, ENTRY_B, req);
 

@@ -1,6 +1,7 @@
 package org.earnlumens.mediastore.domain.media.dto.request;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * Request body for PUT /api/entries/{id} — update entry metadata.
@@ -14,5 +15,11 @@ public record UpdateEntryMetadataRequest(
         BigDecimal priceUsd,
         String priceCurrency,
         String sellerWallet,
-        String resourceContent
+        String resourceContent,
+        /**
+         * Replacement list of spaceIds. {@code null} = leave unchanged;
+         * empty list = clear all spaces; non-empty = replace with the
+         * validated set (see {@code SpaceValidationService}).
+         */
+        List<String> spaceIds
 ) {}

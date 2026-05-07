@@ -147,6 +147,18 @@ public class PublicEntryService {
     }
 
     /**
+     * Returns the public feed of a single space — PUBLISHED entries whose
+     * {@code spaceIds} contains the given {@code spaceId}, newest first.
+     * Tenant scope is enforced at the repository layer (a forged spaceId
+     * from another tenant cannot leak rows across tenants).
+     */
+    public PublicEntryPageResponse getSpaceFeed(String tenantId, String spaceId, int page, int size) {
+        Page<Entry> entryPage = entryRepository.findByTenantIdAndSpaceIdAndStatus(
+                tenantId, spaceId, EntryStatus.PUBLISHED, PageRequest.of(page, size));
+        return toPageResponse(entryPage);
+    }
+
+    /**
      * Returns a paginated list of PUBLISHED entries for a specific author (by username),
      * optionally filtered by entry type.
      */

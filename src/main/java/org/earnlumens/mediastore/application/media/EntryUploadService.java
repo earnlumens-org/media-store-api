@@ -31,6 +31,7 @@ import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.earnlumens.mediastore.domain.user.repository.UserRepository;
 import org.earnlumens.mediastore.application.user.UserBadgeService;
+import org.earnlumens.mediastore.application.space.SpaceValidationService;
 import org.earnlumens.mediastore.infrastructure.config.PlatformConfig;
 import org.earnlumens.mediastore.infrastructure.r2.R2PresignedUrlService;
 import org.slf4j.Logger;
@@ -74,6 +75,7 @@ public class EntryUploadService {
     private final TranscodingJobService transcodingJobService;
     private final ModerationJobService moderationJobService;
     private final UserBadgeService userBadgeService;
+    private final SpaceValidationService spaceValidationService;
     private final int dailyEntryLimit;
     private final int maxConcurrentReview;
 
@@ -87,6 +89,7 @@ public class EntryUploadService {
             TranscodingJobService transcodingJobService,
             ModerationJobService moderationJobService,
             UserBadgeService userBadgeService,
+            SpaceValidationService spaceValidationService,
             @Value("${mediastore.abuse.daily-entry-limit:20}") int dailyEntryLimit,
             @Value("${mediastore.abuse.max-concurrent-review:10}") int maxConcurrentReview
     ) {
@@ -99,6 +102,7 @@ public class EntryUploadService {
         this.transcodingJobService = transcodingJobService;
         this.moderationJobService = moderationJobService;
         this.userBadgeService = userBadgeService;
+        this.spaceValidationService = spaceValidationService;
         this.dailyEntryLimit = dailyEntryLimit;
         this.maxConcurrentReview = maxConcurrentReview;
     }
@@ -166,6 +170,7 @@ public class EntryUploadService {
         entry.setPriceUsd(request.priceUsd());
         entry.setPriceCurrency(currency);
         entry.setContentLanguage(request.contentLanguage());
+        entry.setSpaceIds(spaceValidationService.validateForPublish(tenantId, request.spaceIds()));
 
         // Set seller wallet and generate payment splits for paid content.
         // Only non-platform splits are stored in the entry. The platform split
@@ -441,6 +446,11 @@ public class EntryUploadService {
 
         if (request.resourceContent() != null) {
             entry.setResourceContent(request.resourceContent());
+        }
+
+        if (request.spaceIds() != null) {
+            // null = leave unchanged; empty list = clear; non-empty = replace.
+            entry.setSpaceIds(spaceValidationService.validateForPublish(tenantId, request.spaceIds()));
         }
 
         // ── Auto-moderation: any edit on a non-DRAFT entry triggers re-review ──

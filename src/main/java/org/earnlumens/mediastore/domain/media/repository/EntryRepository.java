@@ -18,6 +18,12 @@ public interface EntryRepository {
 
     Page<Entry> findByTenantIdAndStatus(String tenantId, EntryStatus status, Pageable pageable);
 
+    /**
+     * Public space feed query: PUBLISHED (or other given status) entries
+     * whose {@code spaceIds} contains the given space, newest first.
+     */
+    Page<Entry> findByTenantIdAndSpaceIdAndStatus(String tenantId, String spaceId, EntryStatus status, Pageable pageable);
+
     Page<Entry> findByTenantIdAndAuthorUsernameAndStatus(String tenantId, String authorUsername, EntryStatus status, Pageable pageable);
 
     Page<Entry> findByTenantIdAndAuthorUsernameAndStatusAndType(String tenantId, String authorUsername, EntryStatus status, EntryType type, Pageable pageable);

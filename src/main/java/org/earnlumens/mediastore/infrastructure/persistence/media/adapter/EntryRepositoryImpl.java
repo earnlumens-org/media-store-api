@@ -39,6 +39,13 @@ public class EntryRepositoryImpl implements EntryRepository {
     }
 
     @Override
+    public Page<Entry> findByTenantIdAndSpaceIdAndStatus(String tenantId, String spaceId, EntryStatus status, Pageable pageable) {
+        return entryMongoRepository
+                .findByTenantIdAndSpaceIdsContainingAndStatusOrderByPublishedAtDesc(tenantId, spaceId, status.name(), pageable)
+                .map(entryMapper::toModel);
+    }
+
+    @Override
     public Page<Entry> findByTenantIdAndAuthorUsernameAndStatus(String tenantId, String authorUsername, EntryStatus status, Pageable pageable) {
         return entryMongoRepository.findByTenantIdAndAuthorUsernameIgnoreCaseAndStatusOrderByPublishedAtDesc(tenantId, authorUsername, status.name(), pageable)
                 .map(entryMapper::toModel);

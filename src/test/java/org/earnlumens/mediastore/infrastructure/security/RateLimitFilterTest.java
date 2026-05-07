@@ -19,7 +19,8 @@ class RateLimitFilterTest {
 
     @BeforeEach
     void setUp() {
-        filter = new RateLimitFilter();
+        filter = new RateLimitFilter("https://earnlumens.org",
+                "https://earnlumens.org,https://app-dev.earnlumens.org,http://localhost:3000");
         chain = (req, res) -> {}; // no-op chain
     }
 

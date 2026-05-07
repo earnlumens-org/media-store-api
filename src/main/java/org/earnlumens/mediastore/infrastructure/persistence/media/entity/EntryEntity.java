@@ -18,6 +18,7 @@ import java.util.List;
 @CompoundIndex(name = "idx_tenant_user", def = "{'tenantId': 1, 'userId': 1}")
 @CompoundIndex(name = "idx_tenant_status_published", def = "{'tenantId': 1, 'status': 1, 'publishedAt': -1}")
 @CompoundIndex(name = "idx_tenant_status_type_published", def = "{'tenantId': 1, 'status': 1, 'type': 1, 'publishedAt': -1}")
+@CompoundIndex(name = "idx_tenant_space_status_published", def = "{'tenantId': 1, 'spaceIds': 1, 'status': 1, 'publishedAt': -1}")
 public class EntryEntity {
 
     @Id
@@ -82,6 +83,13 @@ public class EntryEntity {
     private List<PaymentSplitEntity> paymentSplits = new ArrayList<>();
 
     private List<String> tags = new ArrayList<>();
+
+    /**
+     * IDs of {@code spaces} this entry is published to (admin-api owned
+     * collection). Indexed via {@code idx_tenant_space_status_published}
+     * for fast {@code GET /public/spaces/{spaceId}/feed} queries.
+     */
+    private List<String> spaceIds = new ArrayList<>();
 
     /** ISO 639-1 language code of the content (e.g. "es", "en"). */
     private String contentLanguage;
@@ -184,6 +192,11 @@ public class EntryEntity {
 
     public List<String> getTags() { return tags; }
     public void setTags(List<String> tags) { this.tags = tags; }
+
+    public List<String> getSpaceIds() { return spaceIds; }
+    public void setSpaceIds(List<String> spaceIds) {
+        this.spaceIds = spaceIds == null ? new ArrayList<>() : spaceIds;
+    }
 
     public String getContentLanguage() { return contentLanguage; }
     public void setContentLanguage(String contentLanguage) { this.contentLanguage = contentLanguage; }
