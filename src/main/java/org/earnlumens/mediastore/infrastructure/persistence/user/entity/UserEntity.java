@@ -51,6 +51,21 @@ public class UserEntity {
     @Size(max = 100)
     private String blockedByRequestId;
 
+    @Size(max = 500)
+    private String banReason;
+
+    private LocalDateTime banExpiresAt;
+
+    @Size(max = 100)
+    private String banIssuedBy;
+
+    @Size(max = 30)
+    private String banType;
+
+    private Integer strikeCount;
+
+    private LocalDateTime lastStrikeAt;
+
     @Size(max = 50)
     private String tempUUID;
 
@@ -166,6 +181,24 @@ public class UserEntity {
     public void setBlockedByRequestId(String blockedByRequestId) {
         this.blockedByRequestId = blockedByRequestId;
     }
+
+    public String getBanReason() { return banReason; }
+    public void setBanReason(String banReason) { this.banReason = banReason; }
+
+    public LocalDateTime getBanExpiresAt() { return banExpiresAt; }
+    public void setBanExpiresAt(LocalDateTime banExpiresAt) { this.banExpiresAt = banExpiresAt; }
+
+    public String getBanIssuedBy() { return banIssuedBy; }
+    public void setBanIssuedBy(String banIssuedBy) { this.banIssuedBy = banIssuedBy; }
+
+    public String getBanType() { return banType; }
+    public void setBanType(String banType) { this.banType = banType; }
+
+    public Integer getStrikeCount() { return strikeCount; }
+    public void setStrikeCount(Integer strikeCount) { this.strikeCount = strikeCount; }
+
+    public LocalDateTime getLastStrikeAt() { return lastStrikeAt; }
+    public void setLastStrikeAt(LocalDateTime lastStrikeAt) { this.lastStrikeAt = lastStrikeAt; }
 
     public String getTempUUID() {
         return tempUUID;

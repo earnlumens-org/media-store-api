@@ -55,7 +55,18 @@ public class UserController {
                     .ifPresent(badge -> response.put("profileBadge", badge));
             // Inject persisted content-language preferences (Phase 4).
             userService.findByOauthUserId(oauthUserId)
-                    .ifPresent(user -> response.put("contentLanguagePreferences", toPreferencesMap(user)));
+                    .ifPresent(user -> {
+                        response.put("contentLanguagePreferences", toPreferencesMap(user));
+                        // Self-status disclosure: a user must always be able
+                        // to see their own sanction state. Only populated when
+                        // the user has an active warning, strike count or ban
+                        // window so we do not bloat the response for the 99%
+                        // case of clean accounts.
+                        Map<String, Object> sanction = toSelfSanctionMap(user);
+                        if (!sanction.isEmpty()) {
+                            response.put("sanctionStatus", sanction);
+                        }
+                    });
         }
 
         return ResponseEntity.ok(response);
@@ -148,5 +159,34 @@ public class UserController {
         prefs.put("includeMulti", user.getIncludeMulti() == null ? Boolean.TRUE : user.getIncludeMulti());
         prefs.put("showAllLanguages", user.getShowAllLanguages() == null ? Boolean.FALSE : user.getShowAllLanguages());
         return prefs;
+    }
+
+    /**
+     * Self-disclosure of moderation status. Returned to the user under
+     * {@code sanctionStatus} on {@code GET /api/user/me} so the storefront
+     * can render a banner explaining what is going on. Empty when the user
+     * has no warnings, strikes or active ban.
+     *
+     * <p>Intentionally omits the moderator's identity ({@code banIssuedBy}):
+     * the affected user sees the platform decision, not who personally
+     * pressed the button.
+     */
+    private Map<String, Object> toSelfSanctionMap(User user) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        if (user.isBlocked()) {
+            out.put("blocked", true);
+            out.put("banType", user.getBanType() != null ? user.getBanType() : "PERMA_BAN");
+            if (user.getBanReason() != null) out.put("reason", user.getBanReason());
+            if (user.getBanExpiresAt() != null) out.put("expiresAt", user.getBanExpiresAt().toString());
+            if (user.getBlockedAt() != null) out.put("issuedAt", user.getBlockedAt().toString());
+        }
+        Integer strikes = user.getStrikeCount();
+        if (strikes != null && strikes > 0) {
+            out.put("strikeCount", strikes);
+            if (user.getLastStrikeAt() != null) {
+                out.put("lastStrikeAt", user.getLastStrikeAt().toString());
+            }
+        }
+        return out;
     }
 }

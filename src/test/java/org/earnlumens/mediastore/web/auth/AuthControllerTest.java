@@ -3,6 +3,7 @@ package org.earnlumens.mediastore.web.auth;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.http.Cookie;
 import org.earnlumens.mediastore.application.auth.AuthService;
+import org.earnlumens.mediastore.application.user.UserService;
 import org.earnlumens.mediastore.domain.user.model.User;
 import org.earnlumens.mediastore.infrastructure.security.jwt.JwtUtils;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
@@ -25,13 +26,15 @@ class AuthControllerTest {
     private MockMvc mockMvc;
     private JwtUtils jwtUtils;
     private AuthService authService;
+    private UserService userService;
 
     @BeforeEach
     void setUp() {
         jwtUtils = mock(JwtUtils.class);
         authService = mock(AuthService.class);
+        userService = mock(UserService.class);
 
-        AuthController controller = new AuthController(jwtUtils, authService);
+        AuthController controller = new AuthController(jwtUtils, authService, userService);
 
         // Simular @Value para tests standalone.
         // cookieDomain is intentionally blank to mirror production: the

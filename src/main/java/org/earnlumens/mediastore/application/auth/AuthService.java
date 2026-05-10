@@ -116,6 +116,23 @@ public class AuthService {
         return Optional.empty();
     }
 
+    /**
+     * Lazily clears an expired temporary ban. Called from the login path so
+     * a 7-day strike disappears on the user's first attempt after the window
+     * elapses, without requiring a scheduled job. The banReason / banType /
+     * strikeCount fields are intentionally retained for audit — only the
+     * gating state is reset.
+     */
+    public void lazyUnblockExpired(User user) {
+        if (!user.isBlocked() || user.getBanExpiresAt() == null) return;
+        if (!user.getBanExpiresAt().isBefore(LocalDateTime.now())) return;
+        user.setBlocked(false);
+        user.setBanExpiresAt(null);
+        user.setBlockedAt(null);
+        user.setBlockedByRequestId(null);
+        userService.save(user);
+    }
+
     private boolean isExpired(Instant createdAt) {
         if (createdAt == null) {
             return true; // Sin fecha = expirado por seguridad

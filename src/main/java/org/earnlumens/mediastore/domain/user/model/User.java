@@ -16,9 +16,27 @@ public class User {
     private LocalDateTime createdAt;
     private LocalDateTime lastLoginAt;
     private String defaultWalletId;
+
+    // ── Sanction / ban model (see docs/MODERATION-USER-SANCTIONS.md) ──
+    // The {@code blocked} flag is the canonical "is this user currently barred?"
+    // signal — every login / refresh path MUST consult it. The remaining fields
+    // describe the WHY and FOR HOW LONG so we can render an honest status to the
+    // affected user and so an expired temp-ban auto-lifts on next login.
     private boolean blocked;
     private LocalDateTime blockedAt;
     private String blockedByRequestId;
+    /** Human-readable reason shown to the affected user. */
+    private String banReason;
+    /** {@code null} = permanent. When non-null and in the past, login auto-unbans. */
+    private LocalDateTime banExpiresAt;
+    /** OauthUserId of the moderator who issued the ban. */
+    private String banIssuedBy;
+    /** WARNING | STRIKE_1 | STRIKE_2 | STRIKE_3 | TEMP_BAN | PERMA_BAN */
+    private String banType;
+    /** Cumulative strike count. Strikes "expire" only via explicit moderator action. */
+    private Integer strikeCount;
+    private LocalDateTime lastStrikeAt;
+
     private String tempUUID;
     private Instant tempUUIDCreatedAt;
 
@@ -147,6 +165,36 @@ public class User {
 
     public void setBlockedByRequestId(String blockedByRequestId) {
         this.blockedByRequestId = blockedByRequestId;
+    }
+
+    public String getBanReason() { return banReason; }
+    public void setBanReason(String banReason) { this.banReason = banReason; }
+
+    public LocalDateTime getBanExpiresAt() { return banExpiresAt; }
+    public void setBanExpiresAt(LocalDateTime banExpiresAt) { this.banExpiresAt = banExpiresAt; }
+
+    public String getBanIssuedBy() { return banIssuedBy; }
+    public void setBanIssuedBy(String banIssuedBy) { this.banIssuedBy = banIssuedBy; }
+
+    public String getBanType() { return banType; }
+    public void setBanType(String banType) { this.banType = banType; }
+
+    public Integer getStrikeCount() { return strikeCount; }
+    public void setStrikeCount(Integer strikeCount) { this.strikeCount = strikeCount; }
+
+    public LocalDateTime getLastStrikeAt() { return lastStrikeAt; }
+    public void setLastStrikeAt(LocalDateTime lastStrikeAt) { this.lastStrikeAt = lastStrikeAt; }
+
+    /**
+     * True when the user is currently barred from the platform. A temporary
+     * ban whose {@code banExpiresAt} is in the past returns {@code false} so
+     * callers (login, refresh) treat the ban as auto-lifted; the persisted
+     * flag is cleared lazily by {@code AuthService}.
+     */
+    public boolean isCurrentlyBanned() {
+        if (!blocked) return false;
+        if (banExpiresAt == null) return true;
+        return banExpiresAt.isAfter(LocalDateTime.now());
     }
 
     public String getTempUUID() {

@@ -4,6 +4,7 @@ import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.earnlumens.mediastore.application.auth.AuthService;
+import org.earnlumens.mediastore.application.user.UserService;
 import org.earnlumens.mediastore.domain.user.model.User;
 import org.earnlumens.mediastore.infrastructure.security.jwt.JwtUtils;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
@@ -27,6 +28,7 @@ public class AuthController {
 
     private final JwtUtils jwtUtils;
     private final AuthService authService;
+    private final UserService userService;
 
     /**
      * Cookie {@code Domain} attribute. Defaults to empty in the base
@@ -48,9 +50,10 @@ public class AuthController {
     @Value("${mediastore.app.jwtRefreshExpirationMs}")
     private int cookieExpirationMs;
 
-    public AuthController(JwtUtils jwtUtils, AuthService authService) {
+    public AuthController(JwtUtils jwtUtils, AuthService authService, UserService userService) {
         this.jwtUtils = jwtUtils;
         this.authService = authService;
+        this.userService = userService;
     }
 
     @PostMapping("/session")
@@ -74,6 +77,21 @@ public class AuthController {
         }
 
         User user = optionalUser.get();
+
+        // Account-ban gate. The {@code blocked} flag on the User document is the
+        // canonical "this account is barred" signal across the platform; without
+        // this check a moderator-issued ban would have no actual effect and the
+        // user could simply re-exchange their tempUUID for a fresh JWT.
+        // Temporary bans whose {@code banExpiresAt} lies in the past are auto-
+        // lifted here so a 7-day strike does not require manual cleanup.
+        if (user.isBlocked()) {
+            if (user.getBanExpiresAt() != null
+                    && user.getBanExpiresAt().isBefore(java.time.LocalDateTime.now())) {
+                authService.lazyUnblockExpired(user);
+            } else {
+                return ResponseEntity.status(403).body(buildBanResponse(user));
+            }
+        }
 
         // Pin the refresh token to the tenant the session is being opened in.
         // TenantFilter has already populated TenantContext from the request
@@ -116,6 +134,27 @@ public class AuthController {
             String requestTenant = TenantContext.require();
             if (tokenTenant == null || !tokenTenant.equals(requestTenant)) {
                 return unauthorizedResponse();
+            }
+
+            // Account-ban gate on refresh. Even with a syntactically valid
+            // refresh cookie, a banned account must not be able to mint new
+            // access tokens. The DB hit per refresh is acceptable because
+            // refresh is a low-frequency operation (once per access-token
+            // lifetime, default 15-30 min).
+            String oauthUserId = claims.getSubject();
+            if (oauthUserId != null) {
+                Optional<User> userOpt = userService.findByOauthUserId(oauthUserId);
+                if (userOpt.isPresent()) {
+                    User user = userOpt.get();
+                    if (user.isBlocked()) {
+                        if (user.getBanExpiresAt() != null
+                                && user.getBanExpiresAt().isBefore(java.time.LocalDateTime.now())) {
+                            authService.lazyUnblockExpired(user);
+                        } else {
+                            return ResponseEntity.status(403).body(buildBanResponse(user));
+                        }
+                    }
+                }
             }
 
             String newAccessToken = jwtUtils.generateAccessTokenFromClaims(claims);
@@ -167,5 +206,21 @@ public class AuthController {
 
     private ResponseEntity<?> unauthorizedResponse() {
         return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+    }
+
+    /**
+     * Structured payload for the 403 returned to a banned account at login.
+     * The frontend uses {@code error == "ACCOUNT_BANNED"} to render a dedicated
+     * status screen instead of the generic auth-error toast. Fields are kept
+     * minimal on purpose — we do not leak the moderator identity.
+     */
+    private Map<String, Object> buildBanResponse(User user) {
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("error", "ACCOUNT_BANNED");
+        body.put("banType", user.getBanType() != null ? user.getBanType() : "PERMA_BAN");
+        if (user.getBanReason() != null) body.put("reason", user.getBanReason());
+        if (user.getBanExpiresAt() != null) body.put("expiresAt", user.getBanExpiresAt().toString());
+        if (user.getBlockedAt() != null) body.put("issuedAt", user.getBlockedAt().toString());
+        return body;
     }
 }
