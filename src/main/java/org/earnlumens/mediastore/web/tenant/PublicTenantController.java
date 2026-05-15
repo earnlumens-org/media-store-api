@@ -66,7 +66,7 @@ public class PublicTenantController {
     public ResponseEntity<Map<String, Object>> visitor(HttpServletRequest request) {
         String host = request.getServerName();
         if (host == null || host.isBlank()) {
-            return ResponseEntity.ok(platform());
+            return ResponseEntity.ok(platform(loadRootBrandText()));
         }
 
         String hostname = host.contains(":") ? host.substring(0, host.indexOf(':')) : host;
@@ -76,39 +76,73 @@ public class PublicTenantController {
                 || "localhost.dv".equals(hostname)
                 || "127.0.0.1".equals(hostname)
                 || rootDomain.equals(hostname)) {
-            return ResponseEntity.ok(platform());
+            return ResponseEntity.ok(platform(loadRootBrandText()));
         }
 
         String suffix = "." + rootDomain;
         if (!hostname.endsWith(suffix)) {
             // Unknown root domain (custom domain, preview deploy, etc.).
             // Treat as platform so the SPA still renders something usable.
-            return ResponseEntity.ok(platform());
+            return ResponseEntity.ok(platform(loadRootBrandText()));
         }
 
         String subdomain = hostname.substring(0, hostname.length() - suffix.length());
         if (subdomain.contains(".")
                 || RESERVED_SUBDOMAINS.contains(subdomain)
                 || !SUBDOMAIN.matcher(subdomain).matches()) {
-            return ResponseEntity.ok(platform());
+            return ResponseEntity.ok(platform(loadRootBrandText()));
         }
 
-        if (tenantConfigService.findActiveBySubdomain(subdomain).isEmpty()) {
+        var tenantOpt = tenantConfigService.findActiveBySubdomain(subdomain);
+        if (tenantOpt.isEmpty()) {
             Map<String, Object> body = new LinkedHashMap<>();
             body.put("error", "tenant_not_found");
             body.put("subdomain", subdomain);
             return ResponseEntity.status(404).body(body);
         }
 
+        var tenant = tenantOpt.get();
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("kind", "tenant");
         body.put("subdomain", subdomain);
+        // Storefront app-bar label. Falls back from brandText (owner override)
+        // to title (tenant display name) so a brand new tenant is usable from
+        // second zero even before the owner customises it.
+        body.put("brandText", firstNonBlank(tenant.getBrandText(), tenant.getTitle(), subdomain));
         return ResponseEntity.ok(body);
     }
 
-    private static Map<String, Object> platform() {
+    /**
+     * Resolves the brand text override for the platform/root context, if any.
+     * Read from the tenant document whose subdomain matches the root domain's
+     * leading label (e.g. {@code earnlumens} for {@code earnlumens.org}). When
+     * the document does not exist or has no override the SPA falls back to the
+     * hardcoded EARNLUMENS brand, so clearing the value in admin-ui restores
+     * the factory default without any extra step.
+     */
+    private String loadRootBrandText() {
+        String rootSub = rootDomain.contains(".")
+                ? rootDomain.substring(0, rootDomain.indexOf('.'))
+                : rootDomain;
+        return tenantConfigService.findActiveBySubdomain(rootSub)
+                .map(t -> firstNonBlank(t.getBrandText(), t.getTitle(), null))
+                .orElse(null);
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) return null;
+        for (String v : values) {
+            if (v != null && !v.isBlank()) return v;
+        }
+        return null;
+    }
+
+    private static Map<String, Object> platform(String brandText) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("kind", "platform");
+        if (brandText != null) {
+            body.put("brandText", brandText);
+        }
         return body;
     }
 }

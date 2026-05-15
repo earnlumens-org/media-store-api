@@ -25,6 +25,12 @@ public class TenantReadModel {
     private String subdomain;
     private String tenantWallet;
 
+    /** Optional storefront app-bar label, mirrors admin-api's Tenant.brandText. */
+    private String brandText;
+
+    /** Optional storefront title, mirrors admin-api's Tenant.title (display fallback). */
+    private String title;
+
     private BigDecimal platformFeePercent;
     private BigDecimal tenantFeePercent;
 
@@ -45,6 +51,12 @@ public class TenantReadModel {
 
     public String getTenantWallet() { return tenantWallet; }
     public void setTenantWallet(String tenantWallet) { this.tenantWallet = tenantWallet; }
+
+    public String getBrandText() { return brandText; }
+    public void setBrandText(String brandText) { this.brandText = brandText; }
+
+    public String getTitle() { return title; }
+    public void setTitle(String title) { this.title = title; }
 
     public BigDecimal getPlatformFeePercent() { return platformFeePercent; }
     public void setPlatformFeePercent(BigDecimal platformFeePercent) { this.platformFeePercent = platformFeePercent; }
