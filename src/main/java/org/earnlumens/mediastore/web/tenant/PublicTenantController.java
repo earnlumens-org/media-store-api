@@ -66,7 +66,7 @@ public class PublicTenantController {
     public ResponseEntity<Map<String, Object>> visitor(HttpServletRequest request) {
         String host = request.getServerName();
         if (host == null || host.isBlank()) {
-            return ResponseEntity.ok(platform(loadRootBrandText()));
+            return ResponseEntity.ok(platform(loadRootBrand()));
         }
 
         String hostname = host.contains(":") ? host.substring(0, host.indexOf(':')) : host;
@@ -76,21 +76,21 @@ public class PublicTenantController {
                 || "localhost.dv".equals(hostname)
                 || "127.0.0.1".equals(hostname)
                 || rootDomain.equals(hostname)) {
-            return ResponseEntity.ok(platform(loadRootBrandText()));
+            return ResponseEntity.ok(platform(loadRootBrand()));
         }
 
         String suffix = "." + rootDomain;
         if (!hostname.endsWith(suffix)) {
             // Unknown root domain (custom domain, preview deploy, etc.).
             // Treat as platform so the SPA still renders something usable.
-            return ResponseEntity.ok(platform(loadRootBrandText()));
+            return ResponseEntity.ok(platform(loadRootBrand()));
         }
 
         String subdomain = hostname.substring(0, hostname.length() - suffix.length());
         if (subdomain.contains(".")
                 || RESERVED_SUBDOMAINS.contains(subdomain)
                 || !SUBDOMAIN.matcher(subdomain).matches()) {
-            return ResponseEntity.ok(platform(loadRootBrandText()));
+            return ResponseEntity.ok(platform(loadRootBrand()));
         }
 
         var tenantOpt = tenantConfigService.findActiveBySubdomain(subdomain);
@@ -109,24 +109,35 @@ public class PublicTenantController {
         // to title (tenant display name) so a brand new tenant is usable from
         // second zero even before the owner customises it.
         body.put("brandText", firstNonBlank(tenant.getBrandText(), tenant.getTitle(), subdomain));
+        // Optional R2 key of the tenant's custom logo. The SPA composes the
+        // CDN URL itself (cdnBaseUrl + key); omit when unset so the AppBar
+        // falls back to the hardcoded EARNLUMENS svg.
+        if (tenant.getLogoR2Key() != null && !tenant.getLogoR2Key().isBlank()) {
+            body.put("logoR2Key", tenant.getLogoR2Key());
+        }
         return ResponseEntity.ok(body);
     }
 
+    /** Aggregated brand context (text + optional logo key) for the platform root. */
+    private record RootBrand(String text, String logoR2Key) {}
+
     /**
-     * Resolves the brand text override for the platform/root context, if any.
+     * Resolves brand overrides for the platform/root context, if any.
      * Read from the tenant document whose subdomain matches the root domain's
      * leading label (e.g. {@code earnlumens} for {@code earnlumens.org}). When
      * the document does not exist or has no override the SPA falls back to the
-     * hardcoded EARNLUMENS brand, so clearing the value in admin-ui restores
+     * hardcoded EARNLUMENS brand, so clearing the values in admin-ui restores
      * the factory default without any extra step.
      */
-    private String loadRootBrandText() {
+    private RootBrand loadRootBrand() {
         String rootSub = rootDomain.contains(".")
                 ? rootDomain.substring(0, rootDomain.indexOf('.'))
                 : rootDomain;
         return tenantConfigService.findActiveBySubdomain(rootSub)
-                .map(t -> firstNonBlank(t.getBrandText(), t.getTitle(), null))
-                .orElse(null);
+                .map(t -> new RootBrand(
+                        firstNonBlank(t.getBrandText(), t.getTitle(), null),
+                        firstNonBlank(t.getLogoR2Key(), null)))
+                .orElse(new RootBrand(null, null));
     }
 
     private static String firstNonBlank(String... values) {
@@ -137,11 +148,12 @@ public class PublicTenantController {
         return null;
     }
 
-    private static Map<String, Object> platform(String brandText) {
+    private static Map<String, Object> platform(RootBrand brand) {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("kind", "platform");
-        if (brandText != null) {
-            body.put("brandText", brandText);
+        if (brand != null) {
+            if (brand.text() != null) body.put("brandText", brand.text());
+            if (brand.logoR2Key() != null) body.put("logoR2Key", brand.logoR2Key());
         }
         return body;
     }

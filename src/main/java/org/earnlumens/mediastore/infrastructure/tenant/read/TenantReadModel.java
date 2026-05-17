@@ -31,6 +31,9 @@ public class TenantReadModel {
     /** Optional storefront title, mirrors admin-api's Tenant.title (display fallback). */
     private String title;
 
+    /** Optional R2 object key for the storefront logo. Lives under public/tenants/{subdomain}/logo/. */
+    private String logoR2Key;
+
     private BigDecimal platformFeePercent;
     private BigDecimal tenantFeePercent;
 
@@ -57,6 +60,9 @@ public class TenantReadModel {
 
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
+
+    public String getLogoR2Key() { return logoR2Key; }
+    public void setLogoR2Key(String logoR2Key) { this.logoR2Key = logoR2Key; }
 
     public BigDecimal getPlatformFeePercent() { return platformFeePercent; }
     public void setPlatformFeePercent(BigDecimal platformFeePercent) { this.platformFeePercent = platformFeePercent; }
