@@ -107,19 +107,29 @@ public class PublicTenantController {
         body.put("subdomain", subdomain);
         // Storefront app-bar label. Falls back from brandText (owner override)
         // to title (tenant display name) so a brand new tenant is usable from
-        // second zero even before the owner customises it.
-        body.put("brandText", firstNonBlank(tenant.getBrandText(), tenant.getTitle(), subdomain));
+        // second zero even before the owner customises it. When the owner has
+        // flipped on "logo-only" mode, send an empty string so the storefront
+        // can render no text at all (distinct from "unset" / null).
+        if (tenant.isBrandTextHidden()) {
+            body.put("brandText", "");
+            body.put("brandTextHidden", true);
+        } else {
+            body.put("brandText", firstNonBlank(tenant.getBrandText(), tenant.getTitle(), subdomain));
+        }
         // Optional R2 key of the tenant's custom logo. The SPA composes the
         // CDN URL itself (cdnBaseUrl + key); omit when unset so the AppBar
         // falls back to the hardcoded EARNLUMENS svg.
         if (tenant.getLogoR2Key() != null && !tenant.getLogoR2Key().isBlank()) {
             body.put("logoR2Key", tenant.getLogoR2Key());
         }
+        if (tenant.getLogoR2KeyDark() != null && !tenant.getLogoR2KeyDark().isBlank()) {
+            body.put("logoR2KeyDark", tenant.getLogoR2KeyDark());
+        }
         return ResponseEntity.ok(body);
     }
 
-    /** Aggregated brand context (text + optional logo key) for the platform root. */
-    private record RootBrand(String text, String logoR2Key) {}
+    /** Aggregated brand context (text + optional logo keys) for the platform root. */
+    private record RootBrand(String text, boolean textHidden, String logoR2Key, String logoR2KeyDark) {}
 
     /**
      * Resolves brand overrides for the platform/root context, if any.
@@ -136,8 +146,10 @@ public class PublicTenantController {
         return tenantConfigService.findActiveBySubdomain(rootSub)
                 .map(t -> new RootBrand(
                         firstNonBlank(t.getBrandText(), t.getTitle(), null),
-                        firstNonBlank(t.getLogoR2Key(), null)))
-                .orElse(new RootBrand(null, null));
+                        t.isBrandTextHidden(),
+                        firstNonBlank(t.getLogoR2Key(), null),
+                        firstNonBlank(t.getLogoR2KeyDark(), null)))
+                .orElse(new RootBrand(null, false, null, null));
     }
 
     private static String firstNonBlank(String... values) {
@@ -152,8 +164,14 @@ public class PublicTenantController {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("kind", "platform");
         if (brand != null) {
-            if (brand.text() != null) body.put("brandText", brand.text());
+            if (brand.textHidden()) {
+                body.put("brandText", "");
+                body.put("brandTextHidden", true);
+            } else if (brand.text() != null) {
+                body.put("brandText", brand.text());
+            }
             if (brand.logoR2Key() != null) body.put("logoR2Key", brand.logoR2Key());
+            if (brand.logoR2KeyDark() != null) body.put("logoR2KeyDark", brand.logoR2KeyDark());
         }
         return body;
     }

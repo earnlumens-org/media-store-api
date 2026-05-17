@@ -34,6 +34,16 @@ public class TenantReadModel {
     /** Optional R2 object key for the storefront logo. Lives under public/tenants/{subdomain}/logo/. */
     private String logoR2Key;
 
+    /** Optional dark-theme storefront logo. Falls back to {@link #logoR2Key} when null. */
+    private String logoR2KeyDark;
+
+    /**
+     * When {@code true} the storefront renders no text label next to the
+     * logo at all (logo-only mode). Persisted alongside {@link #brandText}
+     * so flipping the switch back off restores the saved label.
+     */
+    private boolean brandTextHidden;
+
     private BigDecimal platformFeePercent;
     private BigDecimal tenantFeePercent;
 
@@ -63,6 +73,12 @@ public class TenantReadModel {
 
     public String getLogoR2Key() { return logoR2Key; }
     public void setLogoR2Key(String logoR2Key) { this.logoR2Key = logoR2Key; }
+
+    public String getLogoR2KeyDark() { return logoR2KeyDark; }
+    public void setLogoR2KeyDark(String logoR2KeyDark) { this.logoR2KeyDark = logoR2KeyDark; }
+
+    public boolean isBrandTextHidden() { return brandTextHidden; }
+    public void setBrandTextHidden(boolean brandTextHidden) { this.brandTextHidden = brandTextHidden; }
 
     public BigDecimal getPlatformFeePercent() { return platformFeePercent; }
     public void setPlatformFeePercent(BigDecimal platformFeePercent) { this.platformFeePercent = platformFeePercent; }
