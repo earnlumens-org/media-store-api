@@ -44,6 +44,18 @@ public class TenantReadModel {
      */
     private boolean brandTextHidden;
 
+    // ---- Storefront hero banner (per-tenant marketing block) -----------
+    // Mirrors admin-api's Tenant fields 1:1. media-store-api only reads.
+
+    private boolean bannerEnabled;
+    private String bannerImageR2Key;
+    private String bannerEyebrow;
+    private String bannerHeadline;
+    private String bannerSubheadline;
+    private String bannerCtaLabel;
+    private String bannerCtaUrl;
+    private String bannerImageAlt;
+
     private BigDecimal platformFeePercent;
     private BigDecimal tenantFeePercent;
 
@@ -79,6 +91,30 @@ public class TenantReadModel {
 
     public boolean isBrandTextHidden() { return brandTextHidden; }
     public void setBrandTextHidden(boolean brandTextHidden) { this.brandTextHidden = brandTextHidden; }
+
+    public boolean isBannerEnabled() { return bannerEnabled; }
+    public void setBannerEnabled(boolean bannerEnabled) { this.bannerEnabled = bannerEnabled; }
+
+    public String getBannerImageR2Key() { return bannerImageR2Key; }
+    public void setBannerImageR2Key(String bannerImageR2Key) { this.bannerImageR2Key = bannerImageR2Key; }
+
+    public String getBannerEyebrow() { return bannerEyebrow; }
+    public void setBannerEyebrow(String bannerEyebrow) { this.bannerEyebrow = bannerEyebrow; }
+
+    public String getBannerHeadline() { return bannerHeadline; }
+    public void setBannerHeadline(String bannerHeadline) { this.bannerHeadline = bannerHeadline; }
+
+    public String getBannerSubheadline() { return bannerSubheadline; }
+    public void setBannerSubheadline(String bannerSubheadline) { this.bannerSubheadline = bannerSubheadline; }
+
+    public String getBannerCtaLabel() { return bannerCtaLabel; }
+    public void setBannerCtaLabel(String bannerCtaLabel) { this.bannerCtaLabel = bannerCtaLabel; }
+
+    public String getBannerCtaUrl() { return bannerCtaUrl; }
+    public void setBannerCtaUrl(String bannerCtaUrl) { this.bannerCtaUrl = bannerCtaUrl; }
+
+    public String getBannerImageAlt() { return bannerImageAlt; }
+    public void setBannerImageAlt(String bannerImageAlt) { this.bannerImageAlt = bannerImageAlt; }
 
     public BigDecimal getPlatformFeePercent() { return platformFeePercent; }
     public void setPlatformFeePercent(BigDecimal platformFeePercent) { this.platformFeePercent = platformFeePercent; }

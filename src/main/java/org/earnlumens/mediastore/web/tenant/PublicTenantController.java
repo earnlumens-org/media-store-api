@@ -125,6 +125,35 @@ public class PublicTenantController {
         if (tenant.getLogoR2KeyDark() != null && !tenant.getLogoR2KeyDark().isBlank()) {
             body.put("logoR2KeyDark", tenant.getLogoR2KeyDark());
         }
+        // Hero banner block — only emitted when the owner has flipped the
+        // master switch on. Keeping the payload empty otherwise lets the SPA
+        // skip rendering without an extra round-trip.
+        if (tenant.isBannerEnabled()) {
+            Map<String, Object> banner = new LinkedHashMap<>();
+            banner.put("enabled", true);
+            if (tenant.getBannerImageR2Key() != null && !tenant.getBannerImageR2Key().isBlank()) {
+                banner.put("imageR2Key", tenant.getBannerImageR2Key());
+            }
+            if (tenant.getBannerEyebrow() != null && !tenant.getBannerEyebrow().isBlank()) {
+                banner.put("eyebrow", tenant.getBannerEyebrow());
+            }
+            if (tenant.getBannerHeadline() != null && !tenant.getBannerHeadline().isBlank()) {
+                banner.put("headline", tenant.getBannerHeadline());
+            }
+            if (tenant.getBannerSubheadline() != null && !tenant.getBannerSubheadline().isBlank()) {
+                banner.put("subheadline", tenant.getBannerSubheadline());
+            }
+            if (tenant.getBannerCtaLabel() != null && !tenant.getBannerCtaLabel().isBlank()) {
+                banner.put("ctaLabel", tenant.getBannerCtaLabel());
+            }
+            if (tenant.getBannerCtaUrl() != null && !tenant.getBannerCtaUrl().isBlank()) {
+                banner.put("ctaUrl", tenant.getBannerCtaUrl());
+            }
+            if (tenant.getBannerImageAlt() != null && !tenant.getBannerImageAlt().isBlank()) {
+                banner.put("imageAlt", tenant.getBannerImageAlt());
+            }
+            body.put("banner", banner);
+        }
         return ResponseEntity.ok(body);
     }
 
