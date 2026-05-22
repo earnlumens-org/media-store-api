@@ -56,6 +56,10 @@ public class TenantReadModel {
     private String bannerCtaUrl;
     private String bannerImageAlt;
 
+    /** Per-tenant default Vuetify theme keys. Mirror admin-api's Tenant fields. */
+    private String defaultLightTheme;
+    private String defaultDarkTheme;
+
     private BigDecimal platformFeePercent;
     private BigDecimal tenantFeePercent;
 
@@ -115,6 +119,12 @@ public class TenantReadModel {
 
     public String getBannerImageAlt() { return bannerImageAlt; }
     public void setBannerImageAlt(String bannerImageAlt) { this.bannerImageAlt = bannerImageAlt; }
+
+    public String getDefaultLightTheme() { return defaultLightTheme; }
+    public void setDefaultLightTheme(String defaultLightTheme) { this.defaultLightTheme = defaultLightTheme; }
+
+    public String getDefaultDarkTheme() { return defaultDarkTheme; }
+    public void setDefaultDarkTheme(String defaultDarkTheme) { this.defaultDarkTheme = defaultDarkTheme; }
 
     public BigDecimal getPlatformFeePercent() { return platformFeePercent; }
     public void setPlatformFeePercent(BigDecimal platformFeePercent) { this.platformFeePercent = platformFeePercent; }

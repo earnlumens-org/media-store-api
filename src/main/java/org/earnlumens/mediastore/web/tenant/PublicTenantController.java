@@ -154,6 +154,15 @@ public class PublicTenantController {
             }
             body.put("banner", banner);
         }
+        // Per-tenant default Vuetify theme picks. Emitted only when the owner
+        // has set them, so the storefront can keep its hardcoded defaults
+        // (DEFAULT_LIGHT_THEME / DEFAULT_DARK_THEME) when the keys are null.
+        if (tenant.getDefaultLightTheme() != null && !tenant.getDefaultLightTheme().isBlank()) {
+            body.put("defaultLightTheme", tenant.getDefaultLightTheme());
+        }
+        if (tenant.getDefaultDarkTheme() != null && !tenant.getDefaultDarkTheme().isBlank()) {
+            body.put("defaultDarkTheme", tenant.getDefaultDarkTheme());
+        }
         return ResponseEntity.ok(body);
     }
 
