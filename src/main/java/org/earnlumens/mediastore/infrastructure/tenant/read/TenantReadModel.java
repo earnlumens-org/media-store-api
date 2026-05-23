@@ -47,6 +47,9 @@ public class TenantReadModel {
      */
     private boolean brandTextHidden;
 
+    /** Optional browser-tab title; null means "use tenant title (or hardcoded EARNLUMENS)". */
+    private String browserTitle;
+
     // ---- Storefront hero banner (per-tenant marketing block) -----------
     // Mirrors admin-api's Tenant fields 1:1. media-store-api only reads.
 
@@ -108,6 +111,9 @@ public class TenantReadModel {
 
     public boolean isBrandTextHidden() { return brandTextHidden; }
     public void setBrandTextHidden(boolean brandTextHidden) { this.brandTextHidden = brandTextHidden; }
+
+    public String getBrowserTitle() { return browserTitle; }
+    public void setBrowserTitle(String browserTitle) { this.browserTitle = browserTitle; }
 
     public boolean isBannerEnabled() { return bannerEnabled; }
     public void setBannerEnabled(boolean bannerEnabled) { this.bannerEnabled = bannerEnabled; }

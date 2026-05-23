@@ -162,6 +162,12 @@ public class PublicTenantController {
         if (tenant.getFaviconR2Key() != null && !tenant.getFaviconR2Key().isBlank()) {
             body.put("faviconR2Key", tenant.getFaviconR2Key());
         }
+        // Optional browser-tab title. SPA writes it into document.title at
+        // runtime; omit when unset so the baked-in <title> from index.html
+        // wins (which is the EARNLUMENS default).
+        if (tenant.getBrowserTitle() != null && !tenant.getBrowserTitle().isBlank()) {
+            body.put("browserTitle", tenant.getBrowserTitle());
+        }
         // Hero banner block — only emitted when the owner has flipped the
         // master switch on. Keeping the payload empty otherwise lets the SPA
         // skip rendering without an extra round-trip.
