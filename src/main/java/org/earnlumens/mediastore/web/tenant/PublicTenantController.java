@@ -2,6 +2,7 @@ package org.earnlumens.mediastore.web.tenant;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.earnlumens.mediastore.infrastructure.tenant.read.TenantConfigService;
+import org.earnlumens.mediastore.infrastructure.tenant.read.TenantReadModel;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -10,6 +11,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 
@@ -66,7 +68,7 @@ public class PublicTenantController {
     public ResponseEntity<Map<String, Object>> visitor(HttpServletRequest request) {
         String host = request.getServerName();
         if (host == null || host.isBlank()) {
-            return ResponseEntity.ok(platform(loadRootBrand()));
+            return ResponseEntity.ok(platform());
         }
 
         String hostname = host.contains(":") ? host.substring(0, host.indexOf(':')) : host;
@@ -76,21 +78,21 @@ public class PublicTenantController {
                 || "localhost.dv".equals(hostname)
                 || "127.0.0.1".equals(hostname)
                 || rootDomain.equals(hostname)) {
-            return ResponseEntity.ok(platform(loadRootBrand()));
+            return ResponseEntity.ok(platform());
         }
 
         String suffix = "." + rootDomain;
         if (!hostname.endsWith(suffix)) {
             // Unknown root domain (custom domain, preview deploy, etc.).
             // Treat as platform so the SPA still renders something usable.
-            return ResponseEntity.ok(platform(loadRootBrand()));
+            return ResponseEntity.ok(platform());
         }
 
         String subdomain = hostname.substring(0, hostname.length() - suffix.length());
         if (subdomain.contains(".")
                 || RESERVED_SUBDOMAINS.contains(subdomain)
                 || !SUBDOMAIN.matcher(subdomain).matches()) {
-            return ResponseEntity.ok(platform(loadRootBrand()));
+            return ResponseEntity.ok(platform());
         }
 
         var tenantOpt = tenantConfigService.findActiveBySubdomain(subdomain);
@@ -105,6 +107,29 @@ public class PublicTenantController {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("kind", "tenant");
         body.put("subdomain", subdomain);
+        applyTenantConfig(body, tenant, subdomain);
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * Writes every owner-configurable storefront field from {@code tenant} into
+     * {@code body} using the conventions the SPA expects (omit-when-unset for
+     * optional fields; emit empty-string when the owner has explicitly opted
+     * out of brand text). Shared by both the {@code kind:"tenant"} branch and
+     * the {@code kind:"platform"} branch so the root tenant
+     * ({@code earnlumens} subdomain) exposes the SAME set of overrides
+     * (theme defaults, banner, uploads switch) as any sub-tenant — without
+     * this, configuring a theme on the root via admin-ui silently had no
+     * effect on the storefront.
+     *
+     * @param displayFallback last-resort brand label when neither
+     *                        {@code brandText} nor {@code title} is set.
+     *                        {@code null} skips the fallback (platform case,
+     *                        where the SPA owns the EARNLUMENS hardcoded brand).
+     */
+    private static void applyTenantConfig(Map<String, Object> body,
+                                          TenantReadModel tenant,
+                                          String displayFallback) {
         // Storefront app-bar label. Falls back from brandText (owner override)
         // to title (tenant display name) so a brand new tenant is usable from
         // second zero even before the owner customises it. When the owner has
@@ -114,7 +139,12 @@ public class PublicTenantController {
             body.put("brandText", "");
             body.put("brandTextHidden", true);
         } else {
-            body.put("brandText", firstNonBlank(tenant.getBrandText(), tenant.getTitle(), subdomain));
+            String label = displayFallback != null
+                ? firstNonBlank(tenant.getBrandText(), tenant.getTitle(), displayFallback)
+                : firstNonBlank(tenant.getBrandText(), tenant.getTitle(), null);
+            if (label != null) {
+                body.put("brandText", label);
+            }
         }
         // Optional R2 key of the tenant's custom logo. The SPA composes the
         // CDN URL itself (cdnBaseUrl + key); omit when unset so the AppBar
@@ -169,31 +199,20 @@ public class PublicTenantController {
         if (!tenant.isUploadsEnabled()) {
             body.put("uploadsEnabled", false);
         }
-        return ResponseEntity.ok(body);
     }
 
-    /** Aggregated brand context (text + optional logo keys) for the platform root. */
-    private record RootBrand(String text, boolean textHidden, String logoR2Key, String logoR2KeyDark) {}
-
     /**
-     * Resolves brand overrides for the platform/root context, if any.
-     * Read from the tenant document whose subdomain matches the root domain's
-     * leading label (e.g. {@code earnlumens} for {@code earnlumens.org}). When
-     * the document does not exist or has no override the SPA falls back to the
-     * hardcoded EARNLUMENS brand, so clearing the values in admin-ui restores
-     * the factory default without any extra step.
+     * Resolves the tenant document that backs the platform / root domain
+     * (subdomain matches the root domain's leading label — e.g.
+     * {@code earnlumens} for {@code earnlumens.org}). Empty when the doc
+     * does not exist; the SPA then falls back to its hardcoded brand +
+     * default themes.
      */
-    private RootBrand loadRootBrand() {
+    private Optional<TenantReadModel> loadRootTenant() {
         String rootSub = rootDomain.contains(".")
                 ? rootDomain.substring(0, rootDomain.indexOf('.'))
                 : rootDomain;
-        return tenantConfigService.findActiveBySubdomain(rootSub)
-                .map(t -> new RootBrand(
-                        firstNonBlank(t.getBrandText(), t.getTitle(), null),
-                        t.isBrandTextHidden(),
-                        firstNonBlank(t.getLogoR2Key(), null),
-                        firstNonBlank(t.getLogoR2KeyDark(), null)))
-                .orElse(new RootBrand(null, false, null, null));
+        return tenantConfigService.findActiveBySubdomain(rootSub);
     }
 
     private static String firstNonBlank(String... values) {
@@ -204,19 +223,15 @@ public class PublicTenantController {
         return null;
     }
 
-    private static Map<String, Object> platform(RootBrand brand) {
+    private Map<String, Object> platform() {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("kind", "platform");
-        if (brand != null) {
-            if (brand.textHidden()) {
-                body.put("brandText", "");
-                body.put("brandTextHidden", true);
-            } else if (brand.text() != null) {
-                body.put("brandText", brand.text());
-            }
-            if (brand.logoR2Key() != null) body.put("logoR2Key", brand.logoR2Key());
-            if (brand.logoR2KeyDark() != null) body.put("logoR2KeyDark", brand.logoR2KeyDark());
-        }
+        // The platform context still mirrors the root tenant document so the
+        // owner can configure brand, theme, banner and uploads from the same
+        // admin-ui flow that powers every other tenant. We deliberately pass
+        // a null displayFallback so the SPA keeps its hardcoded EARNLUMENS
+        // brand when the owner has not set a brandText.
+        loadRootTenant().ifPresent(t -> applyTenantConfig(body, t, null));
         return body;
     }
 }
