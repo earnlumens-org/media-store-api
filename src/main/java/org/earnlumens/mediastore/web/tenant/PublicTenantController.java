@@ -163,6 +163,12 @@ public class PublicTenantController {
         if (tenant.getDefaultDarkTheme() != null && !tenant.getDefaultDarkTheme().isBlank()) {
             body.put("defaultDarkTheme", tenant.getDefaultDarkTheme());
         }
+        // Uploads kill switch. Only emit when explicitly disabled so the
+        // payload stays tiny for the vast majority of tenants where uploads
+        // are on. The storefront treats a missing field as "enabled".
+        if (!tenant.isUploadsEnabled()) {
+            body.put("uploadsEnabled", false);
+        }
         return ResponseEntity.ok(body);
     }
 

@@ -60,6 +60,13 @@ public class TenantReadModel {
     private String defaultLightTheme;
     private String defaultDarkTheme;
 
+    /**
+     * Per-tenant uploads kill switch. Boxed so a missing Mongo field
+     * deserialises to {@code null} and the safe default ({@code true} —
+     * uploads enabled) applies through {@link #isUploadsEnabled()}.
+     */
+    private Boolean uploadsEnabled;
+
     private BigDecimal platformFeePercent;
     private BigDecimal tenantFeePercent;
 
@@ -125,6 +132,11 @@ public class TenantReadModel {
 
     public String getDefaultDarkTheme() { return defaultDarkTheme; }
     public void setDefaultDarkTheme(String defaultDarkTheme) { this.defaultDarkTheme = defaultDarkTheme; }
+
+    /** Treats a missing/null field as enabled (legacy tenants stay on by default). */
+    public boolean isUploadsEnabled() { return uploadsEnabled == null || uploadsEnabled; }
+    public Boolean getUploadsEnabled() { return uploadsEnabled; }
+    public void setUploadsEnabled(Boolean uploadsEnabled) { this.uploadsEnabled = uploadsEnabled; }
 
     public BigDecimal getPlatformFeePercent() { return platformFeePercent; }
     public void setPlatformFeePercent(BigDecimal platformFeePercent) { this.platformFeePercent = platformFeePercent; }
