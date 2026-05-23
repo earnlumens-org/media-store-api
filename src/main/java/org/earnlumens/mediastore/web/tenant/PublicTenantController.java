@@ -155,6 +155,13 @@ public class PublicTenantController {
         if (tenant.getLogoR2KeyDark() != null && !tenant.getLogoR2KeyDark().isBlank()) {
             body.put("logoR2KeyDark", tenant.getLogoR2KeyDark());
         }
+        // Optional per-tenant favicon. Storefront does a runtime swap of the
+        // in-document <link rel="icon"> when this is set so each tenant can
+        // show its own browser-tab icon; omit when unset so the SPA keeps the
+        // baked-in EARNLUMENS favicon.
+        if (tenant.getFaviconR2Key() != null && !tenant.getFaviconR2Key().isBlank()) {
+            body.put("faviconR2Key", tenant.getFaviconR2Key());
+        }
         // Hero banner block — only emitted when the owner has flipped the
         // master switch on. Keeping the payload empty otherwise lets the SPA
         // skip rendering without an extra round-trip.

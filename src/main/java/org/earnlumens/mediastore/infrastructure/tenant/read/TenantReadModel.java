@@ -37,6 +37,9 @@ public class TenantReadModel {
     /** Optional dark-theme storefront logo. Falls back to {@link #logoR2Key} when null. */
     private String logoR2KeyDark;
 
+    /** Optional R2 object key for the per-tenant browser favicon. Lives under public/tenants/{subdomain}/favicon/. */
+    private String faviconR2Key;
+
     /**
      * When {@code true} the storefront renders no text label next to the
      * logo at all (logo-only mode). Persisted alongside {@link #brandText}
@@ -99,6 +102,9 @@ public class TenantReadModel {
 
     public String getLogoR2KeyDark() { return logoR2KeyDark; }
     public void setLogoR2KeyDark(String logoR2KeyDark) { this.logoR2KeyDark = logoR2KeyDark; }
+
+    public String getFaviconR2Key() { return faviconR2Key; }
+    public void setFaviconR2Key(String faviconR2Key) { this.faviconR2Key = faviconR2Key; }
 
     public boolean isBrandTextHidden() { return brandTextHidden; }
     public void setBrandTextHidden(boolean brandTextHidden) { this.brandTextHidden = brandTextHidden; }
