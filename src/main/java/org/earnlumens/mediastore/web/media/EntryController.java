@@ -10,6 +10,7 @@ import org.earnlumens.mediastore.domain.media.dto.response.OwnerEntryPageRespons
 import org.earnlumens.mediastore.domain.media.dto.response.OwnerStatsResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.StudioPageResponse;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
+import org.earnlumens.mediastore.infrastructure.tenant.read.TenantConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -46,9 +47,12 @@ public class EntryController {
     private static final Logger logger = LoggerFactory.getLogger(EntryController.class);
 
     private final EntryUploadService entryUploadService;
+    private final TenantConfigService tenantConfigService;
 
-    public EntryController(EntryUploadService entryUploadService) {
+    public EntryController(EntryUploadService entryUploadService,
+                           TenantConfigService tenantConfigService) {
         this.entryUploadService = entryUploadService;
+        this.tenantConfigService = tenantConfigService;
     }
 
     /**
@@ -64,6 +68,22 @@ public class EntryController {
         }
 
         String tenantId = TenantContext.require();
+
+        // Per-tenant content-type allowlist. When the owner restricts uploads
+        // to a subset (e.g. "images only"), refuse the others at the API edge
+        // so the storefront stays in sync with the server's view of what is
+        // accepted. Unknown tenant → leave it to downstream validation.
+        String requestedType = request.type() == null ? null : request.type().toUpperCase(java.util.Locale.ROOT);
+        boolean typeAllowed = tenantConfigService.findActiveBySubdomain(tenantId)
+                .map(t -> t.isEntryTypeAllowed(requestedType))
+                .orElse(true);
+        if (!typeAllowed) {
+            logger.info("createEntry: refused — entry type {} not allowed for tenant {}", requestedType, tenantId);
+            return ResponseEntity.status(403).body(Map.of(
+                    "error", "ENTRY_TYPE_NOT_ALLOWED",
+                    "message", "This content type is not enabled for this tenant."
+            ));
+        }
 
         try {
             CreateEntryResponse response = entryUploadService.createEntry(tenantId, userId, request);

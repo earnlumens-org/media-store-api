@@ -4,6 +4,7 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * Read-side projection of the {@code tenants} collection owned and written by admin-api.
@@ -72,6 +73,15 @@ public class TenantReadModel {
      * uploads enabled) applies through {@link #isUploadsEnabled()}.
      */
     private Boolean uploadsEnabled;
+
+    /**
+     * Optional allowlist of entry types the tenant accepts in new uploads.
+     * Mirrors {@code admin-api}'s {@code Tenant.allowedEntryTypes}. {@code null}
+     * or empty = no restriction (every type allowed) so legacy tenants stay
+     * unrestricted without a migration. Entries are uppercase {@code EntryType}
+     * names (VIDEO / AUDIO / IMAGE / RESOURCE / COLLECTION).
+     */
+    private List<String> allowedEntryTypes;
 
     private BigDecimal platformFeePercent;
     private BigDecimal tenantFeePercent;
@@ -149,6 +159,20 @@ public class TenantReadModel {
     public boolean isUploadsEnabled() { return uploadsEnabled == null || uploadsEnabled; }
     public Boolean getUploadsEnabled() { return uploadsEnabled; }
     public void setUploadsEnabled(Boolean uploadsEnabled) { this.uploadsEnabled = uploadsEnabled; }
+
+    public List<String> getAllowedEntryTypes() { return allowedEntryTypes; }
+    public void setAllowedEntryTypes(List<String> allowedEntryTypes) { this.allowedEntryTypes = allowedEntryTypes; }
+
+    /**
+     * Returns {@code true} when {@code type} (uppercase canonical enum name
+     * like {@code VIDEO}) is allowed for this tenant. A null/empty allowlist
+     * is treated as "all allowed" so the gate is backward-compatible.
+     */
+    public boolean isEntryTypeAllowed(String type) {
+        if (allowedEntryTypes == null || allowedEntryTypes.isEmpty()) return true;
+        if (type == null) return false;
+        return allowedEntryTypes.contains(type);
+    }
 
     public BigDecimal getPlatformFeePercent() { return platformFeePercent; }
     public void setPlatformFeePercent(BigDecimal platformFeePercent) { this.platformFeePercent = platformFeePercent; }

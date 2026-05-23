@@ -212,6 +212,12 @@ public class PublicTenantController {
         if (!tenant.isUploadsEnabled()) {
             body.put("uploadsEnabled", false);
         }
+        // Per-tenant content-type allowlist. Only emit when restricted so
+        // legacy tenants (and the platform/root) keep paying zero bytes.
+        // The storefront treats a missing field as "all types allowed".
+        if (tenant.getAllowedEntryTypes() != null && !tenant.getAllowedEntryTypes().isEmpty()) {
+            body.put("allowedEntryTypes", tenant.getAllowedEntryTypes());
+        }
     }
 
     /**

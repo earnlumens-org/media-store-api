@@ -8,6 +8,7 @@ import org.earnlumens.mediastore.domain.media.dto.request.UpdateCollectionReques
 import org.earnlumens.mediastore.domain.media.dto.response.CollectionPageResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.CollectionResponse;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantResolver;
+import org.earnlumens.mediastore.infrastructure.tenant.read.TenantConfigService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -40,10 +41,14 @@ public class CollectionController {
 
     private final TenantResolver tenantResolver;
     private final CollectionService collectionService;
+    private final TenantConfigService tenantConfigService;
 
-    public CollectionController(TenantResolver tenantResolver, CollectionService collectionService) {
+    public CollectionController(TenantResolver tenantResolver,
+                                CollectionService collectionService,
+                                TenantConfigService tenantConfigService) {
         this.tenantResolver = tenantResolver;
         this.collectionService = collectionService;
+        this.tenantConfigService = tenantConfigService;
     }
 
     /** POST /api/collections — Create a new DRAFT collection. */
@@ -58,6 +63,19 @@ public class CollectionController {
         }
 
         String tenantId = tenantResolver.resolve(httpRequest);
+
+        // Per-tenant content-type allowlist — collections count as a type the
+        // owner can opt out of (e.g. a pure image-grid tenant may keep them off).
+        boolean collectionsAllowed = tenantConfigService.findActiveBySubdomain(tenantId)
+                .map(t -> t.isEntryTypeAllowed("COLLECTION"))
+                .orElse(true);
+        if (!collectionsAllowed) {
+            logger.info("createCollection: refused — collections not allowed for tenant {}", tenantId);
+            return ResponseEntity.status(403).body(Map.of(
+                    "error", "ENTRY_TYPE_NOT_ALLOWED",
+                    "message", "Collections are not enabled for this tenant."
+            ));
+        }
 
         try {
             CollectionResponse response = collectionService.createCollection(tenantId, userId, request);
