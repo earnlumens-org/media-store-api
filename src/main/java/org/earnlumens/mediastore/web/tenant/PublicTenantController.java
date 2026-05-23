@@ -231,7 +231,7 @@ public class PublicTenantController {
      * an explicit override) so the root domain keeps its historical theme
      * instead of inheriting the generic sub-tenant defaults.
      */
-    private static final String ROOT_DEFAULT_LIGHT_THEME = "rosePineDawn";
+    private static final String ROOT_DEFAULT_LIGHT_THEME = "neoBrutalArt";
     private static final String ROOT_DEFAULT_DARK_THEME = "amoledGray";
 
     private Map<String, Object> platform() {
