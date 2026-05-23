@@ -223,6 +223,17 @@ public class PublicTenantController {
         return null;
     }
 
+    /**
+     * Root-tenant fallback themes. These were the platform defaults before
+     * commit 4e624d6 swapped the storefront-wide defaults to nord/tokyoNight,
+     * and remain the look-and-feel users associate with the EARNLUMENS root
+     * site. We re-apply them here (only when the root tenant doc has not set
+     * an explicit override) so the root domain keeps its historical theme
+     * instead of inheriting the generic sub-tenant defaults.
+     */
+    private static final String ROOT_DEFAULT_LIGHT_THEME = "rosePineDawn";
+    private static final String ROOT_DEFAULT_DARK_THEME = "amoledGray";
+
     private Map<String, Object> platform() {
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("kind", "platform");
@@ -232,6 +243,11 @@ public class PublicTenantController {
         // a null displayFallback so the SPA keeps its hardcoded EARNLUMENS
         // brand when the owner has not set a brandText.
         loadRootTenant().ifPresent(t -> applyTenantConfig(body, t, null));
+        // Root-tenant theme fallback: when the owner has not picked an
+        // override, force rosePineDawn/amoledGray so the storefront does
+        // NOT fall through to its generic nord/tokyoNight defaults.
+        body.putIfAbsent("defaultLightTheme", ROOT_DEFAULT_LIGHT_THEME);
+        body.putIfAbsent("defaultDarkTheme", ROOT_DEFAULT_DARK_THEME);
         return body;
     }
 }
