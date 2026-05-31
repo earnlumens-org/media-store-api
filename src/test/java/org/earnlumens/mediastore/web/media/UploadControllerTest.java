@@ -8,6 +8,7 @@ import org.earnlumens.mediastore.domain.media.dto.response.InitUploadResponse;
 import org.earnlumens.mediastore.infrastructure.security.jwt.AuthTokenFilter;
 import org.earnlumens.mediastore.infrastructure.security.jwt.JwtUtils;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantResolver;
+import org.earnlumens.mediastore.infrastructure.tenant.read.TenantConfigService;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,6 +46,7 @@ class UploadControllerTest {
     private JwtUtils jwtUtils;
     private TenantResolver tenantResolver;
     private EntryUploadService entryUploadService;
+    private TenantConfigService tenantConfigService;
 
     @BeforeEach
     void setUp() {
@@ -53,8 +55,11 @@ class UploadControllerTest {
         jwtUtils = mock(JwtUtils.class);
         tenantResolver = mock(TenantResolver.class);
         entryUploadService = mock(EntryUploadService.class);
+        tenantConfigService = mock(TenantConfigService.class);
 
-        UploadController controller = new UploadController(tenantResolver, entryUploadService);
+        when(tenantConfigService.findActiveBySubdomain(any())).thenReturn(Optional.empty());
+
+        UploadController controller = new UploadController(tenantResolver, entryUploadService, tenantConfigService);
 
         AuthTokenFilter authFilter = new AuthTokenFilter();
         ReflectionTestUtils.setField(authFilter, "jwtUtils", jwtUtils);
