@@ -20,6 +20,8 @@ public class Asset {
     private String codecAudio;
     private Long bitrateBps;
     private LocalDateTime createdAt;
+    /** When the moderation pipeline scanned this asset for malware (ClamAV). Null until approved. */
+    private LocalDateTime scannedAt;
 
     public Asset() {}
 
@@ -55,4 +57,6 @@ public class Asset {
     public void setBitrateBps(Long bitrateBps) { this.bitrateBps = bitrateBps; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+    public LocalDateTime getScannedAt() { return scannedAt; }
+    public void setScannedAt(LocalDateTime scannedAt) { this.scannedAt = scannedAt; }
 }

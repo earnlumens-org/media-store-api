@@ -66,6 +66,62 @@ public class EntryUploadService {
     private static final BigDecimal ONE_HUNDRED = new BigDecimal("100.00");
     private static final Pattern STELLAR_PUBLIC_KEY = Pattern.compile("^G[A-Z2-7]{55}$");
 
+    /**
+     * File extensions that are never accepted, regardless of the declared
+     * content type. The original file name is reflected in the download
+     * {@code Content-Disposition}, so a spoofed content type with a
+     * dangerous extension must be blocked at the boundary. This is the
+     * first layer of defense; the moderation worker additionally runs a
+     * ClamAV scan on the uploaded bytes (magic-byte based).
+     */
+    private static final java.util.Set<String> BLOCKED_EXTENSIONS = java.util.Set.of(
+            "exe", "msi", "bat", "cmd", "com", "scr", "pif", "cpl", "dll", "sys", "drv",
+            "sh", "bash", "zsh", "ps1", "psm1", "vbs", "vbe", "js", "jse", "wsf", "wsh",
+            "jar", "apk", "app", "deb", "rpm", "dmg", "pkg", "bin", "run", "elf",
+            "hta", "reg", "lnk", "gadget", "scf", "inf"
+    );
+
+    /**
+     * Content-type prefixes that are never accepted for any upload kind.
+     */
+    private static final java.util.Set<String> BLOCKED_CONTENT_TYPES = java.util.Set.of(
+            "application/x-msdownload", "application/x-msdos-program", "application/x-dosexec",
+            "application/x-executable", "application/x-sharedlib", "application/x-mach-binary",
+            "application/x-elf", "application/vnd.microsoft.portable-executable",
+            "application/x-sh", "application/x-shellscript", "application/x-bat",
+            "application/java-archive", "application/vnd.android.package-archive",
+            "application/x-msi", "application/x-apple-diskimage"
+    );
+
+    /**
+     * Document / ebook / archive content types accepted for RESOURCE
+     * attachments (in addition to {@code image/*}, {@code video/*},
+     * {@code audio/*} and {@code text/*}). Archives are allowed here but the
+     * moderation worker routes them to manual review.
+     */
+    private static final java.util.Set<String> RESOURCE_DOCUMENT_CONTENT_TYPES = java.util.Set.of(
+            "application/pdf",
+            "application/msword",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "application/vnd.ms-excel",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "application/vnd.ms-powerpoint",
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.oasis.opendocument.text",
+            "application/vnd.oasis.opendocument.spreadsheet",
+            "application/vnd.oasis.opendocument.presentation",
+            "application/rtf",
+            "application/epub+zip",
+            "application/json",
+            "application/xml",
+            "application/zip",
+            "application/x-zip-compressed",
+            "application/x-tar",
+            "application/gzip",
+            "application/x-7z-compressed",
+            "application/vnd.rar"
+    );
+
     private final EntryRepository entryRepository;
     private final AssetRepository assetRepository;
     private final UserRepository userRepository;
@@ -242,6 +298,13 @@ public class EntryUploadService {
 
         MediaKind kind = MediaKind.valueOf(request.kind());
         String sanitizedFileName = sanitizeFileName(request.fileName());
+
+        // ── Boundary defense: reject dangerous / unsupported file types ──
+        // The client controls both contentType and fileName, so we validate
+        // against the declared content type AND the file extension. This is
+        // the first of three layers (boundary → ClamAV scan → download
+        // disclaimer); the moderation worker scans the actual bytes later.
+        validateUploadType(entry.getType(), kind, request.contentType(), request.fileName());
 
         // THUMBNAIL and PREVIEW go under public/ prefix so CDN Worker serves them without auth.
         // FULL (paid content) stays under private/ — served via /media/<entryId> with entitlement check.
@@ -992,6 +1055,82 @@ public class EntryUploadService {
             case ARCHIVED -> target == EntryStatus.DRAFT;
             case DELETED -> target == EntryStatus.DRAFT;
         };
+    }
+
+    /**
+     * Validates that an uploaded file's declared content type and extension
+     * are acceptable for the given entry type and upload kind.
+     *
+     * <p>Three checks, fail-fast:
+     * <ol>
+     *   <li>The file extension is not on the global blocklist (executables,
+     *       scripts, installers — dangerous even if the content type is faked).</li>
+     *   <li>The content type is not on the global blocklist.</li>
+     *   <li>The content type is allowed for the (entryType, kind) pair.</li>
+     * </ol>
+     *
+     * @throws IllegalArgumentException with code {@code DANGEROUS_FILE_TYPE}
+     *         or {@code UNSUPPORTED_FILE_TYPE} when the file is rejected.
+     */
+    private void validateUploadType(EntryType entryType, MediaKind kind, String contentType, String fileName) {
+        String ct = contentType == null ? "" : contentType.trim().toLowerCase();
+        String ext = extractExtension(fileName);
+
+        // 1 & 2 — global blocklists (apply to every kind and entry type)
+        if (ext != null && BLOCKED_EXTENSIONS.contains(ext)) {
+            logger.warn("validateUploadType: blocked dangerous extension '{}' (file={})", ext, fileName);
+            throw new IllegalArgumentException("DANGEROUS_FILE_TYPE");
+        }
+        if (BLOCKED_CONTENT_TYPES.contains(ct)) {
+            logger.warn("validateUploadType: blocked dangerous content type '{}'", ct);
+            throw new IllegalArgumentException("DANGEROUS_FILE_TYPE");
+        }
+
+        // 3 — per (kind, entryType) allowlist
+        // THUMBNAIL / PREVIEW are always cover images regardless of entry type.
+        if (kind == MediaKind.THUMBNAIL || kind == MediaKind.PREVIEW) {
+            if (!ct.startsWith("image/")) {
+                logger.warn("validateUploadType: {} must be an image, got '{}'", kind, ct);
+                throw new IllegalArgumentException("UNSUPPORTED_FILE_TYPE");
+            }
+            return;
+        }
+
+        // FULL asset — allowed types depend on the entry type.
+        boolean allowed = switch (entryType) {
+            case VIDEO -> ct.startsWith("video/");
+            case AUDIO -> ct.startsWith("audio/");
+            case IMAGE -> ct.startsWith("image/");
+            // RESOURCE attachments are the broadest: media, documents, ebooks
+            // and archives are all valid downloadable resources. Anything on
+            // the global blocklists above has already been rejected.
+            case RESOURCE -> ct.startsWith("image/")
+                    || ct.startsWith("video/")
+                    || ct.startsWith("audio/")
+                    || ct.startsWith("text/")
+                    || RESOURCE_DOCUMENT_CONTENT_TYPES.contains(ct);
+            // COLLECTION entries never carry a FULL asset.
+            case COLLECTION -> false;
+        };
+
+        if (!allowed) {
+            logger.warn("validateUploadType: content type '{}' not allowed for {} FULL asset", ct, entryType);
+            throw new IllegalArgumentException("UNSUPPORTED_FILE_TYPE");
+        }
+    }
+
+    /**
+     * Returns the lowercase extension of a file name (without the dot), or
+     * {@code null} when there is none.
+     */
+    private String extractExtension(String fileName) {
+        if (fileName == null) return null;
+        String name = fileName.replace("\\", "/");
+        int slash = name.lastIndexOf('/');
+        if (slash >= 0) name = name.substring(slash + 1);
+        int dot = name.lastIndexOf('.');
+        if (dot < 0 || dot == name.length() - 1) return null;
+        return name.substring(dot + 1).trim().toLowerCase();
     }
 
     private String sanitizeFileName(String fileName) {

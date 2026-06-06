@@ -75,7 +75,7 @@ public class PublicEntryService {
                     // For detail view: include FULL asset metadata if available
                     AssetInfo assetInfo = assetRepository
                             .findByTenantIdAndEntryIdAndKindAndStatus(tenantId, entryId, MediaKind.FULL, AssetStatus.READY)
-                            .map(asset -> new AssetInfo(asset.getFileName(), asset.getFileSizeBytes(), asset.getContentType()))
+                            .map(asset -> new AssetInfo(asset.getFileName(), asset.getFileSizeBytes(), asset.getContentType(), asset.getScannedAt()))
                             .orElse(null);
                     return toPublicResponse(entry, assetInfo);
                 });

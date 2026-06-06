@@ -357,6 +357,11 @@ public class ModerationJobService {
                     entryRepository.save(entry);
                     logger.info("moderation: entry {} approved → status=APPROVED", entry.getId());
 
+                    // Stamp the malware-scan timestamp on the FULL asset. Approval
+                    // implies the ClamAV step in the worker cleared the file; this
+                    // timestamp powers the "scanned on {date}" download disclaimer.
+                    stampAssetScanned(job.getTenantId(), entry.getId());
+
                     if (entry.getType() == org.earnlumens.mediastore.domain.media.model.EntryType.VIDEO) {
                         createTranscodingJobForEntry(job.getTenantId(), entry);
                     }
@@ -389,6 +394,27 @@ public class ModerationJobService {
                                 collection.getId(), e.getMessage());
                     }
                 });
+    }
+
+    /**
+     * Records the malware-scan timestamp on the entry's FULL asset after a
+     * successful moderation approval. Best-effort: a missing asset (e.g.
+     * text-only RESOURCE entries) is simply skipped and never blocks approval.
+     */
+    private void stampAssetScanned(String tenantId, String entryId) {
+        try {
+            assetRepository.findByTenantIdAndEntryId(tenantId, entryId).stream()
+                    .filter(a -> a.getKind() == MediaKind.FULL)
+                    .findFirst()
+                    .ifPresent(asset -> {
+                        asset.setScannedAt(java.time.LocalDateTime.now());
+                        assetRepository.save(asset);
+                        logger.info("moderation: stamped scannedAt on FULL asset {} (entry={})",
+                                asset.getId(), entryId);
+                    });
+        } catch (Exception e) {
+            logger.warn("moderation: failed to stamp scannedAt for entry={} — {}", entryId, e.getMessage());
+        }
     }
 
     /**

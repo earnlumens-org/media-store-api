@@ -46,6 +46,9 @@ public class AssetEntity {
     private String codecAudio;
     private Long bitrateBps;
 
+    /** When the moderation pipeline scanned this asset for malware (ClamAV). Null until approved. */
+    private LocalDateTime scannedAt;
+
     @CreatedDate
     private LocalDateTime createdAt;
 
@@ -98,4 +101,7 @@ public class AssetEntity {
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+
+    public LocalDateTime getScannedAt() { return scannedAt; }
+    public void setScannedAt(LocalDateTime scannedAt) { this.scannedAt = scannedAt; }
 }

@@ -8,5 +8,7 @@ package org.earnlumens.mediastore.domain.media.dto.response;
 public record AssetInfo(
         String fileName,
         Long fileSizeBytes,
-        String contentType
+        String contentType,
+        /** ISO-8601 timestamp of the malware scan (ClamAV) that cleared this file; null if not recorded. */
+        java.time.LocalDateTime scannedAt
 ) {}
