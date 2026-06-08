@@ -648,4 +648,189 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
         UpdateResult result = mongoTemplate.updateMulti(query, update, EntryEntity.class);
         return result.getModifiedCount();
     }
+
+    // ── Search ──────────────────────────────────────────────────────────────
+
+    /** Hard cap on query tokens so a pathological query can never explode the pipeline. */
+    private static final int MAX_SEARCH_TOKENS = 6;
+
+    @Override
+    public Document findSearchFeed(String tenantId, String query, String type, String sort,
+                                   int skip, int limit) {
+        List<AggregationOperation> ops = buildSearchFeedPipeline(tenantId, query, type);
+
+        Document sortDoc = buildSearchSortDocument(sort);
+
+        ops.add(context -> new Document("$facet", new Document()
+                .append("data", List.of(
+                        sortDoc,
+                        new Document("$skip", skip),
+                        new Document("$limit", limit),
+                        Document.parse(PUBLIC_FEED_PROJECT)))
+                .append("count", List.of(
+                        new Document("$count", "total")))));
+
+        Aggregation agg = Aggregation.newAggregation(ops);
+        return mongoTemplate.aggregate(agg, "entries", Document.class).getUniqueMappedResult();
+    }
+
+    private List<AggregationOperation> buildSearchFeedPipeline(String tenantId, String query, String type) {
+        List<AggregationOperation> ops = new ArrayList<>();
+
+        // 1. Match ALL PUBLISHED entries for this tenant.
+        ops.add(Aggregation.match(Criteria.where("tenantId").is(tenantId)
+                .and("status").is("PUBLISHED")));
+
+        // 2. Normalize entry docs.
+        ops.add(context -> Document.parse("""
+            { "$addFields": {
+                "kind": "entry",
+                "sortDate": "$publishedAt",
+                "itemCount": { "$literal": 0 },
+                "coverR2Key": { "$literal": null }
+            }}
+            """));
+
+        // 3. $unionWith ALL PUBLISHED + PUBLIC collections for this tenant.
+        Document collMatch = new Document("$match",
+                new Document("tenantId", tenantId)
+                        .append("status", "PUBLISHED")
+                        .append("visibility", "PUBLIC"));
+        Document collAddFields = Document.parse("""
+            { "$addFields": {
+                "kind": "collection",
+                "type": { "$ifNull": [ { "$toLower": "$collectionType" }, "catalog" ] },
+                "sortDate": "$publishedAt",
+                "itemCount": { "$cond": { "if": { "$isArray": "$items" }, "then": { "$size": "$items" }, "else": 0 } },
+                "durationSec": { "$literal": null },
+                "viewCount": { "$literal": 0 },
+                "thumbnailR2Key": { "$literal": null },
+                "tags": { "$literal": [] }
+            }}
+            """);
+        ops.add(context -> new Document("$unionWith",
+                new Document("coll", "collections")
+                        .append("pipeline", List.of(collMatch, collAddFields))));
+
+        // 4. Full-text style token filter (title / description / tags / author).
+        addFullTextSearchFilter(ops, query);
+
+        // 5. Optional type filter.
+        addTypeFilter(ops, type);
+
+        return ops;
+    }
+
+    /**
+     * Tokenized, multi-field search filter. The query is split on whitespace and
+     * every token must match (AND) at least one of {@code title}, {@code description},
+     * {@code tags} or {@code authorUsername} (case-insensitive, OR within a token) —
+     * the "all words must appear somewhere" behavior large platforms use.
+     *
+     * <p>The tenant + status compound index narrows the scan to one tenant's
+     * published documents before the regex runs, so this stays bounded even on
+     * large collections.
+     */
+    private void addFullTextSearchFilter(List<AggregationOperation> ops, String query) {
+        if (query == null || query.isBlank()) {
+            return;
+        }
+        String[] tokens = query.trim().split("\\s+");
+        List<Criteria> tokenCriteria = new ArrayList<>();
+        int used = 0;
+        for (String token : tokens) {
+            if (token.isBlank()) continue;
+            if (used >= MAX_SEARCH_TOKENS) break;
+            String escaped = Pattern.quote(token);
+            tokenCriteria.add(new Criteria().orOperator(
+                    Criteria.where("title").regex(escaped, "i"),
+                    Criteria.where("description").regex(escaped, "i"),
+                    Criteria.where("tags").regex(escaped, "i"),
+                    Criteria.where("authorUsername").regex(escaped, "i")
+            ));
+            used++;
+        }
+        if (tokenCriteria.isEmpty()) {
+            return;
+        }
+        Criteria combined = new Criteria().andOperator(tokenCriteria.toArray(new Criteria[0]));
+        ops.add(Aggregation.match(combined));
+    }
+
+    /**
+     * Search sort order. The default ("relevance") approximates relevance with
+     * popularity + recency, which is robust without a scoring index.
+     */
+    private Document buildSearchSortDocument(String sort) {
+        if (sort == null) sort = "relevance";
+        return switch (sort) {
+            case "newest" -> new Document("$sort", new Document("sortDate", -1));
+            case "oldest" -> new Document("$sort", new Document("sortDate", 1));
+            case "views" -> new Document("$sort", new Document("viewCount", -1).append("sortDate", -1));
+            default -> new Document("$sort", new Document("viewCount", -1).append("sortDate", -1));
+        };
+    }
+
+    @Override
+    public List<Document> searchChannels(String tenantId, String query, int limit) {
+        if (query == null || query.isBlank()) {
+            return List.of();
+        }
+        String escaped = Pattern.quote(query.trim());
+
+        List<AggregationOperation> ops = new ArrayList<>();
+        // Tenant-scoped: only PUBLISHED content of THIS tenant, author name match.
+        ops.add(Aggregation.match(Criteria.where("tenantId").is(tenantId)
+                .and("status").is("PUBLISHED")
+                .and("authorUsername").regex(escaped, "i")));
+        // Newest first so the grouped avatar/badge reflect the latest publish.
+        ops.add(context -> new Document("$sort", new Document("publishedAt", -1)));
+        ops.add(context -> Document.parse("""
+            { "$group": {
+                "_id": "$authorUsername",
+                "avatarUrl": { "$first": "$authorAvatarUrl" },
+                "badge": { "$first": "$authorBadge" },
+                "contentCount": { "$sum": 1 }
+            }}
+            """));
+        ops.add(context -> new Document("$sort", new Document("contentCount", -1).append("_id", 1)));
+        ops.add(Aggregation.limit(limit));
+
+        Aggregation agg = Aggregation.newAggregation(ops);
+        return mongoTemplate.aggregate(agg, "entries", Document.class).getMappedResults();
+    }
+
+    @Override
+    public List<String> searchSuggestions(String tenantId, String query, int limit) {
+        if (query == null || query.isBlank()) {
+            return List.of();
+        }
+        String escaped = Pattern.quote(query.trim());
+
+        List<AggregationOperation> ops = new ArrayList<>();
+        ops.add(Aggregation.match(Criteria.where("tenantId").is(tenantId)
+                .and("status").is("PUBLISHED")
+                .and("title").regex(escaped, "i")));
+        // Collapse duplicate titles, keeping the most-viewed representative.
+        ops.add(context -> Document.parse("""
+            { "$group": {
+                "_id": { "$toLower": "$title" },
+                "title": { "$first": "$title" },
+                "views": { "$max": "$viewCount" }
+            }}
+            """));
+        ops.add(context -> new Document("$sort", new Document("views", -1).append("_id", 1)));
+        ops.add(Aggregation.limit(limit));
+
+        Aggregation agg = Aggregation.newAggregation(ops);
+        List<Document> docs = mongoTemplate.aggregate(agg, "entries", Document.class).getMappedResults();
+        List<String> suggestions = new ArrayList<>();
+        for (Document doc : docs) {
+            String title = doc.getString("title");
+            if (title != null && !title.isBlank()) {
+                suggestions.add(title);
+            }
+        }
+        return suggestions;
+    }
 }

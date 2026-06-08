@@ -116,4 +116,29 @@ public interface EntryRepository {
                                String pricing, String sort,
                                org.earnlumens.mediastore.domain.media.model.LanguageFilter languageFilter,
                                int skip, int limit);
+
+    // ── Search ──────────────────────────────────────────────────────────
+
+    /**
+     * Unified search feed: PUBLISHED entries + PUBLISHED/PUBLIC collections for
+     * the tenant whose title/description/tags/author match every token in
+     * {@code query}. Returns a single {@code $facet} document with {@code data}
+     * (page of items) and {@code count} (total) so a single round-trip serves
+     * both the page and its pagination metadata.
+     */
+    Document findSearchFeed(String tenantId, String query, String type, String sort,
+                            int skip, int limit);
+
+    /**
+     * Channel (creator) matches for a search query — distinct authors of the
+     * tenant's PUBLISHED content whose username matches {@code query}, ranked by
+     * how much content they have published.
+     */
+    List<Document> searchChannels(String tenantId, String query, int limit);
+
+    /**
+     * Autocomplete suggestions — distinct PUBLISHED content titles for the
+     * tenant that match {@code query}, ranked by popularity.
+     */
+    List<String> searchSuggestions(String tenantId, String query, int limit);
 }

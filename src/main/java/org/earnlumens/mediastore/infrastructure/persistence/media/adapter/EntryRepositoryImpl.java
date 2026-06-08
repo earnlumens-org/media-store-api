@@ -218,4 +218,20 @@ public class EntryRepositoryImpl implements EntryRepository {
                                                 int skip, int limit) {
         return entryMongoRepository.findCommunityFeed(tenantId, badgeKey, type, pricing, sort, languageFilter, skip, limit);
     }
+
+    @Override
+    public org.bson.Document findSearchFeed(String tenantId, String query, String type, String sort,
+                                            int skip, int limit) {
+        return entryMongoRepository.findSearchFeed(tenantId, query, type, sort, skip, limit);
+    }
+
+    @Override
+    public java.util.List<org.bson.Document> searchChannels(String tenantId, String query, int limit) {
+        return entryMongoRepository.searchChannels(tenantId, query, limit);
+    }
+
+    @Override
+    public java.util.List<String> searchSuggestions(String tenantId, String query, int limit) {
+        return entryMongoRepository.searchSuggestions(tenantId, query, limit);
+    }
 }

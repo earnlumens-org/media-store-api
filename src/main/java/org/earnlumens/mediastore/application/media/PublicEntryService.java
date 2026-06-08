@@ -322,6 +322,33 @@ public class PublicEntryService {
     }
 
     /**
+     * Returns a unified, paginated feed of entries + collections matching a
+     * search query. Locked/unlocked is resolved client-side (like Explore).
+     */
+    public PublicFeedPageResponse searchContent(String tenantId, String query, String type, String sort,
+                                                 int page, int size) {
+        int skip = page * size;
+        Document facetResult = entryRepository.findSearchFeed(tenantId, query, type, sort, skip, size);
+
+        List<Document> docs = facetResult != null
+                ? facetResult.getList("data", Document.class, List.of())
+                : List.of();
+        List<Document> countList = facetResult != null
+                ? facetResult.getList("count", Document.class, List.of())
+                : List.of();
+        long total = countList.isEmpty() ? 0 : countList.get(0).get("total", Number.class).longValue();
+        int totalPages = size > 0 ? (int) Math.ceil((double) total / size) : 0;
+
+        List<PublicFeedItemResponse> content = new ArrayList<>();
+        Set<String> emptySet = Set.of();
+        for (Document doc : docs) {
+            content.add(mapDocToFeedItem(doc, emptySet, emptySet, false));
+        }
+
+        return new PublicFeedPageResponse(content, page, size, total, totalPages);
+    }
+
+    /**
      * Returns a unified, paginated feed of entries + collections for a public user profile.
      * @param userId nullable — the viewer's userId for entitlement checks (null if anonymous)
      */

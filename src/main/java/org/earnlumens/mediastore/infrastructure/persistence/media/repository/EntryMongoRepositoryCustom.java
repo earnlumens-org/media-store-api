@@ -103,4 +103,28 @@ public interface EntryMongoRepositoryCustom {
                                String pricing, String sort,
                                org.earnlumens.mediastore.domain.media.model.LanguageFilter languageFilter,
                                int skip, int limit);
+
+    // ── Search ────────────────────────────────────────────────────────────
+
+    /**
+     * Unified search feed across PUBLISHED entries + PUBLISHED/PUBLIC collections.
+     * Tokenizes {@code query} and requires every token to match the title,
+     * description, tags or author. Uses $facet to return {@code data} + {@code count}
+     * in a single aggregation pass.
+     */
+    Document findSearchFeed(String tenantId, String query, String type, String sort,
+                            int skip, int limit);
+
+    /**
+     * Channel (creator) matches — groups the tenant's PUBLISHED entries by author
+     * for authors whose username matches {@code query}, newest content first so the
+     * grouped avatar/badge reflect the latest publish. Ranked by content count.
+     */
+    List<Document> searchChannels(String tenantId, String query, int limit);
+
+    /**
+     * Autocomplete suggestions — distinct PUBLISHED content titles for the tenant
+     * matching {@code query}, ranked by popularity.
+     */
+    List<String> searchSuggestions(String tenantId, String query, int limit);
 }

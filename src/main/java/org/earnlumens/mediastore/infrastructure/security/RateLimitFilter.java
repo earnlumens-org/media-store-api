@@ -33,6 +33,7 @@ import java.util.concurrent.atomic.AtomicLong;
  *   <li><b>UPLOAD</b> – /api/uploads/**:      30/min  (presigned URL spam)</li>
  *   <li><b>WAITLIST</b> – /api/waitlist/**:   10/min  (spam protection)</li>
  *   <li><b>INTERNAL</b> – /api/internal/**:  300/min  (worker callbacks)</li>
+ *   <li><b>SEARCH</b> – /public/search/**:    40/min  (search + autocomplete)</li>
  *   <li><b>PUBLIC</b> – /public/**:          200/min  (feed browsing)</li>
  *   <li><b>DEFAULT</b> – everything else:    120/min  (general API)</li>
  * </ul>
@@ -53,6 +54,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         UPLOAD(30),
         WAITLIST(10),
         INTERNAL(300),
+        SEARCH(40),
         PUBLIC_API(200),
         DEFAULT(120);
 
@@ -164,6 +166,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
         if (path.startsWith("/api/uploads/"))    return Tier.UPLOAD;
         if (path.startsWith("/api/waitlist/"))   return Tier.WAITLIST;
         if (path.startsWith("/api/internal/"))   return Tier.INTERNAL;
+        if (path.startsWith("/public/search"))   return Tier.SEARCH;
         if (path.startsWith("/public/"))         return Tier.PUBLIC_API;
         return Tier.DEFAULT;
     }
