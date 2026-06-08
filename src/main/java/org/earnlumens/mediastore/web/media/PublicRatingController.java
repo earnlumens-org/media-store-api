@@ -4,8 +4,8 @@ import org.earnlumens.mediastore.application.media.RatingService;
 import org.earnlumens.mediastore.domain.media.dto.response.RatingAggregateResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.RatingListResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.RatingResponse;
+import org.earnlumens.mediastore.domain.media.model.Rating;
 import org.earnlumens.mediastore.domain.media.model.TargetType;
-import org.earnlumens.mediastore.infrastructure.persistence.media.entity.RatingEntity;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
 import org.springframework.data.domain.Page;
 import org.springframework.http.ResponseEntity;
@@ -51,7 +51,7 @@ public class PublicRatingController {
         }
         String tenantId = TenantContext.require();
         RatingAggregateResponse aggregate = ratingService.getAggregateResponse(tenantId, targetType, targetId);
-        Page<RatingEntity> reviews = ratingService.listReviews(tenantId, targetType, targetId, page, size);
+        Page<Rating> reviews = ratingService.listReviews(tenantId, targetType, targetId, page, size);
         List<RatingResponse> items = reviews.getContent().stream()
                 .map(ratingService::toRatingResponse)
                 .toList();

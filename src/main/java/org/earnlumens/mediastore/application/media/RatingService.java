@@ -6,10 +6,8 @@ import org.earnlumens.mediastore.domain.media.model.*;
 import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
-import org.earnlumens.mediastore.infrastructure.persistence.media.entity.RatingAggregateEntity;
-import org.earnlumens.mediastore.infrastructure.persistence.media.entity.RatingEntity;
-import org.earnlumens.mediastore.infrastructure.persistence.media.repository.RatingAggregateMongoRepository;
-import org.earnlumens.mediastore.infrastructure.persistence.media.repository.RatingMongoRepository;
+import org.earnlumens.mediastore.domain.media.repository.RatingAggregateRepository;
+import org.earnlumens.mediastore.domain.media.repository.RatingRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.domain.Page;
@@ -65,14 +63,14 @@ public class RatingService {
     /** Hard cap on page size for public review listing. */
     private static final int MAX_PAGE_SIZE = 50;
 
-    private final RatingMongoRepository ratingRepository;
-    private final RatingAggregateMongoRepository aggregateRepository;
+    private final RatingRepository ratingRepository;
+    private final RatingAggregateRepository aggregateRepository;
     private final EntryRepository entryRepository;
     private final CollectionRepository collectionRepository;
     private final EntitlementRepository entitlementRepository;
 
-    public RatingService(RatingMongoRepository ratingRepository,
-                         RatingAggregateMongoRepository aggregateRepository,
+    public RatingService(RatingRepository ratingRepository,
+                         RatingAggregateRepository aggregateRepository,
                          EntryRepository entryRepository,
                          CollectionRepository collectionRepository,
                          EntitlementRepository entitlementRepository) {
@@ -94,9 +92,9 @@ public class RatingService {
      * @throws IllegalStateException    fraud / rate-limit
      *         ({@code PURCHASE_REQUIRED}, {@code DAILY_RATING_LIMIT_REACHED})
      */
-    public RatingEntity submitRating(String tenantId, String userId, String username,
-                                     TargetType targetType, String targetId,
-                                     int stars, String comment) {
+    public Rating submitRating(String tenantId, String userId, String username,
+                               TargetType targetType, String targetId,
+                               int stars, String comment) {
 
         // 1. Validate score
         if (stars < MIN_STARS || stars > MAX_STARS) {
@@ -115,22 +113,20 @@ public class RatingService {
         //    content the caller never bought.
         ProofResolution proof = resolveProof(tenantId, userId, targetType, targetId, target);
 
-        String typeName = targetType.name();
         String cleanComment = sanitizeComment(comment);
         LocalDateTime now = LocalDateTime.now();
 
-        RatingEntity existing = ratingRepository
-                .findByTenantIdAndUserIdAndTargetTypeAndTargetId(tenantId, userId, typeName, targetId)
+        Rating existing = ratingRepository
+                .findByTenantIdAndUserIdAndTargetTypeAndTargetId(tenantId, userId, targetType, targetId)
                 .orElse(null);
 
-        RatingEntity rating;
+        Rating rating;
         if (existing != null) {
             // Edit — never re-charges the rate limit, never downgrades proof.
             rating = existing;
             rating.setStars(stars);
             rating.setComment(cleanComment);
-            rating.setProofType(RatingProofType
-                    .strongest(RatingProofType.valueOf(existing.getProofType()), proof.type()).name());
+            rating.setProofType(RatingProofType.strongest(existing.getProofType(), proof.type()));
             if (proof.type() == RatingProofType.PURCHASE) {
                 rating.setProofRef(proof.ref());
             }
@@ -142,81 +138,80 @@ public class RatingService {
             if (recent >= DAILY_RATING_LIMIT) {
                 throw new IllegalStateException("DAILY_RATING_LIMIT_REACHED");
             }
-            rating = new RatingEntity();
+            rating = new Rating();
             rating.setTenantId(tenantId);
-            rating.setTargetType(typeName);
+            rating.setTargetType(targetType);
             rating.setTargetId(targetId);
             rating.setUserId(userId);
             rating.setUsername(username);
             rating.setCreatorUserId(target.creatorUserId());
             rating.setStars(stars);
             rating.setComment(cleanComment);
-            rating.setProofType(proof.type().name());
+            rating.setProofType(proof.type());
             rating.setProofRef(proof.ref());
             rating.setCreatedAt(now);
             rating.setUpdatedAt(now);
         }
 
-        RatingEntity saved = ratingRepository.save(rating);
-        recomputeAggregate(tenantId, typeName, targetId);
+        Rating saved = ratingRepository.save(rating);
+        recomputeAggregate(tenantId, targetType, targetId);
 
         logger.info("Rating saved: target={}:{}, user={}, stars={}, proof={}, new={}",
-                typeName, targetId, userId, stars, saved.getProofType(), existing == null);
+                targetType, targetId, userId, stars, saved.getProofType(), existing == null);
         return saved;
     }
 
     /** Remove the caller's rating for a target (idempotent). */
     public void deleteRating(String tenantId, String userId, TargetType targetType, String targetId) {
-        String typeName = targetType.name();
         long deleted = ratingRepository.deleteByTenantIdAndUserIdAndTargetTypeAndTargetId(
-                tenantId, userId, typeName, targetId);
+                tenantId, userId, targetType, targetId);
         if (deleted > 0) {
-            recomputeAggregate(tenantId, typeName, targetId);
-            logger.info("Rating deleted: target={}:{}, user={}", typeName, targetId, userId);
+            recomputeAggregate(tenantId, targetType, targetId);
+            logger.info("Rating deleted: target={}:{}, user={}", targetType, targetId, userId);
         }
     }
 
     // ── Queries ────────────────────────────────────────────────
 
-    public RatingEntity getMyRating(String tenantId, String userId, TargetType targetType, String targetId) {
+    public Rating getMyRating(String tenantId, String userId, TargetType targetType, String targetId) {
         return ratingRepository
-                .findByTenantIdAndUserIdAndTargetTypeAndTargetId(tenantId, userId, targetType.name(), targetId)
+                .findByTenantIdAndUserIdAndTargetTypeAndTargetId(tenantId, userId, targetType, targetId)
                 .orElse(null);
     }
 
-    public Page<RatingEntity> listReviews(String tenantId, TargetType targetType, String targetId,
-                                          int page, int size) {
+    public Page<Rating> listReviews(String tenantId, TargetType targetType, String targetId,
+                                    int page, int size) {
         int safeSize = Math.max(1, Math.min(size, MAX_PAGE_SIZE));
         int safePage = Math.max(0, page);
         Pageable pageable = PageRequest.of(safePage, safeSize, Sort.by(Sort.Direction.DESC, "createdAt"));
         return ratingRepository.findByTenantIdAndTargetTypeAndTargetId(
-                tenantId, targetType.name(), targetId, pageable);
+                tenantId, targetType, targetId, pageable);
     }
 
     public RatingAggregateResponse getAggregateResponse(String tenantId, TargetType targetType, String targetId) {
-        RatingAggregateEntity agg = aggregateRepository
-                .findByTenantIdAndTargetTypeAndTargetId(tenantId, targetType.name(), targetId)
+        RatingAggregate agg = aggregateRepository
+                .findByTenantIdAndTargetTypeAndTargetId(tenantId, targetType, targetId)
                 .orElse(null);
         return toAggregateResponse(targetType.name(), targetId, agg);
     }
 
-    public RatingResponse toRatingResponse(RatingEntity r) {
+    public RatingResponse toRatingResponse(Rating r) {
         if (r == null) return null;
-        boolean verified = RatingProofType.PURCHASE.name().equals(r.getProofType());
+        boolean verified = r.getProofType() == RatingProofType.PURCHASE;
         return new RatingResponse(
                 r.getId(),
                 r.getUserId(),
                 r.getUsername(),
                 r.getStars(),
                 r.getComment(),
-                r.getProofType(),
+                r.getProofType() == null ? null : r.getProofType().name(),
                 verified,
                 r.getCreatedAt() == null ? null : r.getCreatedAt().toString(),
                 r.getUpdatedAt() == null ? null : r.getUpdatedAt().toString()
         );
     }
 
-    private RatingAggregateResponse toAggregateResponse(String targetType, String targetId, RatingAggregateEntity agg) {
+    private RatingAggregateResponse toAggregateResponse(String targetType, String targetId, RatingAggregate agg) {
         if (agg == null || agg.getCount() == 0) {
             return new RatingAggregateResponse(targetType, targetId, 0, 0.0, 0, 0.0, 0.0,
                     List.of(0L, 0L, 0L, 0L, 0L));
@@ -316,7 +311,7 @@ public class RatingService {
 
     // ── Aggregate recomputation (derived from source — never drifts) ──
 
-    private void recomputeAggregate(String tenantId, String targetType, String targetId) {
+    private void recomputeAggregate(String tenantId, TargetType targetType, String targetId) {
         long[] hist = new long[6];   // hist[1..5]
         long count = 0, sum = 0, verifiedCount = 0, verifiedSum = 0;
 
@@ -328,15 +323,15 @@ public class RatingService {
             sum += (long) s * cs;
 
             long vcs = ratingRepository.countByTenantIdAndTargetTypeAndTargetIdAndProofTypeAndStars(
-                    tenantId, targetType, targetId, RatingProofType.PURCHASE.name(), s);
+                    tenantId, targetType, targetId, RatingProofType.PURCHASE, s);
             verifiedCount += vcs;
             verifiedSum += (long) s * vcs;
         }
 
-        RatingAggregateEntity agg = aggregateRepository
+        RatingAggregate agg = aggregateRepository
                 .findByTenantIdAndTargetTypeAndTargetId(tenantId, targetType, targetId)
                 .orElseGet(() -> {
-                    RatingAggregateEntity a = new RatingAggregateEntity();
+                    RatingAggregate a = new RatingAggregate();
                     a.setTenantId(tenantId);
                     a.setTargetType(targetType);
                     a.setTargetId(targetId);

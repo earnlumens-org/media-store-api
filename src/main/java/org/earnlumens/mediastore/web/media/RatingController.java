@@ -3,8 +3,8 @@ package org.earnlumens.mediastore.web.media;
 import jakarta.servlet.http.HttpServletRequest;
 import org.earnlumens.mediastore.application.media.RatingService;
 import org.earnlumens.mediastore.domain.media.dto.response.RatingResponse;
+import org.earnlumens.mediastore.domain.media.model.Rating;
 import org.earnlumens.mediastore.domain.media.model.TargetType;
-import org.earnlumens.mediastore.infrastructure.persistence.media.entity.RatingEntity;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantResolver;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -62,7 +62,7 @@ public class RatingController {
         String username = extractUsername();
 
         try {
-            RatingEntity rating = ratingService.submitRating(
+            Rating rating = ratingService.submitRating(
                     tenantId, userId, username, targetType, targetId, body.stars(), body.comment());
             return ResponseEntity.ok(Map.of(
                     "rating", ratingService.toRatingResponse(rating),
