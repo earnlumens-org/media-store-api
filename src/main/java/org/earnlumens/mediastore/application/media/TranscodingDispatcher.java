@@ -1,10 +1,13 @@
 package org.earnlumens.mediastore.application.media;
 
+import org.earnlumens.mediastore.infrastructure.lock.DistributedLockService;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+
+import java.time.Duration;
 
 /**
  * Periodic dispatcher that picks up PENDING transcoding jobs and dispatches
@@ -27,14 +30,19 @@ public class TranscodingDispatcher {
     private static final Logger logger = LoggerFactory.getLogger(TranscodingDispatcher.class);
 
     private final TranscodingJobService jobService;
+    private final DistributedLockService lockService;
 
-    public TranscodingDispatcher(TranscodingJobService jobService) {
+    public TranscodingDispatcher(TranscodingJobService jobService, DistributedLockService lockService) {
         this.jobService = jobService;
+        this.lockService = lockService;
     }
 
     @Scheduled(fixedDelayString = "${mediastore.transcoding.dispatch-interval-ms:10000}",
                initialDelayString = "${mediastore.transcoding.dispatch-interval-ms:10000}")
     public void run() {
+        if (!lockService.tryAcquire("transcoding-dispatcher", Duration.ofSeconds(8))) {
+            return; // another instance is running this cycle
+        }
         TenantContext.runWithoutTenant(() -> {
             try {
                 int dispatched = jobService.dispatchPendingJobs();

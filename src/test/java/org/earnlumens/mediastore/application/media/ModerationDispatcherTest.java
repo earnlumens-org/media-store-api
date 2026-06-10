@@ -16,7 +16,10 @@ class ModerationDispatcherTest {
     @BeforeEach
     void setUp() {
         jobService = mock(ModerationJobService.class);
-        dispatcher = new ModerationDispatcher(jobService);
+        org.earnlumens.mediastore.infrastructure.lock.DistributedLockService lockService =
+                mock(org.earnlumens.mediastore.infrastructure.lock.DistributedLockService.class);
+        when(lockService.tryAcquire(anyString(), any())).thenReturn(true);
+        dispatcher = new ModerationDispatcher(jobService, lockService);
     }
 
     @Test

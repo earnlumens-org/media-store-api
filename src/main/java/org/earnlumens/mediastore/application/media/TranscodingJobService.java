@@ -237,6 +237,19 @@ public class TranscodingJobService {
 
         jobRepository.save(job);
 
+        // Surface the failure to the creator: mark the source asset FAILED so
+        // the studio UI shows an actionable error instead of a silent stall.
+        List<Asset> assets = assetRepository.findByTenantIdAndEntryId(
+                job.getTenantId(), job.getEntryId());
+        assets.stream()
+                .filter(a -> a.getId().equals(job.getAssetId()))
+                .findFirst()
+                .filter(a -> a.getStatus() != AssetStatus.FAILED)
+                .ifPresent(asset -> {
+                    asset.setStatus(AssetStatus.FAILED);
+                    assetRepository.save(asset);
+                });
+
         logger.error("Watchdog: job DEAD — id={}, asset={}, entry={}, tenant={}, "
                         + "retries={}/{}, previous={}, reason={}",
                 job.getId(), job.getAssetId(), job.getEntryId(), job.getTenantId(),
@@ -361,6 +374,14 @@ public class TranscodingJobService {
 
         TranscodingJob job = opt.get();
 
+        // Idempotency: callbacks are retried by the worker on network errors.
+        // A terminal job must not be re-processed.
+        if (isTerminal(job.getStatus())) {
+            logger.info("completeJob: ignoring callback for terminal job id={} (status={})",
+                    jobId, job.getStatus());
+            return Optional.of(job);
+        }
+
         // Defence in depth: the worker controls the body of the callback,
         // so even with a valid shared secret it could submit an arbitrary
         // R2 prefix and pin a tenant's entry to another tenant's media.
@@ -434,6 +455,12 @@ public class TranscodingJobService {
 
         TranscodingJob job = opt.get();
 
+        if (isTerminal(job.getStatus())) {
+            logger.info("failJob: ignoring callback for terminal job id={} (status={})",
+                    jobId, job.getStatus());
+            return Optional.of(job);
+        }
+
         if (job.getRetryCount() < job.getMaxRetries()) {
             retryJob(job, errorMessage);
         } else {
@@ -452,6 +479,12 @@ public class TranscodingJobService {
         }
 
         return Optional.of(job);
+    }
+
+    /** Terminal job states: late/duplicate callbacks must never mutate these. */
+    private static boolean isTerminal(TranscodingJobStatus status) {
+        return status == TranscodingJobStatus.COMPLETED
+                || status == TranscodingJobStatus.DEAD;
     }
 
     /**

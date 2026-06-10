@@ -26,14 +26,17 @@ import org.earnlumens.mediastore.domain.media.model.SplitRole;
 import org.earnlumens.mediastore.domain.media.model.ModerationJob;
 import org.earnlumens.mediastore.domain.media.model.ModerationJobStatus;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus;
+import org.earnlumens.mediastore.domain.media.model.UploadSession;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
+import org.earnlumens.mediastore.domain.media.repository.UploadSessionRepository;
 import org.earnlumens.mediastore.domain.user.repository.UserRepository;
 import org.earnlumens.mediastore.application.user.UserBadgeService;
 import org.earnlumens.mediastore.application.space.SpaceValidationService;
 import org.earnlumens.mediastore.infrastructure.config.PlatformConfig;
 import org.earnlumens.mediastore.infrastructure.r2.R2PresignedUrlService;
+import org.earnlumens.mediastore.infrastructure.r2.R2StorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -122,11 +125,40 @@ public class EntryUploadService {
             "application/vnd.rar"
     );
 
+    // ── Upload size limits & multipart parameters ──────────────────────
+    private static final long MB = 1024L * 1024L;
+    private static final long GB = 1024L * MB;
+
+    /** Files at or above this size are uploaded via S3 multipart (resumable per-part). */
+    public static final long MULTIPART_THRESHOLD_BYTES = 64L * MB;
+
+    /** Uniform part size (R2 requires all parts equal except the last). */
+    public static final long PART_SIZE_BYTES = 16L * MB;
+
+    public static final long MAX_THUMBNAIL_BYTES = 10L * MB;
+    public static final long MAX_PREVIEW_BYTES = 512L * MB;
+    public static final Map<EntryType, Long> MAX_FULL_BYTES = Map.of(
+            EntryType.VIDEO, 5L * GB,
+            EntryType.AUDIO, 500L * MB,
+            EntryType.IMAGE, 50L * MB,
+            EntryType.RESOURCE, 2L * GB
+    );
+
+    /**
+     * Legacy r2Key shape for finalize requests whose upload session predates
+     * session persistence (in-flight uploads during rollout). Matches the
+     * exact format produced by {@link #initUpload}.
+     */
+    private static final Pattern LEGACY_R2_KEY = Pattern.compile(
+            "^(public|private)/media/([^/]+)/(full|thumbnail|preview)/[0-9a-fA-F-]{36}-[^/]+$");
+
     private final EntryRepository entryRepository;
     private final AssetRepository assetRepository;
     private final UserRepository userRepository;
     private final OrderRepository orderRepository;
     private final R2PresignedUrlService r2PresignedUrlService;
+    private final R2StorageService r2StorageService;
+    private final UploadSessionRepository uploadSessionRepository;
     private final PlatformConfig platformConfig;
     private final TranscodingJobService transcodingJobService;
     private final ModerationJobService moderationJobService;
@@ -141,6 +173,8 @@ public class EntryUploadService {
             UserRepository userRepository,
             OrderRepository orderRepository,
             R2PresignedUrlService r2PresignedUrlService,
+            R2StorageService r2StorageService,
+            UploadSessionRepository uploadSessionRepository,
             PlatformConfig platformConfig,
             TranscodingJobService transcodingJobService,
             ModerationJobService moderationJobService,
@@ -154,6 +188,8 @@ public class EntryUploadService {
         this.userRepository = userRepository;
         this.orderRepository = orderRepository;
         this.r2PresignedUrlService = r2PresignedUrlService;
+        this.r2StorageService = r2StorageService;
+        this.uploadSessionRepository = uploadSessionRepository;
         this.platformConfig = platformConfig;
         this.transcodingJobService = transcodingJobService;
         this.moderationJobService = moderationJobService;
@@ -306,6 +342,9 @@ public class EntryUploadService {
         // disclaimer); the moderation worker scans the actual bytes later.
         validateUploadType(entry.getType(), kind, request.contentType(), request.fileName());
 
+        // ── Server-side size limit (don't trust the client UI alone) ──
+        validateFileSize(entry.getType(), kind, request.fileSizeBytes());
+
         // THUMBNAIL and PREVIEW go under public/ prefix so CDN Worker serves them without auth.
         // FULL (paid content) stays under private/ — served via /media/<entryId> with entitlement check.
         String prefix = (kind == MediaKind.THUMBNAIL || kind == MediaKind.PREVIEW) ? "public" : "private";
@@ -316,8 +355,42 @@ public class EntryUploadService {
                 UUID.randomUUID(),
                 sanitizedFileName);
 
-        String presignedUrl = r2PresignedUrlService.generatePresignedPutUrl(r2Key, request.contentType());
         String uploadId = UUID.randomUUID().toString();
+        boolean multipart = request.fileSizeBytes() >= MULTIPART_THRESHOLD_BYTES;
+
+        UploadSession session = new UploadSession();
+        session.setId(uploadId);
+        session.setTenantId(tenantId);
+        session.setUserId(userId);
+        session.setEntryId(request.entryId());
+        session.setKind(kind.name());
+        session.setR2Key(r2Key);
+        session.setContentType(request.contentType());
+        session.setFileName(request.fileName());
+        session.setExpectedSizeBytes(request.fileSizeBytes());
+        session.setMultipart(multipart);
+
+        if (multipart) {
+            String s3UploadId = r2StorageService.createMultipartUpload(r2Key, request.contentType());
+            int totalParts = (int) ((request.fileSizeBytes() + PART_SIZE_BYTES - 1) / PART_SIZE_BYTES);
+            List<String> partUrls = new ArrayList<>(totalParts);
+            for (int part = 1; part <= totalParts; part++) {
+                partUrls.add(r2PresignedUrlService.generatePresignedUploadPartUrl(r2Key, s3UploadId, part));
+            }
+            session.setS3UploadId(s3UploadId);
+            session.setPartSizeBytes(PART_SIZE_BYTES);
+            session.setTotalParts(totalParts);
+            uploadSessionRepository.save(session);
+
+            logger.info("initUpload (multipart): uploadId={}, entryId={}, kind={}, r2Key={}, parts={}",
+                    uploadId, request.entryId(), kind, r2Key, totalParts);
+
+            return Optional.of(new InitUploadResponse(uploadId, null, r2Key, true, PART_SIZE_BYTES, partUrls));
+        }
+
+        String presignedUrl = r2PresignedUrlService.generatePresignedPutUrl(
+                r2Key, request.contentType(), R2PresignedUrlService.SINGLE_PUT_DURATION);
+        uploadSessionRepository.save(session);
 
         logger.info("initUpload: uploadId={}, entryId={}, kind={}, r2Key={}",
                 uploadId, request.entryId(), kind, r2Key);
@@ -346,13 +419,91 @@ public class EntryUploadService {
 
         MediaKind kind = MediaKind.valueOf(request.kind());
 
+        // ── Resolve the upload session: source of truth for r2Key/contentType ──
+        // Never trust the client-supplied r2Key when a session exists.
+        UploadSession session = uploadSessionRepository
+                .findByIdAndTenantId(request.uploadId(), tenantId)
+                .orElse(null);
+
+        final String r2Key;
+        final String contentType;
+        final String fileName;
+
+        if (session != null) {
+            if (!userId.equals(session.getUserId())
+                    || !request.entryId().equals(session.getEntryId())
+                    || !kind.name().equals(session.getKind())) {
+                logger.warn("finalizeUpload: session mismatch: uploadId={}, entryId={}, kind={}",
+                        request.uploadId(), request.entryId(), kind);
+                throw new IllegalArgumentException("UPLOAD_SESSION_MISMATCH");
+            }
+
+            // Idempotency: a finalize retry after a lost response must not
+            // create a duplicate asset.
+            if (session.getStatus() == UploadSession.Status.COMPLETED && session.getAssetId() != null) {
+                logger.info("finalizeUpload: idempotent retry for uploadId={}, returning existing asset {}",
+                        request.uploadId(), session.getAssetId());
+                String existingAssetId = session.getAssetId();
+                return assetRepository.findByTenantIdAndEntryId(tenantId, request.entryId()).stream()
+                        .filter(a -> existingAssetId.equals(a.getId()))
+                        .findFirst()
+                        .map(a -> new FinalizeUploadResponse(a.getId(), a.getStatus().name()));
+            }
+
+            // Multipart uploads must be assembled before finalize. If the
+            // client's /complete call was lost in transit, recover here.
+            if (session.isMultipart() && r2StorageService.headObject(session.getR2Key()).isEmpty()) {
+                try {
+                    r2StorageService.completeMultipartUpload(session.getR2Key(), session.getS3UploadId());
+                } catch (Exception e) {
+                    logger.warn("finalizeUpload: multipart auto-complete failed for uploadId={}: {}",
+                            request.uploadId(), e.getMessage());
+                }
+            }
+
+            r2Key = session.getR2Key();
+            contentType = session.getContentType();
+            fileName = session.getFileName();
+        } else {
+            // ── Legacy fallback (uploads initiated before session persistence
+            // was deployed). Strictly validate the claimed key shape and that
+            // it belongs to this entry/kind before accepting it.
+            var matcher = LEGACY_R2_KEY.matcher(request.r2Key() == null ? "" : request.r2Key());
+            String expectedPrefix = (kind == MediaKind.THUMBNAIL || kind == MediaKind.PREVIEW) ? "public" : "private";
+            if (!matcher.matches()
+                    || !matcher.group(1).equals(expectedPrefix)
+                    || !matcher.group(2).equals(request.entryId())
+                    || !matcher.group(3).equals(kind.name().toLowerCase())) {
+                logger.warn("finalizeUpload: rejected r2Key '{}' for entryId={}, kind={} (no session, invalid shape)",
+                        request.r2Key(), request.entryId(), kind);
+                throw new IllegalArgumentException("INVALID_UPLOAD");
+            }
+            r2Key = request.r2Key();
+            contentType = request.contentType();
+            fileName = request.fileName();
+        }
+
+        // ── Verify the bytes actually landed in R2 and get the true size ──
+        var head = r2StorageService.headObject(r2Key)
+                .orElseThrow(() -> {
+                    logger.warn("finalizeUpload: object not found in R2: key={}, uploadId={}",
+                            r2Key, request.uploadId());
+                    return new IllegalArgumentException("UPLOAD_NOT_FOUND");
+                });
+        long actualSizeBytes = head.contentLength() != null ? head.contentLength() : request.fileSizeBytes();
+        if (request.fileSizeBytes() != null && actualSizeBytes != request.fileSizeBytes()) {
+            logger.warn("finalizeUpload: size mismatch for key={}: client={} actual={}",
+                    r2Key, request.fileSizeBytes(), actualSizeBytes);
+        }
+        validateFileSize(entry.getType(), kind, actualSizeBytes);
+
         Asset asset = new Asset();
         asset.setTenantId(tenantId);
         asset.setEntryId(request.entryId());
-        asset.setR2Key(request.r2Key());
-        asset.setContentType(request.contentType());
-        asset.setFileName(request.fileName());
-        asset.setFileSizeBytes(request.fileSizeBytes());
+        asset.setR2Key(r2Key);
+        asset.setContentType(contentType);
+        asset.setFileName(fileName);
+        asset.setFileSizeBytes(actualSizeBytes);
         asset.setKind(kind);
 
         // Persist client-extracted media metadata (best-effort, nullable)
@@ -370,20 +521,28 @@ public class EntryUploadService {
 
         Asset saved = assetRepository.save(asset);
 
+        // Mark the session completed so finalize retries are idempotent.
+        if (session != null) {
+            session.setStatus(UploadSession.Status.COMPLETED);
+            session.setAssetId(saved.getId());
+            session.setCompletedAt(java.time.LocalDateTime.now());
+            uploadSessionRepository.save(session);
+        }
+
         // NOTE: Transcoding for VIDEO assets is deferred until AFTER moderation approval.
         // ModerationJobService.createTranscodingJobForEntry() handles this.
 
         // If a THUMBNAIL was finalized, denormalize its R2 key onto the entry for fast reads
         if (kind == MediaKind.THUMBNAIL) {
-            entry.setThumbnailR2Key(request.r2Key());
+            entry.setThumbnailR2Key(r2Key);
             entryRepository.save(entry);
-            logger.info("finalizeUpload: set thumbnailR2Key on entry {}: {}", request.entryId(), request.r2Key());
+            logger.info("finalizeUpload: set thumbnailR2Key on entry {}: {}", request.entryId(), r2Key);
         }
         // If a PREVIEW was finalized, denormalize its R2 key onto the entry
         if (kind == MediaKind.PREVIEW) {
-            entry.setPreviewR2Key(request.r2Key());
+            entry.setPreviewR2Key(r2Key);
             entryRepository.save(entry);
-            logger.info("finalizeUpload: set previewR2Key on entry {}: {}", request.entryId(), request.r2Key());
+            logger.info("finalizeUpload: set previewR2Key on entry {}: {}", request.entryId(), r2Key);
         }
 
         // ── Re-moderation: visual asset change on a non-draft entry triggers re-review ──
@@ -429,10 +588,124 @@ public class EntryUploadService {
         }
 
         logger.info("finalizeUpload: assetId={}, entryId={}, kind={}, r2Key={}, widthPx={}, heightPx={}, durationSec={}",
-                saved.getId(), request.entryId(), kind, request.r2Key(),
+                saved.getId(), request.entryId(), kind, r2Key,
                 request.widthPx(), request.heightPx(), request.durationSec());
 
         return Optional.of(new FinalizeUploadResponse(saved.getId(), saved.getStatus().name()));
+    }
+
+    /**
+     * Assembles a multipart upload server-side (via ListParts, so the client
+     * never needs the ETag response header). Idempotent: completing an
+     * already-completed upload succeeds as long as the object exists.
+     *
+     * @return true on success, false if the session is unknown / not owned
+     */
+    public boolean completeMultipart(String tenantId, String userId, String uploadId) {
+        UploadSession session = uploadSessionRepository.findByIdAndTenantId(uploadId, tenantId).orElse(null);
+        if (session == null || !userId.equals(session.getUserId())) {
+            logger.warn("completeMultipart: session not found or not owned: uploadId={}", uploadId);
+            return false;
+        }
+        if (!session.isMultipart()) {
+            throw new IllegalArgumentException("NOT_MULTIPART");
+        }
+        if (r2StorageService.headObject(session.getR2Key()).isPresent()) {
+            // Already assembled (retry of a lost response) — success.
+            return true;
+        }
+        try {
+            r2StorageService.completeMultipartUpload(session.getR2Key(), session.getS3UploadId());
+            return true;
+        } catch (Exception e) {
+            // The multipart may have been completed by a concurrent retry.
+            if (r2StorageService.headObject(session.getR2Key()).isPresent()) {
+                return true;
+            }
+            logger.error("completeMultipart failed: uploadId={}: {}", uploadId, e.getMessage());
+            throw new IllegalArgumentException("MULTIPART_COMPLETE_FAILED");
+        }
+    }
+
+    /**
+     * Re-signs the URL for a single part of an in-progress multipart upload
+     * (used by the client if the original batch of URLs expired mid-upload).
+     */
+    public Optional<String> generatePartUrl(String tenantId, String userId, String uploadId, int partNumber) {
+        UploadSession session = uploadSessionRepository.findByIdAndTenantId(uploadId, tenantId).orElse(null);
+        if (session == null || !userId.equals(session.getUserId())) {
+            return Optional.empty();
+        }
+        if (!session.isMultipart() || session.getTotalParts() == null
+                || partNumber < 1 || partNumber > session.getTotalParts()) {
+            throw new IllegalArgumentException("INVALID_PART_NUMBER");
+        }
+        return Optional.of(r2PresignedUrlService.generatePresignedUploadPartUrl(
+                session.getR2Key(), session.getS3UploadId(), partNumber));
+    }
+
+    /**
+     * Aborts an in-progress upload: cancels the multipart upload (freeing
+     * stored parts) or deletes the single-PUT object, and marks the session
+     * aborted. Best-effort; safe to call repeatedly.
+     *
+     * @return true if the session was found and aborted
+     */
+    public boolean abortUpload(String tenantId, String userId, String uploadId) {
+        UploadSession session = uploadSessionRepository.findByIdAndTenantId(uploadId, tenantId).orElse(null);
+        if (session == null || !userId.equals(session.getUserId())) {
+            return false;
+        }
+        if (session.getStatus() == UploadSession.Status.COMPLETED) {
+            // Finalized uploads are owned by the asset lifecycle now.
+            return false;
+        }
+        if (session.isMultipart() && session.getS3UploadId() != null) {
+            r2StorageService.abortMultipartUpload(session.getR2Key(), session.getS3UploadId());
+        } else {
+            r2StorageService.deleteObject(session.getR2Key());
+        }
+        session.setStatus(UploadSession.Status.ABORTED);
+        uploadSessionRepository.save(session);
+        logger.info("abortUpload: uploadId={}, r2Key={}", uploadId, session.getR2Key());
+        return true;
+    }
+
+    /**
+     * Upload limits and multipart parameters, exposed so the client always
+     * validates against the same numbers the server enforces.
+     */
+    public Map<String, Object> getUploadConfig() {
+        Map<String, Object> maxFullBytes = new HashMap<>();
+        MAX_FULL_BYTES.forEach((type, bytes) -> maxFullBytes.put(type.name(), bytes));
+        Map<String, Object> config = new HashMap<>();
+        config.put("maxFullBytes", maxFullBytes);
+        config.put("maxThumbnailBytes", MAX_THUMBNAIL_BYTES);
+        config.put("maxPreviewBytes", MAX_PREVIEW_BYTES);
+        config.put("multipartThresholdBytes", MULTIPART_THRESHOLD_BYTES);
+        config.put("partSizeBytes", PART_SIZE_BYTES);
+        return config;
+    }
+
+    /**
+     * Enforces per-kind/per-type maximum file sizes at the server boundary.
+     *
+     * @throws IllegalArgumentException with code FILE_TOO_LARGE
+     */
+    private void validateFileSize(EntryType entryType, MediaKind kind, Long sizeBytes) {
+        if (sizeBytes == null || sizeBytes <= 0) {
+            throw new IllegalArgumentException("INVALID_FILE_SIZE");
+        }
+        long limit = switch (kind) {
+            case THUMBNAIL -> MAX_THUMBNAIL_BYTES;
+            case PREVIEW -> MAX_PREVIEW_BYTES;
+            case FULL -> MAX_FULL_BYTES.getOrDefault(entryType, 2L * GB);
+        };
+        if (sizeBytes > limit) {
+            logger.warn("validateFileSize: rejected {} bytes for kind={}, type={} (limit={})",
+                    sizeBytes, kind, entryType, limit);
+            throw new IllegalArgumentException("FILE_TOO_LARGE");
+        }
     }
 
     /**

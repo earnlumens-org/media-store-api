@@ -59,6 +59,8 @@ class TranscodingGateTest {
                 mock(UserRepository.class),
                 mock(OrderRepository.class),
                 mock(R2PresignedUrlService.class),
+                mock(org.earnlumens.mediastore.infrastructure.r2.R2StorageService.class),
+                mock(org.earnlumens.mediastore.domain.media.repository.UploadSessionRepository.class),
                 mock(PlatformConfig.class),
                 transcodingJobService,
                 mock(ModerationJobService.class),

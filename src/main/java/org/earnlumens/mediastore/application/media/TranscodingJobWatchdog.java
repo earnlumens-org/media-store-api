@@ -1,10 +1,13 @@
 package org.earnlumens.mediastore.application.media;
 
+import org.earnlumens.mediastore.infrastructure.lock.DistributedLockService;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
+
+import java.time.Duration;
 
 /**
  * Periodic watchdog that detects stale transcoding jobs (crashed workers)
@@ -28,14 +31,19 @@ public class TranscodingJobWatchdog {
     private static final Logger logger = LoggerFactory.getLogger(TranscodingJobWatchdog.class);
 
     private final TranscodingJobService jobService;
+    private final DistributedLockService lockService;
 
-    public TranscodingJobWatchdog(TranscodingJobService jobService) {
+    public TranscodingJobWatchdog(TranscodingJobService jobService, DistributedLockService lockService) {
         this.jobService = jobService;
+        this.lockService = lockService;
     }
 
     @Scheduled(fixedDelayString = "${mediastore.transcoding.watchdog-interval-ms:30000}",
                initialDelayString = "${mediastore.transcoding.watchdog-interval-ms:30000}")
     public void run() {
+        if (!lockService.tryAcquire("transcoding-watchdog", Duration.ofSeconds(25))) {
+            return; // another instance is running this cycle
+        }
         TenantContext.runWithoutTenant(() -> {
             try {
                 int recovered = jobService.recoverStaleJobs();

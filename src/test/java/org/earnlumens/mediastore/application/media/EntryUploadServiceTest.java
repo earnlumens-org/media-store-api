@@ -17,15 +17,19 @@ import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
 import org.earnlumens.mediastore.domain.media.model.ModerationJob;
 import org.earnlumens.mediastore.domain.media.model.ModerationJobStatus;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJob;
+import org.earnlumens.mediastore.domain.media.model.UploadSession;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
+import org.earnlumens.mediastore.domain.media.repository.UploadSessionRepository;
 import org.earnlumens.mediastore.domain.user.repository.UserRepository;
 import org.earnlumens.mediastore.application.user.UserBadgeService;
 import org.earnlumens.mediastore.infrastructure.config.PlatformConfig;
 import org.earnlumens.mediastore.infrastructure.r2.R2PresignedUrlService;
+import org.earnlumens.mediastore.infrastructure.r2.R2StorageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 
 import java.math.BigDecimal;
 import java.util.Optional;
@@ -52,6 +56,8 @@ class EntryUploadServiceTest {
     private UserRepository userRepository;
     private OrderRepository orderRepository;
     private R2PresignedUrlService r2PresignedUrlService;
+    private R2StorageService r2StorageService;
+    private UploadSessionRepository uploadSessionRepository;
     private PlatformConfig platformConfig;
     private TranscodingJobService transcodingJobService;
     private ModerationJobService moderationJobService;
@@ -66,6 +72,9 @@ class EntryUploadServiceTest {
         userRepository = mock(UserRepository.class);
         orderRepository = mock(OrderRepository.class);
         r2PresignedUrlService = mock(R2PresignedUrlService.class);
+        r2StorageService = mock(R2StorageService.class);
+        uploadSessionRepository = mock(UploadSessionRepository.class);
+        when(uploadSessionRepository.save(any(UploadSession.class))).thenAnswer(inv -> inv.getArgument(0));
         transcodingJobService = mock(TranscodingJobService.class);
         moderationJobService = mock(ModerationJobService.class);
         userBadgeService = mock(UserBadgeService.class);
@@ -74,7 +83,7 @@ class EntryUploadServiceTest {
         platformConfig = new PlatformConfig();
         platformConfig.setWallet(PLATFORM_WALLET);
         platformConfig.setFeePercent(new BigDecimal("10.00"));
-        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, r2PresignedUrlService, platformConfig, transcodingJobService, moderationJobService, userBadgeService, spaceValidationService, 20, 10);
+        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, r2PresignedUrlService, r2StorageService, uploadSessionRepository, platformConfig, transcodingJobService, moderationJobService, userBadgeService, spaceValidationService, 20, 10);
         when(userRepository.findAllById(any())).thenReturn(java.util.List.of());
         when(transcodingJobService.getMaxRetries()).thenReturn(3);
         when(transcodingJobService.createJob(any(TranscodingJob.class)))
@@ -101,6 +110,25 @@ class EntryUploadServiceTest {
         e.setStatus(EntryStatus.DRAFT);
         e.setVisibility(MediaVisibility.PRIVATE);
         return e;
+    }
+
+    /** Stubs an upload session + matching R2 HEAD so finalize succeeds. */
+    private void stubSession(String uploadId, String r2Key, String contentType,
+                             String fileName, String kind, long sizeBytes) {
+        UploadSession s = new UploadSession();
+        s.setId(uploadId);
+        s.setTenantId(TENANT);
+        s.setUserId(USER_ID);
+        s.setEntryId(ENTRY_ID);
+        s.setKind(kind);
+        s.setR2Key(r2Key);
+        s.setContentType(contentType);
+        s.setFileName(fileName);
+        s.setExpectedSizeBytes(sizeBytes);
+        when(uploadSessionRepository.findByIdAndTenantId(uploadId, TENANT))
+                .thenReturn(Optional.of(s));
+        when(r2StorageService.headObject(r2Key))
+                .thenReturn(Optional.of(HeadObjectResponse.builder().contentLength(sizeBytes).build()));
     }
 
     // ─── createEntry ───────────────────────────────────────────
@@ -165,7 +193,7 @@ class EntryUploadServiceTest {
     void initUpload_ownerGetsPresignedUrl() {
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
                 .thenReturn(Optional.of(draftEntry()));
-        when(r2PresignedUrlService.generatePresignedPutUrl(anyString(), eq("video/mp4")))
+        when(r2PresignedUrlService.generatePresignedPutUrl(anyString(), eq("video/mp4"), any()))
                 .thenReturn("https://r2.example.com/presigned");
 
         InitUploadRequest request = new InitUploadRequest(
@@ -213,7 +241,7 @@ class EntryUploadServiceTest {
     void initUpload_thumbnailKind_usesCorrectPath() {
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
                 .thenReturn(Optional.of(draftEntry()));
-        when(r2PresignedUrlService.generatePresignedPutUrl(anyString(), eq("image/png")))
+        when(r2PresignedUrlService.generatePresignedPutUrl(anyString(), eq("image/png"), any()))
                 .thenReturn("https://r2.example.com/presigned");
 
         InitUploadRequest request = new InitUploadRequest(
@@ -231,11 +259,14 @@ class EntryUploadServiceTest {
     void finalizeUpload_ownerPersistsAsset() {
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
                 .thenReturn(Optional.of(draftEntry()));
+        when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
         when(assetRepository.save(any(Asset.class))).thenAnswer(invocation -> {
             Asset a = invocation.getArgument(0);
             a.setId("asset-001");
             return a;
         });
+        stubSession("upload-id", "private/media/entry-abc/full/uuid-video.mp4",
+                "video/mp4", "video.mp4", "FULL", 1024L);
 
         FinalizeUploadRequest request = new FinalizeUploadRequest(
                 "upload-id", ENTRY_ID, "private/media/entry-abc/full/uuid-video.mp4",
@@ -284,6 +315,8 @@ class EntryUploadServiceTest {
             assertEquals(AssetStatus.READY, a.getStatus());
             return a;
         });
+        stubSession("uid", "public/media/entry-abc/thumbnail/uuid-thumb.jpg",
+                "image/jpeg", "thumb.jpg", "THUMBNAIL", 50L);
 
         FinalizeUploadRequest request = new FinalizeUploadRequest(
                 "uid", ENTRY_ID, "r2key", "image/jpeg", "thumb.jpg", 50L, "THUMBNAIL",
@@ -480,6 +513,9 @@ class EntryUploadServiceTest {
             assertEquals(AssetStatus.UPLOADED, a.getStatus());
             return a;
         });
+        when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
+        stubSession("uid", "private/media/entry-abc/full/uuid-video.mp4",
+                "video/mp4", "video.mp4", "FULL", 50_000_000L);
 
         FinalizeUploadRequest request = new FinalizeUploadRequest(
                 "uid", ENTRY_ID, "private/media/entry-abc/full/uuid-video.mp4",
@@ -506,6 +542,9 @@ class EntryUploadServiceTest {
             a.setId("asset-a1");
             return a;
         });
+        when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
+        stubSession("uid", "private/media/entry-abc/full/uuid-track.mp3",
+                "audio/mpeg", "track.mp3", "FULL", 5_000_000L);
 
         FinalizeUploadRequest request = new FinalizeUploadRequest(
                 "uid", ENTRY_ID, "private/media/entry-abc/full/uuid-track.mp3",
@@ -530,6 +569,8 @@ class EntryUploadServiceTest {
             a.setId("asset-i1");
             return a;
         });
+        stubSession("uid", "private/media/entry-abc/full/uuid-photo.jpg",
+                "image/jpeg", "photo.jpg", "FULL", 2_000_000L);
 
         FinalizeUploadRequest request = new FinalizeUploadRequest(
                 "uid", ENTRY_ID, "private/media/entry-abc/full/uuid-photo.jpg",
@@ -554,6 +595,8 @@ class EntryUploadServiceTest {
             assertEquals(AssetStatus.READY, a.getStatus());
             return a;
         });
+        stubSession("uid", "public/media/entry-abc/thumbnail/uuid-thumb.jpg",
+                "image/jpeg", "thumb.jpg", "THUMBNAIL", 50_000L);
 
         FinalizeUploadRequest request = new FinalizeUploadRequest(
                 "uid", ENTRY_ID, "public/media/entry-abc/thumbnail/uuid-thumb.jpg",

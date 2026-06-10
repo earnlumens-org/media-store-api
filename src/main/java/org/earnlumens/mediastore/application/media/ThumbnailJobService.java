@@ -254,6 +254,14 @@ public class ThumbnailJobService {
 
         ThumbnailJob job = opt.get();
 
+        // Idempotency: callbacks may be retried by the worker. A terminal job
+        // must not be re-processed (a late duplicate could clobber state).
+        if (isTerminal(job.getStatus())) {
+            logger.info("thumbnail completeJob: ignoring callback for terminal job id={} (status={})",
+                    jobId, job.getStatus());
+            return Optional.of(job);
+        }
+
         // Defence in depth: the worker controls the body of the callback,
         // so reject any prefix that does not match what we asked it to write.
         if (variantsR2Prefix == null || !variantsR2Prefix.equals(job.getOutputR2Prefix())) {
@@ -290,6 +298,11 @@ public class ThumbnailJobService {
         }
 
         ThumbnailJob job = opt.get();
+        if (isTerminal(job.getStatus())) {
+            logger.info("thumbnail skipJob: ignoring callback for terminal job id={} (status={})",
+                    jobId, job.getStatus());
+            return Optional.of(job);
+        }
         job.setStatus(ThumbnailJobStatus.SKIPPED);
         job.setErrorMessage(reason);
         job.setSourceWidthPx(sourceWidthPx);
@@ -315,12 +328,25 @@ public class ThumbnailJobService {
         }
         ThumbnailJob job = opt.get();
 
+        if (isTerminal(job.getStatus())) {
+            logger.info("thumbnail failJob: ignoring callback for terminal job id={} (status={})",
+                    jobId, job.getStatus());
+            return Optional.of(job);
+        }
+
         if (job.getRetryCount() < job.getMaxRetries()) {
             retryJob(job, errorMessage);
         } else {
             killJob(job, errorMessage);
         }
         return Optional.of(job);
+    }
+
+    /** Terminal job states: late/duplicate callbacks must never mutate these. */
+    private static boolean isTerminal(ThumbnailJobStatus status) {
+        return status == ThumbnailJobStatus.COMPLETED
+                || status == ThumbnailJobStatus.SKIPPED
+                || status == ThumbnailJobStatus.DEAD;
     }
 
     /**

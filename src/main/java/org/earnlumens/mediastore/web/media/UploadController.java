@@ -15,6 +15,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.oauth2.core.user.OAuth2User;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -135,5 +136,101 @@ public class UploadController {
         }
         Object idAttr = principal.getAttribute("id");
         return idAttr != null ? idAttr.toString() : null;
+    }
+
+    /**
+     * POST /api/uploads/complete — Assemble a multipart upload server-side.
+     * Body: { "uploadId": "..." }
+     */
+    @PostMapping("/complete")
+    public ResponseEntity<?> completeMultipart(
+            @RequestBody Map<String, String> body,
+            HttpServletRequest httpRequest
+    ) {
+        String userId = extractUserId();
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+        String uploadId = body.get("uploadId");
+        if (uploadId == null || uploadId.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "uploadId is required"));
+        }
+
+        String tenantId = tenantResolver.resolve(httpRequest);
+        try {
+            boolean ok = entryUploadService.completeMultipart(tenantId, userId, uploadId);
+            if (!ok) {
+                return ResponseEntity.status(403).body(Map.of("error", "Forbidden"));
+            }
+            return ResponseEntity.ok(Map.of("status", "COMPLETED"));
+        } catch (IllegalArgumentException e) {
+            logger.warn("completeMultipart: invalid request: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /api/uploads/part-url — Re-sign the URL for one multipart part
+     * (used when the originally issued URL expires mid-upload).
+     * Body: { "uploadId": "...", "partNumber": 3 }
+     */
+    @PostMapping("/part-url")
+    public ResponseEntity<?> partUrl(
+            @RequestBody Map<String, Object> body,
+            HttpServletRequest httpRequest
+    ) {
+        String userId = extractUserId();
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+        Object uploadIdRaw = body.get("uploadId");
+        Object partNumberRaw = body.get("partNumber");
+        if (!(uploadIdRaw instanceof String uploadId) || uploadId.isBlank()
+                || !(partNumberRaw instanceof Number partNumber)) {
+            return ResponseEntity.badRequest().body(Map.of("error", "uploadId and partNumber are required"));
+        }
+
+        String tenantId = tenantResolver.resolve(httpRequest);
+        try {
+            return entryUploadService.generatePartUrl(tenantId, userId, uploadId, partNumber.intValue())
+                    .<ResponseEntity<?>>map(url -> ResponseEntity.ok(Map.of("url", url)))
+                    .orElseGet(() -> ResponseEntity.status(403).body(Map.of("error", "Forbidden")));
+        } catch (IllegalArgumentException e) {
+            logger.warn("partUrl: invalid request: {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        }
+    }
+
+    /**
+     * POST /api/uploads/abort — Cancel an in-progress upload, freeing any
+     * stored bytes/parts. Best-effort and safe to retry.
+     * Body: { "uploadId": "..." }
+     */
+    @PostMapping("/abort")
+    public ResponseEntity<?> abortUpload(
+            @RequestBody Map<String, String> body,
+            HttpServletRequest httpRequest
+    ) {
+        String userId = extractUserId();
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+        String uploadId = body.get("uploadId");
+        if (uploadId == null || uploadId.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "uploadId is required"));
+        }
+
+        String tenantId = tenantResolver.resolve(httpRequest);
+        boolean ok = entryUploadService.abortUpload(tenantId, userId, uploadId);
+        return ResponseEntity.ok(Map.of("aborted", ok));
+    }
+
+    /**
+     * GET /api/uploads/config — Server-enforced upload limits and multipart
+     * parameters, so the client validates against the same numbers.
+     */
+    @GetMapping("/config")
+    public ResponseEntity<?> uploadConfig() {
+        return ResponseEntity.ok(entryUploadService.getUploadConfig());
     }
 }

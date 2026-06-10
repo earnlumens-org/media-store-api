@@ -18,7 +18,10 @@ class TranscodingDispatcherTest {
     @BeforeEach
     void setUp() {
         jobService = mock(TranscodingJobService.class);
-        dispatcher = new TranscodingDispatcher(jobService);
+        org.earnlumens.mediastore.infrastructure.lock.DistributedLockService lockService =
+                mock(org.earnlumens.mediastore.infrastructure.lock.DistributedLockService.class);
+        when(lockService.tryAcquire(anyString(), any())).thenReturn(true);
+        dispatcher = new TranscodingDispatcher(jobService, lockService);
     }
 
     @Test

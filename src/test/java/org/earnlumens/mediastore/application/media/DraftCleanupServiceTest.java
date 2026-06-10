@@ -39,7 +39,13 @@ class DraftCleanupServiceTest {
     void setUp() {
         entryRepository = mock(EntryRepository.class);
         assetRepository = mock(AssetRepository.class);
-        service = new DraftCleanupService(entryRepository, assetRepository);
+        org.earnlumens.mediastore.domain.media.repository.UploadSessionRepository uploadSessionRepository =
+                mock(org.earnlumens.mediastore.domain.media.repository.UploadSessionRepository.class);
+        when(uploadSessionRepository.findByStatusAndCreatedAtBefore(any(), any()))
+                .thenReturn(Collections.emptyList());
+        org.earnlumens.mediastore.infrastructure.r2.R2StorageService r2StorageService =
+                mock(org.earnlumens.mediastore.infrastructure.r2.R2StorageService.class);
+        service = new DraftCleanupService(entryRepository, assetRepository, uploadSessionRepository, r2StorageService);
         TenantContext.set(TENANT);
     }
 

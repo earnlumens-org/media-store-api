@@ -54,7 +54,9 @@ class TenantIsolationArchTest {
             // Platform-level thumbnail dispatcher picks PENDING jobs across all tenants
             "ThumbnailJobRepository#findAllByStatus",
             // Platform-level thumbnail watchdog recovers stale jobs across all tenants
-            "ThumbnailJobRepository#findAllStaleJobs"
+            "ThumbnailJobRepository#findAllStaleJobs",
+            // Platform-level cleanup job aborts stale PENDING upload sessions across all tenants
+            "UploadSessionRepository#findByStatusAndCreatedAtBefore"
     );
 
     // ── Methods that carry tenantId inside the entity (e.g. save) ──

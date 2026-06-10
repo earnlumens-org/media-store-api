@@ -16,7 +16,10 @@ class ModerationJobWatchdogTest {
     @BeforeEach
     void setUp() {
         jobService = mock(ModerationJobService.class);
-        watchdog = new ModerationJobWatchdog(jobService);
+        org.earnlumens.mediastore.infrastructure.lock.DistributedLockService lockService =
+                mock(org.earnlumens.mediastore.infrastructure.lock.DistributedLockService.class);
+        when(lockService.tryAcquire(anyString(), any())).thenReturn(true);
+        watchdog = new ModerationJobWatchdog(jobService, lockService);
     }
 
     @Test

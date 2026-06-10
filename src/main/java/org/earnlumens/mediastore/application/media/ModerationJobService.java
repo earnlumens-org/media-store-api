@@ -213,6 +213,26 @@ public class ModerationJobService {
 
         jobRepository.save(job);
 
+        // Surface the failure to the creator: without this, the entry sits in
+        // IN_REVIEW forever with no explanation. Moderators can re-trigger.
+        if (job.getEntryType() != EntryType.COLLECTION) {
+            entryRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId())
+                    .ifPresent(entry -> {
+                        entry.setModerationFeedback(
+                                "Automated review could not be completed. "
+                                + "Your content is awaiting manual review by a moderator.");
+                        entryRepository.save(entry);
+                    });
+        } else {
+            collectionRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId())
+                    .ifPresent(collection -> {
+                        collection.setModerationFeedback(
+                                "Automated review could not be completed. "
+                                + "Your collection is awaiting manual review by a moderator.");
+                        collectionRepository.save(collection);
+                    });
+        }
+
         logger.error("Moderation watchdog: job DEAD — id={}, entry={}, tenant={}, "
                         + "retries={}/{}, previous={}, reason={}",
                 job.getId(), job.getEntryId(), job.getTenantId(),
@@ -270,6 +290,17 @@ public class ModerationJobService {
         }
 
         ModerationJob job = opt.get();
+
+        // Idempotency / staleness: callbacks are retried by the worker, and a
+        // job may have been cancelled (superseded by a new thumbnail/preview)
+        // while the worker was still running. Never apply a decision from a
+        // terminal or cancelled job — it would act on stale media.
+        if (isTerminal(job)) {
+            logger.info("moderation completeJob: ignoring callback for terminal/cancelled job id={} (status={})",
+                    jobId, job.getStatus());
+            return Optional.of(job);
+        }
+
         ModerationDecision moderationDecision;
         try {
             moderationDecision = ModerationDecision.valueOf(decision);
@@ -493,6 +524,12 @@ public class ModerationJobService {
 
         ModerationJob job = opt.get();
 
+        if (isTerminal(job)) {
+            logger.info("moderation failJob: ignoring callback for terminal/cancelled job id={} (status={})",
+                    jobId, job.getStatus());
+            return Optional.of(job);
+        }
+
         if (job.getRetryCount() < job.getMaxRetries()) {
             retryJob(job, errorMessage);
         } else {
@@ -500,5 +537,16 @@ public class ModerationJobService {
         }
 
         return Optional.of(job);
+    }
+
+    /**
+     * Terminal (or cancelled) jobs must never be mutated by late callbacks.
+     * A FAILED job with {@code completedAt} set was cancelled (superseded),
+     * not transiently failed.
+     */
+    private static boolean isTerminal(ModerationJob job) {
+        return job.getStatus() == ModerationJobStatus.COMPLETED
+                || job.getStatus() == ModerationJobStatus.DEAD
+                || (job.getStatus() == ModerationJobStatus.FAILED && job.getCompletedAt() != null);
     }
 }
