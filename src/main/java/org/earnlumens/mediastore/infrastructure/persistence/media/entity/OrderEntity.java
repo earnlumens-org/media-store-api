@@ -18,6 +18,7 @@ import java.util.List;
 @CompoundIndex(name = "idx_order_tenant_coll_status", def = "{'tenantId': 1, 'collectionId': 1, 'status': 1}")
 @CompoundIndex(name = "idx_order_tenant_user_status_created", def = "{'tenantId': 1, 'userId': 1, 'status': 1, 'createdAt': -1}")
 @CompoundIndex(name = "idx_order_tenant_seller_status_created", def = "{'tenantId': 1, 'sellerId': 1, 'status': 1, 'createdAt': -1}")
+@CompoundIndex(name = "idx_order_tenant_franchise_status_created", def = "{'tenantId': 1, 'franchiseId': 1, 'status': 1, 'createdAt': -1}")
 @CompoundIndex(name = "idx_order_stellar_tx", def = "{'stellarTxHash': 1}")
 @CompoundIndex(name = "idx_order_status_expires", def = "{'status': 1, 'expiresAt': 1}")
 public class OrderEntity {
@@ -40,6 +41,9 @@ public class OrderEntity {
 
     @NotBlank
     private String sellerId;
+
+    /** Franchise ("beta") this sale was made through, or null for a direct tenant sale. */
+    private String franchiseId;
 
     private BigDecimal amountXlm;
 
@@ -91,6 +95,9 @@ public class OrderEntity {
 
     public String getSellerId() { return sellerId; }
     public void setSellerId(String sellerId) { this.sellerId = sellerId; }
+
+    public String getFranchiseId() { return franchiseId; }
+    public void setFranchiseId(String franchiseId) { this.franchiseId = franchiseId; }
 
     public BigDecimal getAmountXlm() { return amountXlm; }
     public void setAmountXlm(BigDecimal amountXlm) { this.amountXlm = amountXlm; }

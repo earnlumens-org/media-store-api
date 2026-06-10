@@ -3,6 +3,7 @@ package org.earnlumens.mediastore.application.payment;
 import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
 import org.earnlumens.mediastore.domain.media.model.SplitRole;
 import org.earnlumens.mediastore.infrastructure.config.PlatformConfig;
+import org.earnlumens.mediastore.infrastructure.franchise.read.FranchiseReadModel;
 import org.earnlumens.mediastore.infrastructure.tenant.read.TenantConfigService;
 import org.earnlumens.mediastore.infrastructure.tenant.read.TenantReadModel;
 import org.junit.jupiter.api.BeforeEach;
@@ -45,11 +46,29 @@ class PaymentServiceSplitsTest {
                 null, null, null, null, null, null,
                 platformConfig,
                 null,
-                tenantConfigService);
+                tenantConfigService,
+                null);
     }
 
     private List<PaymentSplit> invoke(String tenantId, List<PaymentSplit> entrySplits) {
-        return ReflectionTestUtils.invokeMethod(service, "buildFullSplits", tenantId, entrySplits);
+        return ReflectionTestUtils.invokeMethod(
+                service, "buildFullSplits", tenantId, entrySplits, null);
+    }
+
+    private List<PaymentSplit> invoke(String tenantId, List<PaymentSplit> entrySplits,
+                                      FranchiseReadModel franchise) {
+        return ReflectionTestUtils.invokeMethod(
+                service, "buildFullSplits", tenantId, entrySplits, franchise);
+    }
+
+    private FranchiseReadModel franchise(String commissionPct, String wallet) {
+        FranchiseReadModel f = new FranchiseReadModel();
+        ReflectionTestUtils.setField(f, "status", "ACTIVE");
+        if (commissionPct != null) {
+            ReflectionTestUtils.setField(f, "commissionPercent", new BigDecimal(commissionPct));
+        }
+        ReflectionTestUtils.setField(f, "payoutWallet", wallet);
+        return f;
     }
 
     private List<PaymentSplit> sellerOnly() {
@@ -170,6 +189,43 @@ class PaymentServiceSplitsTest {
                 .thenReturn(Optional.of(tenant("evil", "60.00", "50.00", TENANT_WALLET)));
 
         assertThrows(IllegalStateException.class, () -> invoke("evil", sellerOnly()));
+    }
+
+    @Test
+    void franchiseSale_carvesCommissionOutOfTenantShare() {
+        // Tenant fee 10%; franchise commission 40% of that -> 4% franchise, 6% tenant.
+        when(tenantConfigService.findActiveBySubdomain("alice"))
+                .thenReturn(Optional.of(tenant("alice", "10.00", "10.00", TENANT_WALLET)));
+
+        List<PaymentSplit> result = invoke("alice", sellerOnly(), franchise("40.00", "GFRANCHISE9"));
+
+        assertEquals(4, result.size());
+        assertEquals(SplitRole.PLATFORM, result.get(0).getRole());
+        assertEquals(new BigDecimal("10.00"), result.get(0).getPercent());
+        assertEquals(SplitRole.TENANT, result.get(1).getRole());
+        assertEquals(new BigDecimal("6.00"), result.get(1).getPercent());
+        assertEquals(SplitRole.FRANCHISE, result.get(2).getRole());
+        assertEquals(new BigDecimal("4.00"), result.get(2).getPercent());
+        assertEquals("GFRANCHISE9", result.get(2).getWallet());
+        assertEquals(SplitRole.SELLER, result.get(3).getRole());
+        // Seller share is unchanged by the franchise carve-out (it only splits
+        // the tenant's 10%): 100 - 10 platform - 10 tenant-share = 80%.
+        assertEquals(new BigDecimal("80.00"), result.get(3).getPercent());
+        assertTrue(sumTo100(result));
+    }
+
+    @Test
+    void franchiseSale_withZeroTenantFee_earnsNothing() {
+        // No tenant fee means no profit to share: no FRANCHISE split is added.
+        when(tenantConfigService.findActiveBySubdomain("alice"))
+                .thenReturn(Optional.of(tenant("alice", "10.00", "0.00", TENANT_WALLET)));
+
+        List<PaymentSplit> result = invoke("alice", sellerOnly(), franchise("40.00", "GFRANCHISE9"));
+
+        assertEquals(2, result.size());
+        assertEquals(SplitRole.PLATFORM, result.get(0).getRole());
+        assertEquals(SplitRole.SELLER, result.get(1).getRole());
+        assertTrue(sumTo100(result));
     }
 
     /** Sum of all split percents must equal 100.00 (within 0.03 tolerance for rounding). */

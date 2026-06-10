@@ -14,6 +14,8 @@ public record PreparePaymentRequest(
         String entryId,
         /** Collection ID — required for collection purchases, null for entry purchases */
         String collectionId,
+        /** Franchise slug — set when the purchase is made through a franchise storefront (/f/&lt;slug&gt;), else null */
+        String franchiseSlug,
         @NotBlank @Size(min = 56, max = 56)
         @Pattern(regexp = "^G[A-Z2-7]{55}$", message = "Invalid Stellar public key")
         String buyerWallet

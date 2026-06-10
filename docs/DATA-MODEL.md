@@ -1,7 +1,7 @@
 # EarnLumens — MongoDB Data-Model & States Specification
 
 > **Audience:** Engineering team.  
-> **Scope:** Six MongoDB collections — `entries`, `assets`, `collections`, `orders`, `entitlements`, `favorites`.  
+> **Scope:** Eight MongoDB collections — `entries`, `assets`, `collections`, `orders`, `entitlements`, `favorites`, plus the franchise read-models `franchises` and `franchise_user_bans` (written by admin-api, read here).  
 > **Constraints:** Shared multi-tenant documents (every document carries `tenantId`); Stellar payments (XLM native, USD converted at purchase time); purchases target entries OR collections; no relational joins — minimize round-trips.
 
 ---
@@ -16,6 +16,8 @@
 | `orders`       | Purchase records                           | 1 per user × target (entry or coll.) |
 | `entitlements` | Granted access rights                      | 1 per user × target (entry or coll.) |
 | `favorites`    | User-saved items (entries or collections)  | 1 per user × item                    |
+| `franchises`   | Franchise ("beta") storefronts under a tenant (written by admin-api) | 1 per franchise          |
+| `franchise_user_bans` | Users barred from creating a franchise under a tenant (admin-api) | 1 per tenant × user |
 
 ---
 
@@ -63,10 +65,10 @@ A publishable content item (video, audio, image, or resource/article).
 | Field     | Type       | Required | Notes                                                      |
 |-----------|------------|----------|------------------------------------------------------------|
 | `wallet`  | String     | ✔        | Stellar public key (`G…`)                                  |
-| `role`    | String     | ✔        | Enum: `PLATFORM \| SELLER \| COLLABORATOR`                 |
+| `role`    | String     | ✔        | Enum: `PLATFORM \| TENANT \| SELLER \| COLLABORATOR \| FRANCHISE`  |
 | `percent` | Decimal128 | ✔        | Percentage of total (e.g. `10.00` = 10%). Sum must = 100   |
 
-> Currently: `PLATFORM (10%) + SELLER (90%)`. The PLATFORM split is applied dynamically at payment time from environment config. `COLLABORATOR` is reserved for future multi-recipient splits.
+> Currently: `PLATFORM (10%) + SELLER (90%)`. The PLATFORM split is applied dynamically at payment time from environment config. `TENANT` is an optional operator fee. `FRANCHISE` is carved **out of the `TENANT` share** when a sale is made through a franchise (see §5.1) — the final price and every other split are unchanged. `COLLABORATOR` is reserved for future multi-recipient splits.
 
 #### 2.2 `pricingMode` — How an entry can be purchased
 
@@ -243,6 +245,7 @@ One purchase record per user per target (entry or collection). Stellar payments 
 | `entryId`          | String     |          | `null`      | **NOW NULLABLE** — FK to `entries._id`. Set when `targetType = ENTRY` |
 | `collectionId`     | String     |          | `null`      | **NEW** — FK to `collections._id`. Set when `targetType = COLLECTION` |
 | `sellerId`         | String     | ✔        |             | Creator's user ID (denormalized)                             |
+| `franchiseId`      | String     |          | `null`      | **NEW** — FK to `franchises._id`. Set when the sale was made through a franchise storefront (`/f/<slug>`), else `null` for a direct tenant sale |
 | `amountXlm`        | Decimal128 | ✔        |             | Final XLM amount charged (`BigDecimal`)                      |
 | `originalAmountUsd`| Decimal128 |          | `null`      | Original USD amount (only for USD-priced items)              |
 | `xlmUsdRate`       | Decimal128 |          | `null`      | XLM/USD rate used for conversion                             |
@@ -289,9 +292,27 @@ PENDING ──→ PROCESSING ──→ COMPLETED ──→ REFUNDED
 { tenantId: 1, collectionId: 1, status: 1 }                   // collection purchase count / status check
 { tenantId: 1, userId: 1, status: 1, createdAt: -1 }          // buyer's purchase history
 { tenantId: 1, sellerId: 1, status: 1, createdAt: -1 }        // seller's sales dashboard
+{ tenantId: 1, franchiseId: 1, status: 1, createdAt: -1 }     // franchise's own sales metrics
 { stellarTxHash: 1 }                                           // tx hash lookup (sparse)
 { status: 1, expiresAt: 1 }                                   // expired order cleanup
 ```
+
+#### 5.1 Franchise split rule
+
+When `franchiseId` is set, the franchise commission (a frozen percentage of the
+franchisor's own profit, snapshotted on the `franchises` doc) is taken **out of
+the `TENANT` split only**:
+
+```
+franchisePercent      = tenantPercent × franchise.commissionPercent / 100
+effectiveTenantPercent = tenantPercent − franchisePercent
+```
+
+The `PLATFORM` and `SELLER`/`COLLABORATOR` splits are untouched, so the final
+price is identical whether the buyer purchases on the tenant storefront or on a
+franchise storefront. A franchise therefore only earns when the tenant has a
+non-zero `tenantFeePercent`. A purchase that references an unknown or DISABLED
+franchise is rejected.
 
 ---
 
@@ -309,6 +330,7 @@ Access right connecting a user to a target (entry or collection). For the Patreo
 | `targetType`   | String   | ✔        |          | **NEW** — Enum: `ENTRY \| COLLECTION`                        |
 | `entryId`      | String   |          | `null`   | **NOW NULLABLE** — FK to `entries._id`. Set when `targetType = ENTRY` |
 | `collectionId` | String   |          | `null`   | **NEW** — FK to `collections._id`. Set when `targetType = COLLECTION` |
+| `franchiseId`  | String   |          | `null`   | **NEW** — FK to `franchises._id`. Copied from the granting order; `null` for direct tenant sales |
 | `grantType`    | String   | ✔        |          | Enum: `PURCHASE \| GIFT \| PROMO \| CREATOR`                 |
 | `orderId`      | String   |          | `null`   | FK to `orders._id` (if grantType = PURCHASE)                 |
 | `status`       | String   | ✔        | `ACTIVE` | Enum: `ACTIVE \| REVOKED \| EXPIRED`                         |
@@ -351,6 +373,85 @@ No state transitions — insert or delete only (toggle).
 ```js
 { tenantId: 1, userId: 1, itemId: 1 }          // unique — prevent duplicates
 { tenantId: 1, userId: 1, addedAt: -1 }         // paginated favorites list sorted by most recent
+```
+
+---
+
+## 7b. `franchises`
+
+A franchise ("beta") is a commercial sub-tenant operating under a franchisor
+tenant ("alfa") at `<franchisor-subdomain>.earnlumens.org/f/<slug>`. It resells
+the franchisor's already-approved content for a frozen commission. It is **not**
+a full tenant — it has no row in `tenants`, cannot upload content, approve
+creators or change editorial rules.
+
+> **Ownership:** this collection is written exclusively by **admin-api** (the
+> governance home). media-store-api reads it (`FranchiseReadModel`) to resolve
+> franchise storefronts, apply the franchise split at purchase time, and render
+> franchise branding. The fields below mirror the admin-api `Franchise` entity.
+
+### Fields
+
+| Field               | Type       | Required | Default  | Notes                                                        |
+|---------------------|------------|----------|----------|--------------------------------------------------------------|
+| `_id`               | ObjectId   | auto     |          | Stored as `franchiseId` on orders/entitlements               |
+| `tenantId`          | String     | ✔        |          | Franchisor **subdomain** (matches the runtime `tenantId`). Immutable |
+| `slug`              | String     | ✔        |          | URL slug under `/f/<slug>`. Lowercase, RFC-1123-safe, unique within the franchisor. Immutable |
+| `ownerOauthUserId`  | String     | ✔        |          | Global user who owns the franchise. Immutable                |
+| `ownerUsername`     | String     |          | `null`   | Denormalized for display                                     |
+| `ownerDisplayName`  | String     |          | `null`   | Denormalized for display                                     |
+| `commissionPercent` | Decimal128 | ✔        |          | **Frozen** at creation from the franchisor's `defaultFranchiseCommissionPercent`. % of the franchisor's own profit share. Immutable |
+| `payoutWallet`      | String     | ✔        |          | Stellar public key (`G…`) receiving the franchise commission |
+| `title`             | String     |          | `null`   | Branding override — `null` inherits the franchisor's         |
+| `description`       | String     |          | `null`   | Commercial description shown on the franchise storefront      |
+| `logoR2Key`         | String     |          | `null`   | Branding override — `null` inherits                           |
+| `coverR2Key`        | String     |          | `null`   | Storefront cover/hero image                                   |
+| `accentColor`       | String     |          | `null`   | Secondary/accent colour (`#RRGGBB[AA]`) — `null` inherits     |
+| `status`            | String     | ✔        | `ACTIVE` | Enum: `ACTIVE \| DISABLED`. DISABLED hides the storefront and blocks new sales; history is never deleted |
+| `disabledReason`    | String     |          | `null`   | Required justification when `DISABLED`                        |
+| `disabledBy`        | String     |          | `null`   | Actor who disabled it                                         |
+| `disabledAt`        | DateTime   |          | `null`   |                                                              |
+| `acceptedTermsAt`   | DateTime   | ✔        |          | When the owner accepted the (frozen) terms — for audit       |
+| `createdAt`         | DateTime   | auto     |          | `@CreatedDate`                                                |
+| `updatedAt`         | DateTime   | auto     |          | `@LastModifiedDate`                                           |
+
+### Status State Machine
+
+```
+ACTIVE ──→ DISABLED        (franchisor takedown for misuse — never deleted)
+```
+
+### Indexes
+
+```js
+{ tenantId: 1, slug: 1 }     // unique — franchise URL path is unique within the franchisor
+{ tenantId: 1, status: 1 }   // franchisor dashboard + storefront ACTIVE listing
+{ ownerOauthUserId: 1 }      // "my franchises" for a global user
+```
+
+---
+
+## 7c. `franchise_user_bans`
+
+Record of a user barred by a franchisor from creating **new** franchises under
+it. A ban does not touch the user's global account nor any franchise they
+already own elsewhere. Written by admin-api; read at franchise-creation time.
+
+### Fields
+
+| Field      | Type     | Required | Default | Notes                                          |
+|------------|----------|----------|---------|------------------------------------------------|
+| `_id`      | ObjectId | auto     |         |                                                |
+| `tenantId` | String   | ✔        |         | Franchisor subdomain that issued the ban       |
+| `userId`   | String   | ✔        |         | OAuth user-id of the banned user               |
+| `reason`   | String   | ✔        |         | Justification                                  |
+| `bannedBy` | String   | ✔        |         | Actor who issued the ban                       |
+| `bannedAt` | DateTime | auto     |         | `@CreatedDate`                                 |
+
+### Indexes
+
+```js
+{ tenantId: 1, userId: 1 }   // unique — one ban per tenant × user; checked on franchise creation
 ```
 
 ---

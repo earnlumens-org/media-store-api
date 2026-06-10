@@ -14,6 +14,8 @@ public class Order {
     private String entryId;
     private String collectionId;
     private String sellerId;
+    /** Franchise ("beta") this sale was made through, or null for a direct tenant sale. */
+    private String franchiseId;
     private BigDecimal amountXlm;
     /** Original USD amount (only set for USD-priced entries) */
     private BigDecimal originalAmountUsd;
@@ -58,6 +60,8 @@ public class Order {
     public void setCollectionId(String collectionId) { this.collectionId = collectionId; }
     public String getSellerId() { return sellerId; }
     public void setSellerId(String sellerId) { this.sellerId = sellerId; }
+    public String getFranchiseId() { return franchiseId; }
+    public void setFranchiseId(String franchiseId) { this.franchiseId = franchiseId; }
     public BigDecimal getAmountXlm() { return amountXlm; }
     public void setAmountXlm(BigDecimal amountXlm) { this.amountXlm = amountXlm; }
     public BigDecimal getOriginalAmountUsd() { return originalAmountUsd; }

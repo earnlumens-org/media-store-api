@@ -86,6 +86,23 @@ public class TenantReadModel {
     private BigDecimal platformFeePercent;
     private BigDecimal tenantFeePercent;
 
+    /**
+     * Franchise model opt-in. Boxed so a missing Mongo field deserialises to
+     * {@code null} and the safe default ({@code false} — franchises off) applies
+     * through {@link #isFranchisesEnabled()}. Mirrors admin-api's Tenant field.
+     */
+    private Boolean franchisesEnabled;
+
+    /** When {@code true}, new franchise sign-ups are paused (model stays on). */
+    private Boolean franchisesPaused;
+
+    /**
+     * Default commission (percentage of the franchisor's own profit share)
+     * snapshotted onto each new franchise at creation. Mirrors admin-api's
+     * Tenant field; read here so media-store-api can freeze it onto a franchise.
+     */
+    private BigDecimal defaultFranchiseCommissionPercent;
+
     private String status;          // "ACTIVE" | "BLOCKED"
     private String blockedReason;
 
@@ -179,6 +196,18 @@ public class TenantReadModel {
 
     public BigDecimal getTenantFeePercent() { return tenantFeePercent; }
     public void setTenantFeePercent(BigDecimal tenantFeePercent) { this.tenantFeePercent = tenantFeePercent; }
+
+    /** Treats a missing/null field as disabled (franchises are opt-in). */
+    public boolean isFranchisesEnabled() { return franchisesEnabled != null && franchisesEnabled; }
+    public Boolean getFranchisesEnabled() { return franchisesEnabled; }
+    public void setFranchisesEnabled(Boolean franchisesEnabled) { this.franchisesEnabled = franchisesEnabled; }
+
+    public boolean isFranchisesPaused() { return franchisesPaused != null && franchisesPaused; }
+    public Boolean getFranchisesPaused() { return franchisesPaused; }
+    public void setFranchisesPaused(Boolean franchisesPaused) { this.franchisesPaused = franchisesPaused; }
+
+    public BigDecimal getDefaultFranchiseCommissionPercent() { return defaultFranchiseCommissionPercent; }
+    public void setDefaultFranchiseCommissionPercent(BigDecimal defaultFranchiseCommissionPercent) { this.defaultFranchiseCommissionPercent = defaultFranchiseCommissionPercent; }
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }

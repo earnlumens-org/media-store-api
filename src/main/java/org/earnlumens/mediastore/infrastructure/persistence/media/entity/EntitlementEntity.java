@@ -32,6 +32,9 @@ public class EntitlementEntity {
 
     private String collectionId;
 
+    /** Franchise ("beta") this entitlement was purchased through, or null. */
+    private String franchiseId;
+
     private String grantType;
 
     private String orderId;
@@ -63,6 +66,9 @@ public class EntitlementEntity {
 
     public String getCollectionId() { return collectionId; }
     public void setCollectionId(String collectionId) { this.collectionId = collectionId; }
+
+    public String getFranchiseId() { return franchiseId; }
+    public void setFranchiseId(String franchiseId) { this.franchiseId = franchiseId; }
 
     public String getGrantType() { return grantType; }
     public void setGrantType(String grantType) { this.grantType = grantType; }

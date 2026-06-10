@@ -11,6 +11,8 @@ import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.earnlumens.mediastore.infrastructure.config.StellarConfig;
 import org.earnlumens.mediastore.infrastructure.external.pricing.XlmUsdPriceService;
+import org.earnlumens.mediastore.infrastructure.franchise.read.FranchiseReadModel;
+import org.earnlumens.mediastore.infrastructure.franchise.read.FranchiseReadRepository;
 import org.earnlumens.mediastore.infrastructure.tenant.read.TenantConfigService;
 import org.earnlumens.mediastore.infrastructure.tenant.read.TenantReadModel;
 import org.slf4j.Logger;
@@ -56,6 +58,7 @@ public class PaymentService {
     private final PlatformConfig platformConfig;
     private final XlmUsdPriceService xlmUsdPriceService;
     private final TenantConfigService tenantConfigService;
+    private final FranchiseReadRepository franchiseReadRepository;
 
     public PaymentService(EntryRepository entryRepository,
                           CollectionRepository collectionRepository,
@@ -65,7 +68,8 @@ public class PaymentService {
                           StellarConfig stellarConfig,
                           PlatformConfig platformConfig,
                           XlmUsdPriceService xlmUsdPriceService,
-                          TenantConfigService tenantConfigService) {
+                          TenantConfigService tenantConfigService,
+                          FranchiseReadRepository franchiseReadRepository) {
         this.entryRepository = entryRepository;
         this.collectionRepository = collectionRepository;
         this.orderRepository = orderRepository;
@@ -75,6 +79,7 @@ public class PaymentService {
         this.platformConfig = platformConfig;
         this.xlmUsdPriceService = xlmUsdPriceService;
         this.tenantConfigService = tenantConfigService;
+        this.franchiseReadRepository = franchiseReadRepository;
     }
 
     /**
@@ -211,8 +216,20 @@ public class PaymentService {
             }
         }
 
-        // Build the full payment splits (platform + optional tenant + seller/collaborator)
-        List<PaymentSplit> splits = buildFullSplits(tenantId, targetSplits);
+        // Resolve the franchise storefront, if this purchase came through one
+        // (/f/<slug>). An unknown or disabled franchise blocks the sale so a
+        // taken-down beta cannot keep selling.
+        FranchiseReadModel franchise = null;
+        String franchiseSlug = request.franchiseSlug();
+        if (franchiseSlug != null && !franchiseSlug.isBlank()) {
+            franchise = franchiseReadRepository
+                    .findByTenantIdAndSlug(tenantId, franchiseSlug.trim().toLowerCase())
+                    .filter(FranchiseReadModel::isActive)
+                    .orElseThrow(() -> new IllegalArgumentException("Franchise not available"));
+        }
+
+        // Build the full payment splits (platform + optional tenant + seller/collaborator + franchise)
+        List<PaymentSplit> splits = buildFullSplits(tenantId, targetSplits, franchise);
 
         // Build the MEMO
         String memo = "TOTAL: " + totalXlm.toPlainString() + " XLM";
@@ -229,6 +246,7 @@ public class PaymentService {
         order.setTenantId(tenantId);
         order.setUserId(userId);
         order.setSellerId(sellerId);
+        order.setFranchiseId(franchise != null ? franchise.getId() : null);
         order.setAmountXlm(totalXlm);
         order.setOriginalAmountUsd(originalAmountUsd);
         order.setXlmUsdRate(xlmUsdRate);
@@ -361,6 +379,7 @@ public class PaymentService {
         entitlement.setTargetType(order.getTargetType() != null ? order.getTargetType() : TargetType.ENTRY);
         entitlement.setEntryId(order.getEntryId());
         entitlement.setCollectionId(order.getCollectionId());
+        entitlement.setFranchiseId(order.getFranchiseId());
         entitlement.setGrantType(GrantType.PURCHASE);
         entitlement.setOrderId(order.getId());
         entitlement.setStatus(EntitlementStatus.ACTIVE);
@@ -408,8 +427,17 @@ public class PaymentService {
      * </ul>
      * If the tenant doc is missing or BLOCKED we fall back to a two-way split
      * (PLATFORM + entry) using the global config so purchases keep working.
+     *
+     * <p>When the sale is made through a {@code franchise} ("beta"), a FRANCHISE
+     * split is carved <b>out of the tenant's own share</b> equal to
+     * {@code tenantPercent * commissionPercent / 100}. The final price and every
+     * other split (platform, seller, collaborators) are unchanged — only the
+     * tenant's portion is divided between the tenant and its franchise. A
+     * franchise therefore only earns when the tenant has a non-zero fee to
+     * share.
      */
-    private List<PaymentSplit> buildFullSplits(String tenantId, List<PaymentSplit> entrySplits) {
+    private List<PaymentSplit> buildFullSplits(String tenantId, List<PaymentSplit> entrySplits,
+                                               FranchiseReadModel franchise) {
         BigDecimal platformPercent = platformConfig.getFeePercent();
         String platformWallet = platformConfig.getWallet();
         BigDecimal tenantPercent = BigDecimal.ZERO;
@@ -445,10 +473,35 @@ public class PaymentService {
             throw new IllegalStateException("Entry splits total is zero — invalid configuration");
         }
 
+        // Carve the franchise commission out of the tenant's own share. The
+        // reserved total (and therefore the seller's portion) is untouched, so
+        // the final price stays constant.
+        BigDecimal franchisePercent = BigDecimal.ZERO;
+        String franchiseWallet = null;
+        if (franchise != null
+                && tenantWallet != null
+                && tenantPercent.compareTo(BigDecimal.ZERO) > 0
+                && franchise.getCommissionPercent() != null
+                && franchise.getCommissionPercent().compareTo(BigDecimal.ZERO) > 0
+                && franchise.getPayoutWallet() != null
+                && !franchise.getPayoutWallet().isBlank()) {
+            franchisePercent = tenantPercent
+                    .multiply(franchise.getCommissionPercent())
+                    .divide(ONE_HUNDRED, 2, RoundingMode.HALF_UP);
+            if (franchisePercent.compareTo(tenantPercent) > 0) {
+                franchisePercent = tenantPercent;
+            }
+            franchiseWallet = franchise.getPayoutWallet();
+        }
+        BigDecimal effectiveTenantPercent = tenantPercent.subtract(franchisePercent);
+
         List<PaymentSplit> fullSplits = new ArrayList<>();
         fullSplits.add(new PaymentSplit(platformWallet, SplitRole.PLATFORM, platformPercent));
-        if (tenantWallet != null) {
-            fullSplits.add(new PaymentSplit(tenantWallet, SplitRole.TENANT, tenantPercent));
+        if (tenantWallet != null && effectiveTenantPercent.compareTo(BigDecimal.ZERO) > 0) {
+            fullSplits.add(new PaymentSplit(tenantWallet, SplitRole.TENANT, effectiveTenantPercent));
+        }
+        if (franchiseWallet != null && franchisePercent.compareTo(BigDecimal.ZERO) > 0) {
+            fullSplits.add(new PaymentSplit(franchiseWallet, SplitRole.FRANCHISE, franchisePercent));
         }
 
         for (PaymentSplit split : entrySplits) {

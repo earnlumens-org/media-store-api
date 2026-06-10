@@ -10,6 +10,8 @@ public class Entitlement {
     private TargetType targetType;
     private String entryId;
     private String collectionId;
+    /** Franchise ("beta") this entitlement was purchased through, or null. */
+    private String franchiseId;
     private GrantType grantType;
     private String orderId;
     private EntitlementStatus status;
@@ -35,6 +37,9 @@ public class Entitlement {
 
     public String getCollectionId() { return collectionId; }
     public void setCollectionId(String collectionId) { this.collectionId = collectionId; }
+
+    public String getFranchiseId() { return franchiseId; }
+    public void setFranchiseId(String franchiseId) { this.franchiseId = franchiseId; }
 
     public GrantType getGrantType() { return grantType; }
     public void setGrantType(GrantType grantType) { this.grantType = grantType; }
