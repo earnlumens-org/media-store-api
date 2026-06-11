@@ -56,8 +56,18 @@ public class PaymentService {
     private static final BigDecimal ONE_HUNDRED = new BigDecimal("100.00");
 
     /** On-chain confirmation polling for ambiguous Horizon submissions. */
-    private static final int ONCHAIN_VERIFY_MAX_ATTEMPTS = 5;
+    private static final int ONCHAIN_VERIFY_MAX_ATTEMPTS = 10;
+    /** On-chain confirmation attempts when Horizon already reported success (covers brief Horizon flaps). */
+    private static final int ONCHAIN_VERIFY_CONFIRMED_ATTEMPTS = 4;
     private static final long ONCHAIN_VERIFY_DELAY_MS = 2_000L;
+
+    /**
+     * Safety margin after an order's tx window ({@code expiresAt} = timebounds
+     * maxTime) before reconciliation may issue a final verdict. Covers ledger
+     * close lag plus the worst-case lifetime of an in-flight submit thread, so
+     * the watchdog never races a live submission.
+     */
+    static final long RECONCILE_GRACE_SECONDS = 120L;
 
     private final EntryRepository entryRepository;
     private final CollectionRepository collectionRepository;
@@ -305,23 +315,71 @@ public class PaymentService {
     }
 
     /**
-     * Process existing orders: reject if COMPLETED, return reusable PENDING, expire stale ones.
+     * Process existing orders for the same buyer + target before creating a new one.
+     * <ul>
+     *   <li>COMPLETED — self-heals a missing entitlement (crash between completion
+     *       and grant), then rejects with "Content already purchased".</li>
+     *   <li>PENDING (non-expired) — reused (same XDR, no new tx).</li>
+     *   <li>PROCESSING — reconciled against the chain: if the tx landed the order
+     *       is completed + entitled (rejects as purchased); if the tx window is
+     *       still open the prepare is blocked (a submit may be in flight — creating
+     *       a new order here is the double-payment path); if the window closed
+     *       without landing the order is expired and a new one is allowed.</li>
+     *   <li>FAILED — reconciled against the chain: a late-landing tx is promoted to
+     *       COMPLETED + entitlement (rejects as purchased); otherwise the order is
+     *       recycled to EXPIRED and a new purchase may proceed.</li>
+     *   <li>Stale PENDING — marked EXPIRED.</li>
+     * </ul>
      */
     private Order processExistingOrders(List<Order> existingOrders) {
         Order reusableOrder = null;
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
         for (Order existing : existingOrders) {
-            if (existing.getStatus() == OrderStatus.COMPLETED) {
-                throw new IllegalStateException("Content already purchased");
-            }
-            if (existing.getStatus() == OrderStatus.PENDING
-                    && existing.getExpiresAt() != null
-                    && existing.getExpiresAt().isAfter(LocalDateTime.now(ZoneOffset.UTC))) {
-                reusableOrder = existing;
-                continue;
-            }
-            if (existing.getStatus() == OrderStatus.PENDING || existing.getStatus() == OrderStatus.FAILED) {
-                existing.setStatus(OrderStatus.EXPIRED);
-                orderRepository.save(existing);
+            switch (existing.getStatus()) {
+                case COMPLETED -> {
+                    // Self-heal: crash window between tryComplete and createEntitlement.
+                    if (entitlementRepository.findOrderIdsWithEntitlements(List.of(existing.getId())).isEmpty()) {
+                        logger.error("COMPLETED order without entitlement detected at prepare — self-healing: "
+                                + "orderId={}, userId={}", existing.getId(), existing.getUserId());
+                        createEntitlement(existing);
+                    }
+                    throw new IllegalStateException("Content already purchased");
+                }
+                case PENDING -> {
+                    if (existing.getExpiresAt() != null && existing.getExpiresAt().isAfter(now)) {
+                        reusableOrder = existing;
+                    } else {
+                        orderRepository.tryTransitionStatus(existing.getTenantId(), existing.getId(),
+                                OrderStatus.PENDING, OrderStatus.EXPIRED);
+                    }
+                }
+                case PROCESSING -> {
+                    ReconcileOutcome outcome = reconcileOrder(existing);
+                    if (outcome == ReconcileOutcome.COMPLETED) {
+                        throw new IllegalStateException("Content already purchased");
+                    }
+                    if (outcome == ReconcileOutcome.IN_FLIGHT) {
+                        // A submit may still be running (or the tx may still land
+                        // within its timebounds). Creating a new order now is the
+                        // double-payment path — block until the window resolves.
+                        throw new IllegalStateException("PAYMENT_IN_PROGRESS");
+                    }
+                    // FINALIZED_NOT_ON_CHAIN — order expired, a new purchase may proceed.
+                }
+                case FAILED -> {
+                    ReconcileOutcome outcome = reconcileOrder(existing);
+                    if (outcome == ReconcileOutcome.COMPLETED) {
+                        throw new IllegalStateException("Content already purchased");
+                    }
+                    if (outcome == ReconcileOutcome.IN_FLIGHT) {
+                        // Definitive Horizon rejection + not on-chain right now: allow an
+                        // honest retry instead of blocking the buyer for the whole window.
+                        orderRepository.tryTransitionStatus(existing.getTenantId(), existing.getId(),
+                                OrderStatus.FAILED, OrderStatus.EXPIRED);
+                    }
+                    // FINALIZED_NOT_ON_CHAIN — already expired by reconcileOrder.
+                }
+                default -> { /* EXPIRED / REFUNDED — nothing to do */ }
             }
         }
         return reusableOrder;
@@ -417,7 +475,16 @@ public class PaymentService {
         }
 
         // 8. Create entitlement from the confirmed COMPLETED order (idempotent).
-        createEntitlement(completed);
+        // The money is on-chain and the order is COMPLETED: a transient store
+        // failure here must NOT surface as a payment error. The reconciliation
+        // watchdog detects COMPLETED orders without entitlement and repairs them.
+        try {
+            createEntitlement(completed);
+        } catch (Exception e) {
+            logger.error("ENTITLEMENT_CREATION_FAILED — payment confirmed on-chain, entitlement will be "
+                            + "repaired by the payment reconciliation watchdog: orderId={}, txHash={}",
+                    orderId, expectedTxHash, e);
+        }
 
         logger.info("Payment completed: orderId={}, txHash={}, entryId={}, collectionId={}",
                 orderId, expectedTxHash, completed.getEntryId(), completed.getCollectionId());
@@ -437,7 +504,7 @@ public class PaymentService {
      * giving a final verdict. Never returns true without positive confirmation.
      */
     private boolean confirmOnChainWithRetry(String txHash, Order order, boolean ambiguousOutcome) {
-        int attempts = ambiguousOutcome ? ONCHAIN_VERIFY_MAX_ATTEMPTS : 2;
+        int attempts = ambiguousOutcome ? ONCHAIN_VERIFY_MAX_ATTEMPTS : ONCHAIN_VERIFY_CONFIRMED_ATTEMPTS;
         for (int i = 0; i < attempts; i++) {
             if (i > 0) {
                 try {
@@ -481,6 +548,88 @@ public class PaymentService {
                 .ifPresentOrElse(
                         o -> logger.info("Order marked FAILED: orderId={}", orderId),
                         () -> logger.warn("Could not mark order FAILED (state already changed): orderId={}", orderId));
+    }
+
+    /** Result of reconciling a PROCESSING/FAILED order against the chain. */
+    public enum ReconcileOutcome {
+        /** The tx is confirmed on-chain — order completed and entitlement ensured. */
+        COMPLETED,
+        /** Not on-chain (yet) and the tx window is still open — no verdict possible. */
+        IN_FLIGHT,
+        /** Window closed without the tx ever landing — order finalized as EXPIRED. */
+        FINALIZED_NOT_ON_CHAIN
+    }
+
+    /**
+     * Reconciles an order stuck in PROCESSING (crash between Horizon submission
+     * and completion) or marked FAILED prematurely (tx landed after the polling
+     * window) against the chain — Horizon is the only source of truth.
+     *
+     * <p>Invariant restored: a payment confirmed on-chain ALWAYS ends as a
+     * COMPLETED order with an ACTIVE entitlement; a tx that can no longer land
+     * (timebounds + grace elapsed) finalizes the order as EXPIRED so the buyer
+     * can purchase again. All transitions are CAS — safe against concurrent
+     * submits and multiple watchdog instances.
+     */
+    public ReconcileOutcome reconcileOrder(Order order) {
+        OrderStatus status = order.getStatus();
+        if (status != OrderStatus.PROCESSING && status != OrderStatus.FAILED) {
+            throw new IllegalArgumentException(
+                    "Only PROCESSING/FAILED orders can be reconciled (orderId=" + order.getId()
+                            + ", status=" + status + ")");
+        }
+        String tenantId = order.getTenantId();
+        String orderId = order.getId();
+        String txHash = order.getStellarTxHash();
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+
+        if (txHash != null && stellarTxService.verifyTransactionOnChain(txHash, order)) {
+            // Anti-replay (defense in depth): a tx hash can unlock content at most once.
+            if (orderRepository.existsCompletedByStellarTxHashExcludingOrder(txHash, orderId)) {
+                logger.error("Reconciliation: txHash={} already consumed by another COMPLETED order — "
+                        + "expiring orderId={}", txHash, orderId);
+                orderRepository.tryTransitionStatus(tenantId, orderId, status, OrderStatus.EXPIRED);
+                return ReconcileOutcome.FINALIZED_NOT_ON_CHAIN;
+            }
+            Optional<Order> completed = orderRepository.tryCompleteFrom(
+                    tenantId, orderId, status, txHash, now);
+            if (completed.isPresent()) {
+                logger.warn("Reconciliation: recovered confirmed on-chain payment — orderId={}, txHash={}, "
+                        + "previousStatus={}", orderId, txHash, status);
+                orderRepository.expirePendingOrdersForUserExcept(tenantId, order.getUserId(), orderId);
+                ensureEntitlement(completed.get());
+                return ReconcileOutcome.COMPLETED;
+            }
+            // CAS lost: another thread moved the order. If it is COMPLETED now,
+            // make sure the entitlement exists; otherwise let the next cycle retry.
+            Order current = orderRepository.findByTenantIdAndId(tenantId, orderId).orElse(null);
+            if (current != null && current.getStatus() == OrderStatus.COMPLETED) {
+                ensureEntitlement(current);
+                return ReconcileOutcome.COMPLETED;
+            }
+            return ReconcileOutcome.IN_FLIGHT;
+        }
+
+        boolean windowClosed = order.getExpiresAt() == null
+                || !order.getExpiresAt().plusSeconds(RECONCILE_GRACE_SECONDS).isAfter(now);
+        if (!windowClosed) {
+            // The tx could still make it into a ledger (timebounds open) or a
+            // submit thread may still be running — no final verdict yet.
+            return ReconcileOutcome.IN_FLIGHT;
+        }
+        // Timebounds + grace elapsed: the tx can never land. Final verdict.
+        orderRepository.tryTransitionStatus(tenantId, orderId, status, OrderStatus.EXPIRED)
+                .ifPresent(o -> logger.info("Reconciliation: order finalized as EXPIRED (tx never landed): "
+                        + "orderId={}, txHash={}", orderId, txHash));
+        return ReconcileOutcome.FINALIZED_NOT_ON_CHAIN;
+    }
+
+    /**
+     * Idempotently guarantees the entitlement backing a COMPLETED order exists.
+     * Used by the reconciliation watchdog and the prepare self-healing path.
+     */
+    public void ensureEntitlement(Order order) {
+        createEntitlement(order);
     }
 
     /**

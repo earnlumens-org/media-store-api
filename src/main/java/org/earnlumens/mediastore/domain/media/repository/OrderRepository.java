@@ -53,6 +53,16 @@ public interface OrderRepository {
                                 LocalDateTime completedAt);
 
     /**
+     * Atomically completes an order from an arbitrary expected status
+     * (PROCESSING or FAILED) — used by payment reconciliation when an order's
+     * tx is found confirmed on-chain after a crash or a premature failure.
+     *
+     * @return the completed order, or empty if the current status did not match {@code expected}
+     */
+    Optional<Order> tryCompleteFrom(String tenantId, String orderId, OrderStatus expected,
+                                    String stellarTxHash, LocalDateTime completedAt);
+
+    /**
      * Atomic compare-and-swap of the order status.
      *
      * @return the updated order, or empty if the current status did not match {@code expected}
@@ -73,4 +83,15 @@ public interface OrderRepository {
      * @return number of orders expired
      */
     long expirePendingOrdersForUserExcept(String tenantId, String userId, String excludeOrderId);
+
+    // ── Payment reconciliation watchdog scans (deliberately cross-tenant) ──
+
+    /** Orders in {@code status} whose tx window closed before {@code cutoff} (stale PROCESSING). */
+    List<Order> findByStatusAndExpiresAtBefore(OrderStatus status, LocalDateTime cutoff, int limit);
+
+    /** Orders in {@code status} (FAILED re-check scan). */
+    List<Order> findByStatus(OrderStatus status, int limit);
+
+    /** Orders in {@code status} completed after {@code cutoff} (missing-entitlement repair scan). */
+    List<Order> findByStatusAndCompletedAtAfter(OrderStatus status, LocalDateTime cutoff, int limit);
 }

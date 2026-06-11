@@ -30,4 +30,11 @@ public interface EntitlementMongoRepository extends MongoRepository<EntitlementE
     /** Unpaginated: all entitlements of a given targetType + status for a user. */
     List<EntitlementEntity> findByTenantIdAndUserIdAndTargetTypeAndStatus(
             String tenantId, String userId, String targetType, String status);
+
+    /**
+     * Entitlements backed by any of the given orders. Cross-tenant on purpose:
+     * used by the payment reconciliation watchdog to detect COMPLETED orders
+     * whose entitlement was never created (crash between completion and grant).
+     */
+    List<EntitlementEntity> findByOrderIdIn(java.util.Collection<String> orderIds);
 }

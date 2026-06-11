@@ -6,6 +6,7 @@ import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.OrderEntity;
 import org.earnlumens.mediastore.infrastructure.persistence.media.mapper.OrderMapper;
 import org.earnlumens.mediastore.infrastructure.persistence.media.repository.OrderMongoRepository;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
@@ -113,9 +114,15 @@ public class OrderRepositoryImpl implements OrderRepository {
     @Override
     public Optional<Order> tryComplete(String tenantId, String orderId, String stellarTxHash,
                                        LocalDateTime completedAt) {
+        return tryCompleteFrom(tenantId, orderId, OrderStatus.PROCESSING, stellarTxHash, completedAt);
+    }
+
+    @Override
+    public Optional<Order> tryCompleteFrom(String tenantId, String orderId, OrderStatus expected,
+                                           String stellarTxHash, LocalDateTime completedAt) {
         Query query = Query.query(Criteria.where("_id").is(orderId)
                 .and("tenantId").is(tenantId)
-                .and("status").is(OrderStatus.PROCESSING.name()));
+                .and("status").is(expected.name()));
         Update update = new Update()
                 .set("status", OrderStatus.COMPLETED.name())
                 .set("stellarTxHash", stellarTxHash)
@@ -149,5 +156,31 @@ public class OrderRepositoryImpl implements OrderRepository {
                 .and("_id").ne(excludeOrderId));
         Update update = new Update().set("status", OrderStatus.EXPIRED.name());
         return mongoTemplate.updateMulti(query, update, OrderEntity.class).getModifiedCount();
+    }
+
+    // ── Payment reconciliation watchdog scans ──
+
+    @Override
+    public List<Order> findByStatusAndExpiresAtBefore(OrderStatus status, LocalDateTime cutoff, int limit) {
+        return orderMongoRepository.findByStatusAndExpiresAtBefore(status.name(), cutoff, PageRequest.of(0, limit))
+                .stream()
+                .map(orderMapper::toModel)
+                .toList();
+    }
+
+    @Override
+    public List<Order> findByStatus(OrderStatus status, int limit) {
+        return orderMongoRepository.findByStatus(status.name(), PageRequest.of(0, limit))
+                .stream()
+                .map(orderMapper::toModel)
+                .toList();
+    }
+
+    @Override
+    public List<Order> findByStatusAndCompletedAtAfter(OrderStatus status, LocalDateTime cutoff, int limit) {
+        return orderMongoRepository.findByStatusAndCompletedAtAfter(status.name(), cutoff, PageRequest.of(0, limit))
+                .stream()
+                .map(orderMapper::toModel)
+                .toList();
     }
 }

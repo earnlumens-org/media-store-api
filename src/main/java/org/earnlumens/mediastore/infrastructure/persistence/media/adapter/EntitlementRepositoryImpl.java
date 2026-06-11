@@ -132,6 +132,18 @@ public class EntitlementRepositoryImpl implements EntitlementRepository {
     }
 
     @Override
+    public Set<String> findOrderIdsWithEntitlements(java.util.Collection<String> orderIds) {
+        if (orderIds.isEmpty()) {
+            return Set.of();
+        }
+        return entitlementMongoRepository.findByOrderIdIn(orderIds)
+                .stream()
+                .map(EntitlementEntity::getOrderId)
+                .filter(id -> id != null)
+                .collect(Collectors.toSet());
+    }
+
+    @Override
     public Entitlement save(Entitlement entitlement) {
         EntitlementEntity entity = entitlementMapper.toEntity(entitlement);
         EntitlementEntity saved = entitlementMongoRepository.save(entity);

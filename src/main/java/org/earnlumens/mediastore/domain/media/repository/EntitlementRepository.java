@@ -51,5 +51,12 @@ public interface EntitlementRepository {
     /** All collection IDs the user is entitled to (unpaginated, for purchased feed). */
     Set<String> findAllEntitledCollectionIds(String tenantId, String userId, EntitlementStatus status);
 
+    /**
+     * Subset of {@code orderIds} that already have a backing entitlement.
+     * Cross-tenant on purpose — used by the payment reconciliation watchdog to
+     * find COMPLETED orders whose entitlement was never created.
+     */
+    Set<String> findOrderIdsWithEntitlements(java.util.Collection<String> orderIds);
+
     Entitlement save(Entitlement entitlement);
 }
