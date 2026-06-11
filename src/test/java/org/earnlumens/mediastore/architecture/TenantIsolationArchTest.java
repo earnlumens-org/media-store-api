@@ -60,7 +60,20 @@ class TenantIsolationArchTest {
             // Anti-replay guard: a Stellar tx hash is globally unique on-chain, so the
             // "already consumed" check MUST be cross-tenant — scoping it by tenant would
             // allow replaying the same on-chain payment in a different tenant.
-            "OrderRepository#existsCompletedByStellarTxHashExcludingOrder"
+            "OrderRepository#existsCompletedByStellarTxHashExcludingOrder",
+            // Platform-level payment reconciliation watchdog scans stuck PROCESSING
+            // orders across all tenants (runs under TenantContext.runWithoutTenant;
+            // every repair transition is CAS and re-scoped by the order's own tenantId)
+            "OrderRepository#findByStatusAndExpiresAtBefore",
+            // Platform-level payment reconciliation watchdog re-checks FAILED orders
+            // across all tenants for late-landing on-chain transactions
+            "OrderRepository#findByStatus",
+            // Platform-level payment reconciliation watchdog finds recently COMPLETED
+            // orders across all tenants to repair missing entitlements
+            "OrderRepository#findByStatusAndCompletedAtAfter",
+            // Batch lookup keyed by orderId (globally unique); used by the payment
+            // reconciliation watchdog to detect COMPLETED orders without entitlement
+            "EntitlementRepository#findOrderIdsWithEntitlements"
     );
 
     // ── Methods that carry tenantId inside the entity (e.g. save) ──
