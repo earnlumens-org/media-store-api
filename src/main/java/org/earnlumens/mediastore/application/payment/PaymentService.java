@@ -246,6 +246,14 @@ public class PaymentService {
                     .findByTenantIdAndSlug(tenantId, franchiseSlug.trim().toLowerCase())
                     .filter(FranchiseReadModel::isActive)
                     .orElseThrow(() -> new IllegalArgumentException("Franchise not available"));
+
+            // A franchise owner buying through their own storefront would
+            // effectively discount their purchase by the franchise commission.
+            // Reject by USER identity (not wallet), so connecting a different
+            // wallet in the same session cannot bypass the check.
+            if (userId.equals(franchise.getOwnerOauthUserId())) {
+                throw new IllegalArgumentException("FRANCHISE_SELF_PURCHASE");
+            }
         }
 
         // Build the full payment splits (platform + optional tenant + seller/collaborator + franchise)
