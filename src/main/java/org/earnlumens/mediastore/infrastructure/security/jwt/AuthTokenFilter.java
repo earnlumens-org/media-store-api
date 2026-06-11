@@ -44,6 +44,17 @@ public class AuthTokenFilter extends OncePerRequestFilter {
                         .parseSignedClaims(jwt)
                         .getPayload();
 
+                // Token-type confusion guard: refresh tokens (HttpOnly cookie,
+                // 21-day lifetime) must never be accepted as Bearer access
+                // tokens — that would bypass the short access expiry and the
+                // ban/tenant gates enforced on /api/auth/refresh.
+                if (!jwtUtils.isAccessTokenShaped(claims)) {
+                    logger.warn("Rejected non-access-shaped JWT presented as Bearer token (path={})",
+                            request.getRequestURI());
+                    filterChain.doFilter(request, response);
+                    return;
+                }
+
                 String userId = claims.getSubject();
 
                 Map<String, Object> attributes = new HashMap<>();

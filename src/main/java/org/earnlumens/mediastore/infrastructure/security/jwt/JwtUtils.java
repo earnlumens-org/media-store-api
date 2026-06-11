@@ -7,6 +7,7 @@ import io.jsonwebtoken.UnsupportedJwtException;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.security.Keys;
 import io.jsonwebtoken.security.SignatureException;
+import jakarta.annotation.PostConstruct;
 import org.earnlumens.mediastore.domain.user.model.User;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -21,6 +22,14 @@ import java.util.Date;
 public class JwtUtils {
     private static final Logger logger = LoggerFactory.getLogger(JwtUtils.class);
 
+    /**
+     * Slack added on top of the access-token lifetime when classifying a
+     * token by its iat→exp span (see {@link #isAccessTokenShaped}). Covers
+     * clock rounding without ever overlapping the refresh-token lifetime
+     * (minutes vs. weeks).
+     */
+    private static final long TOKEN_LIFESPAN_TOLERANCE_MS = 60_000;
+
     @Value("${mediastore.app.jwtSecret}")
     private String jwtSecret;
 
@@ -29,6 +38,16 @@ public class JwtUtils {
 
     @Value("${mediastore.app.jwtRefreshExpirationMs}")
     private int jwtRefreshExpirationMs;
+
+    @PostConstruct
+    void validateConfiguration() {
+        if (jwtSecret == null || jwtSecret.isBlank()) {
+            throw new IllegalStateException("mediastore.app.jwtSecret must be configured");
+        }
+        if (jwtSecret.getBytes(StandardCharsets.UTF_8).length < 32) {
+            throw new IllegalStateException("mediastore.app.jwtSecret must be at least 32 bytes long for HS256");
+        }
+    }
 
     public String generateJwtToken(User user) {
         return Jwts.builder()
@@ -86,6 +105,36 @@ public class JwtUtils {
     public String getTenantIdFromClaims(Claims claims) {
         Object value = claims.get("tenant_id");
         return value == null ? null : value.toString();
+    }
+
+    /**
+     * Returns {@code true} only for tokens that look like genuine short-lived
+     * access tokens. Used by {@code AuthTokenFilter} to refuse refresh tokens
+     * presented as {@code Authorization: Bearer} credentials — without this
+     * gate a leaked 21-day refresh token would work everywhere as an access
+     * token, bypassing both the short access expiry and the ban / tenant
+     * checks performed on {@code /api/auth/refresh}.
+     * <p>
+     * Classification is defence in depth on two independent signals:
+     * <ul>
+     *   <li>refresh tokens always carry the {@code tenant_id} claim;</li>
+     *   <li>the iat→exp span of an access token is {@code jwtExpirationMs},
+     *       weeks shorter than the refresh lifetime — legacy refresh tokens
+     *       minted before the {@code tenant_id} migration are caught here.</li>
+     * </ul>
+     */
+    public boolean isAccessTokenShaped(Claims claims) {
+        if (claims.get("tenant_id") != null) {
+            return false;
+        }
+        Date issuedAt = claims.getIssuedAt();
+        Date expiration = claims.getExpiration();
+        if (issuedAt == null || expiration == null) {
+            // Tokens minted by this service always carry both; anything else
+            // is not one of our access tokens.
+            return false;
+        }
+        return expiration.getTime() - issuedAt.getTime() <= jwtExpirationMs + TOKEN_LIFESPAN_TOLERANCE_MS;
     }
 
     public Claims getAllClaimsFromToken(String token) {

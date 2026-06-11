@@ -182,4 +182,57 @@ class JwtUtilsTest {
         long refreshDeltaMs = refreshClaims.getExpiration().getTime() - refreshClaims.getIssuedAt().getTime();
         assertTrue(refreshDeltaMs >= 1_500 && refreshDeltaMs <= 3_500);
     }
+
+    // --- Token-type confusion guard (isAccessTokenShaped) ---
+
+    @Test
+    void isAccessTokenShaped_accessToken_returnsTrue() {
+        ReflectionTestUtils.setField(jwtUtils, "jwtExpirationMs", 780_000);
+        ReflectionTestUtils.setField(jwtUtils, "jwtRefreshExpirationMs", 1_814_400_000);
+
+        User user = new User();
+        user.setOauthUserId("oauth-id");
+        user.setUsername("user123");
+        user.setOauthProvider("x");
+
+        String access = jwtUtils.generateJwtToken(user);
+        Claims claims = jwtUtils.getAllClaimsFromToken(access);
+
+        assertTrue(jwtUtils.isAccessTokenShaped(claims));
+    }
+
+    @Test
+    void isAccessTokenShaped_refreshToken_returnsFalse() {
+        ReflectionTestUtils.setField(jwtUtils, "jwtExpirationMs", 780_000);
+        ReflectionTestUtils.setField(jwtUtils, "jwtRefreshExpirationMs", 1_814_400_000);
+
+        User user = new User();
+        user.setOauthUserId("oauth-id");
+        user.setUsername("user123");
+        user.setOauthProvider("x");
+
+        // Refresh tokens carry the tenant_id claim — never valid as Bearer.
+        String refresh = jwtUtils.generateRefreshToken(user, "acme");
+        Claims claims = jwtUtils.getAllClaimsFromToken(refresh);
+
+        assertFalse(jwtUtils.isAccessTokenShaped(claims));
+    }
+
+    @Test
+    void isAccessTokenShaped_legacyLongLivedTokenWithoutTenantClaim_returnsFalse() {
+        ReflectionTestUtils.setField(jwtUtils, "jwtExpirationMs", 780_000);
+
+        // Simulates a legacy refresh token minted before the tenant_id
+        // migration: no tenant claim, but a multi-week iat→exp span.
+        java.util.Date now = new java.util.Date();
+        String legacyRefresh = io.jsonwebtoken.Jwts.builder()
+                .subject("oauth-id")
+                .issuedAt(now)
+                .expiration(new java.util.Date(now.getTime() + 1_814_400_000L))
+                .signWith(jwtUtils.key())
+                .compact();
+        Claims claims = jwtUtils.getAllClaimsFromToken(legacyRefresh);
+
+        assertFalse(jwtUtils.isAccessTokenShaped(claims));
+    }
 }
