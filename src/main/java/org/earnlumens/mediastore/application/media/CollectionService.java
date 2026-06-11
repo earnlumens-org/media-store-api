@@ -34,6 +34,7 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.regex.Pattern;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -47,6 +48,7 @@ public class CollectionService {
 
     private static final Logger logger = LoggerFactory.getLogger(CollectionService.class);
     private static final DateTimeFormatter ISO_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE_TIME;
+    private static final Pattern STELLAR_PUBLIC_KEY = Pattern.compile("^G[A-Z2-7]{55}$");
 
     private final CollectionRepository collectionRepository;
     private final EntryRepository entryRepository;
@@ -104,6 +106,7 @@ public class CollectionService {
 
         // Build seller payment splits for paid collections
         if (collection.isPaid()) {
+            validatePaidCollectionPrice(collection);
             // The seller wallet becomes a payment-split destination; it must
             // already exist on the Stellar network or every future sale of
             // this collection would fail with op_no_destination.
@@ -146,7 +149,15 @@ public class CollectionService {
         if (request.priceCurrency() != null) {
             collection.setPriceCurrency(PriceCurrency.valueOf(request.priceCurrency().toUpperCase()));
         }
-        if (request.sellerWallet() != null) collection.setSellerWallet(request.sellerWallet());
+        if (request.sellerWallet() != null) {
+            // Blank or malformed keys must never overwrite a valid wallet: the
+            // downstream isAccountActive check fails OPEN on SDK parse errors,
+            // so a malformed key would otherwise slip through.
+            if (!STELLAR_PUBLIC_KEY.matcher(request.sellerWallet()).matches()) {
+                throw new IllegalArgumentException("Invalid Stellar public key");
+            }
+            collection.setSellerWallet(request.sellerWallet());
+        }
         // contentLanguage is intentionally NOT user-editable here.
         // Initial value comes from creation (user-declared default) and is
         // overridden later by the moderation pipeline (source of truth).
@@ -166,8 +177,31 @@ public class CollectionService {
             collection.setPaymentSplits(List.of());
         }
 
+        // A paid collection must never be persisted in an unsellable state.
+        if (collection.isPaid()) {
+            if (collection.getSellerWallet() == null || collection.getSellerWallet().isBlank()) {
+                throw new IllegalArgumentException("sellerWallet is required for paid collections");
+            }
+            validatePaidCollectionPrice(collection);
+        }
+
         collectionRepository.save(collection);
         return true;
+    }
+
+    /**
+     * A paid collection must have a positive price in its declared currency,
+     * otherwise it would be publishable but unsellable (payment prepare
+     * rejects it with "no valid price").
+     */
+    private void validatePaidCollectionPrice(Collection collection) {
+        if (collection.getPriceCurrency() == PriceCurrency.USD) {
+            if (collection.getPriceUsd() == null || collection.getPriceUsd().compareTo(BigDecimal.ZERO) <= 0) {
+                throw new IllegalArgumentException("Price must be greater than 0 for paid collections");
+            }
+        } else if (collection.getPriceXlm() == null || collection.getPriceXlm().compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("Price must be greater than 0 for paid collections");
+        }
     }
 
     public boolean publishCollection(String tenantId, String userId, String collectionId) {
@@ -186,6 +220,9 @@ public class CollectionService {
 
         if (collection.isPaid() && (collection.getSellerWallet() == null || collection.getSellerWallet().isBlank())) {
             throw new IllegalArgumentException("sellerWallet is required for paid collections");
+        }
+        if (collection.isPaid()) {
+            validatePaidCollectionPrice(collection);
         }
 
         // Validate all items reference published entries

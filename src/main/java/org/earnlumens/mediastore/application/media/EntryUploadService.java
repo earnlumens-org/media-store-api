@@ -761,6 +761,17 @@ public class EntryUploadService {
             entry.setPaid(request.isPaid());
             if (Boolean.TRUE.equals(request.isPaid())) {
                 PriceCurrency currency = parsePriceCurrency(request.priceCurrency());
+                // Same price guard as createEntry: a paid entry must never be
+                // persisted without a positive price or it becomes unsellable.
+                if (currency == PriceCurrency.USD) {
+                    if (request.priceUsd() == null || request.priceUsd().compareTo(BigDecimal.ZERO) <= 0) {
+                        throw new IllegalArgumentException("Price must be greater than 0 for paid content");
+                    }
+                } else {
+                    if (request.priceXlm() == null || request.priceXlm().compareTo(BigDecimal.ZERO) <= 0) {
+                        throw new IllegalArgumentException("Price must be greater than 0 for paid content");
+                    }
+                }
                 entry.setPriceCurrency(currency);
                 if (currency == PriceCurrency.USD) {
                     entry.setPriceUsd(request.priceUsd());

@@ -241,6 +241,21 @@ public class PaymentService {
         // Build the full payment splits (platform + optional tenant + seller/collaborator + franchise)
         List<PaymentSplit> splits = buildFullSplits(tenantId, targetSplits, franchise);
 
+        // Defence in depth: every split destination was validated as an active
+        // Stellar account when it was registered, but accounts can be merged or
+        // removed afterwards. Re-validate (cached + fail-open) BEFORE the buyer
+        // signs, so a dead destination yields an actionable 400 here instead of
+        // an op_no_destination failure after the user already signed.
+        for (PaymentSplit split : splits) {
+            if (!stellarTxService.isAccountActiveCached(split.getWallet())) {
+                logger.error("Split wallet no longer active on Stellar: role={}, wallet={}, tenant={}, {}={}",
+                        split.getRole(), split.getWallet(), tenantId,
+                        isCollectionPurchase ? "collectionId" : "entryId",
+                        isCollectionPurchase ? collectionId : entryId);
+                throw new IllegalArgumentException("SPLIT_WALLET_NOT_ACTIVE");
+            }
+        }
+
         // Build the MEMO
         String memo = "TOTAL: " + totalXlm.toPlainString() + " XLM";
 
@@ -540,11 +555,17 @@ public class PaymentService {
                 platformPercent = t.getPlatformFeePercent();
             }
             if (t.getTenantFeePercent() != null
-                    && t.getTenantFeePercent().compareTo(BigDecimal.ZERO) > 0
-                    && t.getTenantWallet() != null
-                    && !t.getTenantWallet().isBlank()) {
-                tenantPercent = t.getTenantFeePercent();
-                tenantWallet = t.getTenantWallet();
+                    && t.getTenantFeePercent().compareTo(BigDecimal.ZERO) > 0) {
+                if (t.getTenantWallet() != null && !t.getTenantWallet().isBlank()) {
+                    tenantPercent = t.getTenantFeePercent();
+                    tenantWallet = t.getTenantWallet();
+                } else {
+                    // Fail-open by design (the sale must go through), but never
+                    // silently: the tenant is losing its commission on this sale.
+                    logger.warn("Tenant {} has tenantFeePercent={} but no wallet configured — "
+                                    + "TENANT split omitted, tenant earns nothing on this sale",
+                            tenantId, t.getTenantFeePercent());
+                }
             }
         }
 
