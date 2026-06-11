@@ -41,12 +41,15 @@ public class StellarTransactionService {
     private static final BigDecimal ONE_HUNDRED = new BigDecimal("100");
 
     /**
-     * Maximum base fee per operation (1 000 stroops = 0.0001 XLM).
-     * Caps the resolved fee to protect users from extreme spikes.
-     * 10× MIN_BASE_FEE is enough for severe congestion while keeping
-     * the fee shown in wallets at sane levels ($0.01 at XLM = $100).
+     * Maximum base fee per operation (10 000 stroops = 0.001 XLM).
+     * Caps the resolved fee to protect users from extreme spikes while
+     * still bidding high enough to get into a ledger under sustained
+     * network-wide congestion (mass-adoption conditions, fee surges).
+     * Stellar charges the market clearing price — never the max bid —
+     * so this cap is a worst-case ceiling, not the usual cost
+     * (0.001 XLM ≈ $0.0005 at XLM = $0.50).
      */
-    private static final long MAX_BASE_FEE = 1_000L;  // 0.0001 XLM per op
+    private static final long MAX_BASE_FEE = 10_000L;  // 0.001 XLM per op
 
     private final StellarConfig stellarConfig;
     private final Server server;
@@ -138,29 +141,68 @@ public class StellarTransactionService {
 
     /**
      * Resolves the base fee per operation using Horizon's /fee_stats endpoint.
-     * Uses {@code lastLedgerBaseFee} — the actual base fee from the most recently
-     * closed ledger — plus a 10% safety buffer to absorb minor fee increases
-     * between XDR creation and user signing/submission.
+     * The bid is the max of:
+     * <ul>
+     *   <li>{@code lastLedgerBaseFee} — the actual base fee charged in the most
+     *       recently closed ledger (normal conditions);</li>
+     *   <li>the p90 of {@code fee_charged} over recent ledgers — what 90% of
+     *       included transactions actually paid. Under sustained congestion
+     *       (surge pricing / mass adoption) lastLedgerBaseFee alone lags the
+     *       real clearing price and would leave the tx stuck in the queue.</li>
+     * </ul>
+     * plus a 10% safety buffer to absorb fee increases between XDR creation
+     * and user signing/submission.
      *
-     * Stellar always charges the minimum needed regardless of the max fee set,
-     * so the buffer never results in overpayment — it only ensures inclusion.
+     * Stellar always charges the market clearing price regardless of the max
+     * fee bid, so the buffer never results in overpayment — it only ensures
+     * ledger inclusion.
      *
-     * Clamped between MIN_BASE_FEE (100 stroops) and MAX_BASE_FEE (1 000 stroops).
+     * Clamped between MIN_BASE_FEE (100 stroops) and MAX_BASE_FEE (10 000 stroops).
      * Falls back to MIN_BASE_FEE if the fee_stats call fails.
      */
     private long resolveBaseFee() {
         try {
             FeeStatsResponse stats = server.feeStats().execute();
             Long lastFee = stats.getLastLedgerBaseFee();
-            long base = (lastFee != null) ? lastFee : AbstractTransaction.MIN_BASE_FEE;
+            Long p90 = (stats.getFeeCharged() != null) ? stats.getFeeCharged().getP90() : null;
+            long base = Math.max(
+                    (lastFee != null) ? lastFee : AbstractTransaction.MIN_BASE_FEE,
+                    (p90 != null) ? p90 : 0L);
             // Add 10% safety buffer, rounding up to the next stroop
             long buffered = base + (base + 9) / 10;
             long fee = Math.min(Math.max(buffered, AbstractTransaction.MIN_BASE_FEE), MAX_BASE_FEE);
-            logger.debug("Resolved base fee: lastLedgerBaseFee={}, +10%={}, clamped={}", lastFee, buffered, fee);
+            logger.debug("Resolved base fee: lastLedgerBaseFee={}, feeChargedP90={}, +10%={}, clamped={}",
+                    lastFee, p90, buffered, fee);
             return fee;
         } catch (Exception e) {
             logger.warn("Failed to fetch fee_stats, falling back to MIN_BASE_FEE", e);
             return AbstractTransaction.MIN_BASE_FEE;
+        }
+    }
+
+    /**
+     * Checks whether a Stellar account exists (is funded/activated) on the
+     * configured network. Used at registration time — when a creator, tenant
+     * or franchise sets a payout wallet — so that every wallet that can ever
+     * appear as a payment destination is known to be active, and payments
+     * never fail later with {@code op_no_destination}.
+     *
+     * Fail-open by design: if Horizon is unreachable or returns an unexpected
+     * error, this returns {@code true} (with a warning log) so that a Horizon
+     * outage never blocks creators from publishing. The payment flow itself
+     * still confirms on-chain results, so a false positive here can only
+     * delay the first sale, never lose funds.
+     */
+    public boolean isAccountActive(String publicKey) {
+        try {
+            server.loadAccount(publicKey);
+            return true;
+        } catch (AccountNotFoundException | BadRequestException e) {
+            logger.info("Stellar account not active: {} ({})", publicKey, e.getClass().getSimpleName());
+            return false;
+        } catch (Exception e) {
+            logger.warn("Could not verify Stellar account activation for {} — failing open", publicKey, e);
+            return true;
         }
     }
 

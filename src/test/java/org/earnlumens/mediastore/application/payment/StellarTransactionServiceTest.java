@@ -135,10 +135,30 @@ class StellarTransactionServiceTest {
         StellarTransactionService.BuildResult result =
                 service.buildTransaction(buyerPubkey, totalXlm, splits, "TOTAL: 1.00 XLM");
 
-        // Assert: capped to MAX_BASE_FEE (1000) × 2 ops = 2000
+        // Assert: capped to MAX_BASE_FEE (10000) × 2 ops = 20000
         Transaction tx = (Transaction) AbstractTransaction.fromEnvelopeXdr(
                 result.unsignedXdr(), new Network(TESTNET_PASSPHRASE));
-        assertEquals(2_000L, tx.getFee()); // 1000 stroops/op × 2 ops
+        assertEquals(20_000L, tx.getFee()); // 10000 stroops/op × 2 ops
+    }
+
+    @Test
+    void buildTransaction_usesFeeChargedP90_whenHigherThanLastLedgerBaseFee() throws Exception {
+        // Arrange: congestion scenario — last ledger base fee is still 100 but
+        // 90% of included txs actually paid up to 500 stroops (surge pricing).
+        stubFeeStats(100L, 500L);
+        stubLoadAccount();
+
+        List<PaymentSplit> splits = twoWaySplits();
+        BigDecimal totalXlm = new BigDecimal("5.00");
+
+        // Act
+        StellarTransactionService.BuildResult result =
+                service.buildTransaction(buyerPubkey, totalXlm, splits, "TOTAL: 5.00 XLM");
+
+        // Assert: bid = p90 (500) + 10% = 550 stroops/op × 2 ops = 1100
+        Transaction tx = (Transaction) AbstractTransaction.fromEnvelopeXdr(
+                result.unsignedXdr(), new Network(TESTNET_PASSPHRASE));
+        assertEquals(1_100L, tx.getFee());
     }
 
     // ── buildTransaction multi-split ──────────────────────────
@@ -236,9 +256,18 @@ class StellarTransactionServiceTest {
     }
 
     private void stubFeeStats(long lastLedgerBaseFee) {
+        stubFeeStats(lastLedgerBaseFee, null);
+    }
+
+    private void stubFeeStats(long lastLedgerBaseFee, Long feeChargedP90) {
         try {
             FeeStatsResponse statsResponse = mock(FeeStatsResponse.class);
             when(statsResponse.getLastLedgerBaseFee()).thenReturn(lastLedgerBaseFee);
+            if (feeChargedP90 != null) {
+                FeeStatsResponse.FeeDistribution feeCharged = mock(FeeStatsResponse.FeeDistribution.class);
+                when(feeCharged.getP90()).thenReturn(feeChargedP90);
+                when(statsResponse.getFeeCharged()).thenReturn(feeCharged);
+            }
 
             FeeStatsRequestBuilder feeBuilder = mock(FeeStatsRequestBuilder.class);
             when(feeBuilder.execute()).thenReturn(statsResponse);

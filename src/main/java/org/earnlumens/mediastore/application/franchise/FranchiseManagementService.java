@@ -1,5 +1,6 @@
 package org.earnlumens.mediastore.application.franchise;
 
+import org.earnlumens.mediastore.application.payment.StellarTransactionService;
 import org.earnlumens.mediastore.infrastructure.franchise.read.FranchiseBanReadRepository;
 import org.earnlumens.mediastore.infrastructure.franchise.write.FranchiseWriteModel;
 import org.earnlumens.mediastore.infrastructure.franchise.write.FranchiseWriteRepository;
@@ -92,15 +93,18 @@ public class FranchiseManagementService {
     private final FranchiseBanReadRepository banRepository;
     private final TenantReadRepository tenantRepository;
     private final R2PresignedUrlService presignedUrlService;
+    private final StellarTransactionService stellarTransactionService;
 
     public FranchiseManagementService(FranchiseWriteRepository repository,
                                       FranchiseBanReadRepository banRepository,
                                       TenantReadRepository tenantRepository,
-                                      R2PresignedUrlService presignedUrlService) {
+                                      R2PresignedUrlService presignedUrlService,
+                                      StellarTransactionService stellarTransactionService) {
         this.repository = repository;
         this.banRepository = banRepository;
         this.tenantRepository = tenantRepository;
         this.presignedUrlService = presignedUrlService;
+        this.stellarTransactionService = stellarTransactionService;
     }
 
     // ============================== reads ==============================
@@ -174,6 +178,13 @@ public class FranchiseManagementService {
         String wallet = payoutWalletRaw == null ? "" : payoutWalletRaw.trim();
         if (!STELLAR_KEY.matcher(wallet).matches()) {
             throw new FranchiseException(FranchiseErrorCode.WALLET_FORMAT, 400);
+        }
+        // The wallet is immutable after creation and becomes a payment-split
+        // destination, so it must already exist on the Stellar network —
+        // otherwise every sale through this franchise would later fail with
+        // op_no_destination.
+        if (!stellarTransactionService.isAccountActive(wallet)) {
+            throw new FranchiseException(FranchiseErrorCode.WALLET_NOT_ACTIVATED, 400);
         }
 
         // Accent colour (optional).

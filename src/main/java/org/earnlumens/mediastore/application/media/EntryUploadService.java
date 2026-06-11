@@ -166,6 +166,7 @@ public class EntryUploadService {
     private final ModerationJobService moderationJobService;
     private final UserBadgeService userBadgeService;
     private final SpaceValidationService spaceValidationService;
+    private final org.earnlumens.mediastore.application.payment.StellarTransactionService stellarTransactionService;
     private final int dailyEntryLimit;
     private final int maxConcurrentReview;
 
@@ -183,6 +184,7 @@ public class EntryUploadService {
             ModerationJobService moderationJobService,
             UserBadgeService userBadgeService,
             SpaceValidationService spaceValidationService,
+            org.earnlumens.mediastore.application.payment.StellarTransactionService stellarTransactionService,
             @Value("${mediastore.abuse.daily-entry-limit:20}") int dailyEntryLimit,
             @Value("${mediastore.abuse.max-concurrent-review:10}") int maxConcurrentReview
     ) {
@@ -199,6 +201,7 @@ public class EntryUploadService {
         this.moderationJobService = moderationJobService;
         this.userBadgeService = userBadgeService;
         this.spaceValidationService = spaceValidationService;
+        this.stellarTransactionService = stellarTransactionService;
         this.dailyEntryLimit = dailyEntryLimit;
         this.maxConcurrentReview = maxConcurrentReview;
     }
@@ -249,6 +252,12 @@ public class EntryUploadService {
             }
             if (request.sellerWallet().equals(platformConfig.getWallet())) {
                 throw new IllegalArgumentException("Seller wallet cannot be the platform wallet");
+            }
+            // The seller wallet becomes a payment-split destination; it must
+            // already exist on the Stellar network or every future sale of
+            // this entry would fail with op_no_destination.
+            if (!stellarTransactionService.isAccountActive(request.sellerWallet())) {
+                throw new IllegalArgumentException("WALLET_NOT_ACTIVATED");
             }
         }
 
@@ -767,6 +776,9 @@ public class EntryUploadService {
                     }
                     if (request.sellerWallet().equals(platformConfig.getWallet())) {
                         throw new IllegalArgumentException("Seller wallet cannot be the platform wallet");
+                    }
+                    if (!stellarTransactionService.isAccountActive(request.sellerWallet())) {
+                        throw new IllegalArgumentException("WALLET_NOT_ACTIVATED");
                     }
                     entry.setSellerWallet(request.sellerWallet());
                     entry.setPaymentSplits(buildSellerSplits(request.sellerWallet()));

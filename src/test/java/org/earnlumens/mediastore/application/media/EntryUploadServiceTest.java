@@ -63,6 +63,7 @@ class EntryUploadServiceTest {
     private ModerationJobService moderationJobService;
     private UserBadgeService userBadgeService;
     private org.earnlumens.mediastore.application.space.SpaceValidationService spaceValidationService;
+    private org.earnlumens.mediastore.application.payment.StellarTransactionService stellarTransactionService;
     private EntryUploadService service;
 
     @BeforeEach
@@ -83,7 +84,9 @@ class EntryUploadServiceTest {
         platformConfig = new PlatformConfig();
         platformConfig.setWallet(PLATFORM_WALLET);
         platformConfig.setFeePercent(new BigDecimal("10.00"));
-        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, mock(org.earnlumens.mediastore.domain.media.repository.CollectionRepository.class), r2PresignedUrlService, r2StorageService, uploadSessionRepository, platformConfig, transcodingJobService, moderationJobService, userBadgeService, spaceValidationService, 20, 10);
+        stellarTransactionService = mock(org.earnlumens.mediastore.application.payment.StellarTransactionService.class);
+        when(stellarTransactionService.isAccountActive(any())).thenReturn(true);
+        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, mock(org.earnlumens.mediastore.domain.media.repository.CollectionRepository.class), r2PresignedUrlService, r2StorageService, uploadSessionRepository, platformConfig, transcodingJobService, moderationJobService, userBadgeService, spaceValidationService, stellarTransactionService, 20, 10);
         when(userRepository.findAllById(any())).thenReturn(java.util.List.of());
         when(transcodingJobService.getMaxRetries()).thenReturn(3);
         when(transcodingJobService.createJob(any(TranscodingJob.class)))

@@ -55,6 +55,7 @@ public class CollectionService {
     private final R2PresignedUrlService r2PresignedUrlService;
     private final UserBadgeService userBadgeService;
     private final ModerationJobService moderationJobService;
+    private final org.earnlumens.mediastore.application.payment.StellarTransactionService stellarTransactionService;
 
     public CollectionService(CollectionRepository collectionRepository,
                              EntryRepository entryRepository,
@@ -62,7 +63,8 @@ public class CollectionService {
                              UserRepository userRepository,
                              R2PresignedUrlService r2PresignedUrlService,
                              UserBadgeService userBadgeService,
-                             ModerationJobService moderationJobService) {
+                             ModerationJobService moderationJobService,
+                             org.earnlumens.mediastore.application.payment.StellarTransactionService stellarTransactionService) {
         this.collectionRepository = collectionRepository;
         this.entryRepository = entryRepository;
         this.entitlementRepository = entitlementRepository;
@@ -70,6 +72,7 @@ public class CollectionService {
         this.r2PresignedUrlService = r2PresignedUrlService;
         this.userBadgeService = userBadgeService;
         this.moderationJobService = moderationJobService;
+        this.stellarTransactionService = stellarTransactionService;
     }
 
     // ── CRUD ──
@@ -101,6 +104,12 @@ public class CollectionService {
 
         // Build seller payment splits for paid collections
         if (collection.isPaid()) {
+            // The seller wallet becomes a payment-split destination; it must
+            // already exist on the Stellar network or every future sale of
+            // this collection would fail with op_no_destination.
+            if (!stellarTransactionService.isAccountActive(collection.getSellerWallet())) {
+                throw new IllegalArgumentException("WALLET_NOT_ACTIVATED");
+            }
             collection.setPaymentSplits(List.of(
                     new PaymentSplit(collection.getSellerWallet(), SplitRole.SELLER, new BigDecimal("100.00"))
             ));
@@ -144,6 +153,12 @@ public class CollectionService {
 
         // Rebuild payment splits when paid status or wallet changes
         if (collection.isPaid() && collection.getSellerWallet() != null && !collection.getSellerWallet().isBlank()) {
+            // Re-validate activation only when the wallet itself was changed
+            // in this request; an already-stored wallet was validated before.
+            if (request.sellerWallet() != null
+                    && !stellarTransactionService.isAccountActive(collection.getSellerWallet())) {
+                throw new IllegalArgumentException("WALLET_NOT_ACTIVATED");
+            }
             collection.setPaymentSplits(List.of(
                     new PaymentSplit(collection.getSellerWallet(), SplitRole.SELLER, new BigDecimal("100.00"))
             ));

@@ -594,10 +594,28 @@ public class PaymentService {
             fullSplits.add(new PaymentSplit(franchiseWallet, SplitRole.FRANCHISE, franchisePercent));
         }
 
-        for (PaymentSplit split : entrySplits) {
-            BigDecimal normalizedPercent = split.getPercent()
-                    .multiply(nonReservedTotal)
-                    .divide(entryTotal, 2, RoundingMode.HALF_UP);
+        // Rescale the entry splits (SELLER/COLLABORATOR) into the non-reserved
+        // portion. The first N-1 splits are rounded to 2 decimals (HALF_UP);
+        // the LAST split receives the exact remainder so the percents always
+        // sum to exactly 100.00 — independent rounding could otherwise drift
+        // by ±0.01 per split and silently change the total charged on-chain.
+        BigDecimal assigned = BigDecimal.ZERO;
+        for (int i = 0; i < entrySplits.size(); i++) {
+            PaymentSplit split = entrySplits.get(i);
+            BigDecimal normalizedPercent;
+            if (i == entrySplits.size() - 1) {
+                normalizedPercent = nonReservedTotal.subtract(assigned);
+                if (normalizedPercent.compareTo(BigDecimal.ZERO) <= 0) {
+                    throw new IllegalStateException(
+                            "Split normalization produced a non-positive remainder for the last split"
+                                    + " — invalid split configuration");
+                }
+            } else {
+                normalizedPercent = split.getPercent()
+                        .multiply(nonReservedTotal)
+                        .divide(entryTotal, 2, RoundingMode.HALF_UP);
+                assigned = assigned.add(normalizedPercent);
+            }
             fullSplits.add(new PaymentSplit(split.getWallet(), split.getRole(), normalizedPercent));
         }
 

@@ -136,9 +136,16 @@ class CrossTenantIsolationTest {
                 mock(ModerationJobService.class),
                 mock(UserBadgeService.class),
                 mock(org.earnlumens.mediastore.application.space.SpaceValidationService.class),
+                stellarTransactionServiceMock(),
                 /* dailyEntryLimit  */ 20,
                 /* maxConcurrentReview */ 10
         );
+    }
+
+    private static org.earnlumens.mediastore.application.payment.StellarTransactionService stellarTransactionServiceMock() {
+        var stellar = mock(org.earnlumens.mediastore.application.payment.StellarTransactionService.class);
+        when(stellar.isAccountActive(anyString())).thenReturn(true);
+        return stellar;
     }
 
     // ───────────────────────── baselines ──────────────────────

@@ -228,11 +228,16 @@ class PaymentServiceSplitsTest {
         assertTrue(sumTo100(result));
     }
 
-    /** Sum of all split percents must equal 100.00 (within 0.03 tolerance for rounding). */
+    /**
+     * Sum of all split percents must equal exactly 100.00. The normalization
+     * assigns the exact remainder to the last entry split, so no rounding
+     * tolerance is needed (or accepted): an inexact total would change the
+     * amount charged on-chain.
+     */
     private boolean sumTo100(List<PaymentSplit> splits) {
         BigDecimal total = splits.stream()
                 .map(PaymentSplit::getPercent)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
-        return total.subtract(new BigDecimal("100.00")).abs().compareTo(new BigDecimal("0.03")) <= 0;
+        return total.compareTo(new BigDecimal("100.00")) == 0;
     }
 }

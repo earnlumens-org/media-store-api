@@ -16,6 +16,7 @@ public enum FranchiseErrorCode {
     SLUG_FORMAT,
     SLUG_TAKEN,
     WALLET_FORMAT,
+    WALLET_NOT_ACTIVATED,       // Payout wallet does not exist (is unfunded) on the Stellar network.
     ACCENT_COLOR_FORMAT,
     IMAGE_SLOT,                 // Branding image slot must be "logo" or "cover".
     IMAGE_TYPE,                 // Unsupported image content-type.
