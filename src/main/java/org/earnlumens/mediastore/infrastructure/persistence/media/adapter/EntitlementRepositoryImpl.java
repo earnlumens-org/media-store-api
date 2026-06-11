@@ -12,6 +12,7 @@ import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -39,6 +40,30 @@ public class EntitlementRepositoryImpl implements EntitlementRepository {
             String tenantId, String userId, TargetType targetType, String collectionId, EntitlementStatus status) {
         return entitlementMongoRepository.existsByTenantIdAndUserIdAndTargetTypeAndCollectionIdAndStatus(
                 tenantId, userId, targetType.name(), collectionId, status.name());
+    }
+
+    @Override
+    public Optional<Entitlement> findByTenantIdAndUserIdAndEntryIdAndStatus(
+            String tenantId, String userId, String entryId, EntitlementStatus status) {
+        return entitlementMongoRepository
+                .findByTenantIdAndUserIdAndEntryIdInAndStatus(tenantId, userId, List.of(entryId), status.name())
+                .stream()
+                .findFirst()
+                .map(entitlementMapper::toModel);
+    }
+
+    @Override
+    public List<Entitlement> findByTenantIdAndUserIdAndCollectionIdsAndStatus(
+            String tenantId, String userId, List<String> collectionIds, EntitlementStatus status) {
+        if (collectionIds.isEmpty()) {
+            return List.of();
+        }
+        return entitlementMongoRepository
+                .findByTenantIdAndUserIdAndTargetTypeAndCollectionIdInAndStatus(
+                        tenantId, userId, TargetType.COLLECTION.name(), collectionIds, status.name())
+                .stream()
+                .map(entitlementMapper::toModel)
+                .toList();
     }
 
     @Override

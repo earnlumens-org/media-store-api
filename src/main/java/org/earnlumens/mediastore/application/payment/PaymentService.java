@@ -17,6 +17,7 @@ import org.earnlumens.mediastore.infrastructure.tenant.read.TenantConfigService;
 import org.earnlumens.mediastore.infrastructure.tenant.read.TenantReadModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 
 import org.earnlumens.mediastore.infrastructure.config.PlatformConfig;
@@ -33,12 +34,17 @@ import java.util.Optional;
 /**
  * Orchestrates the two-phase payment flow:
  *   1. prepare() — validates entry, builds Stellar tx, persists PENDING order
- *   2. submit()  — validates integrity, submits signed tx, creates entitlement
+ *   2. submit()  — verifies XDR integrity, submits, confirms on-chain, creates entitlement
  *
  * Security invariants:
  *   - Prices and splits are ALWAYS read from the database, never from the client.
- *   - The unsigned XDR integrity is verified via SHA-256 before submission.
- *   - Only the backend submits transactions to the Stellar network.
+ *   - The signed XDR is cryptographically matched (tx hash) against the prepared
+ *     transaction, and amount/asset/destination/memo are contrasted field-by-field
+ *     against the persisted order BEFORE submission.
+ *   - Only the backend submits transactions to the Stellar network, and an order
+ *     is only COMPLETED after Horizon confirms the exact tx hash on-chain.
+ *   - State transitions are atomic compare-and-swap operations (race-condition safe).
+ *   - A Stellar tx hash can unlock content at most once (anti-replay).
  *   - Owner cannot purchase their own content.
  *   - Duplicate purchases are rejected (unique index on userId + entryId).
  */
@@ -48,6 +54,10 @@ public class PaymentService {
     private static final Logger logger = LoggerFactory.getLogger(PaymentService.class);
 
     private static final BigDecimal ONE_HUNDRED = new BigDecimal("100.00");
+
+    /** On-chain confirmation polling for ambiguous Horizon submissions. */
+    private static final int ONCHAIN_VERIFY_MAX_ATTEMPTS = 5;
+    private static final long ONCHAIN_VERIFY_DELAY_MS = 2_000L;
 
     private final EntryRepository entryRepository;
     private final CollectionRepository collectionRepository;
@@ -304,75 +314,173 @@ public class PaymentService {
 
     /**
      * Phase 2: Submit a signed transaction.
-     * Validates integrity, submits to Stellar, creates entitlement on success.
+     *
+     * Hardened pipeline:
+     * <ol>
+     *   <li>Atomic CAS lock PENDING → PROCESSING (ownership + tenant + expiry
+     *       enforced inside the same atomic query — no race window).</li>
+     *   <li>Strict verification of the client-supplied signed XDR against the
+     *       persisted order: tx hash equality plus field-by-field contrast of
+     *       source account, memo, native asset, destinations and amounts.</li>
+     *   <li>Anti-replay: rejects any tx hash already consumed by another COMPLETED order.</li>
+     *   <li>Submission to Horizon with classified outcome; ambiguous outcomes
+     *       (timeouts) are resolved by querying the official Horizon
+     *       GET /transactions/{hash} endpoint — never assumed.</li>
+     *   <li>Order is COMPLETED only after Horizon confirms the exact tx hash
+     *       on-chain as successful, via an atomic CAS PROCESSING → COMPLETED.</li>
+     *   <li>Entitlement is created only from a confirmed COMPLETED order.</li>
+     * </ol>
      */
     public SubmitPaymentResponse submit(String tenantId, String userId, SubmitPaymentRequest request) {
         String orderId = request.orderId();
         String signedXdr = request.signedXdr();
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
 
-        // 1. Load and validate order
-        Order order = orderRepository.findByTenantIdAndId(tenantId, orderId)
-                .orElseThrow(() -> new IllegalArgumentException("Order not found"));
+        // 1. Atomically lock the order: PENDING → PROCESSING.
+        // The CAS query enforces tenant, ownership, PENDING status and non-expired
+        // window in a single atomic operation, so two concurrent submits of the
+        // same order can never both proceed (double-spend / double-entitlement guard).
+        Order order = orderRepository.tryLockForProcessing(tenantId, orderId, userId, signedXdr, now)
+                .orElseThrow(() -> explainLockFailure(tenantId, orderId, userId, now));
 
-        if (!order.getUserId().equals(userId)) {
-            throw new IllegalArgumentException("Order does not belong to this user");
-        }
-        if (order.getStatus() != OrderStatus.PENDING) {
-            throw new IllegalStateException("Order is not in PENDING state (current: " + order.getStatus() + ")");
-        }
-        if (order.getExpiresAt() != null && order.getExpiresAt().isBefore(LocalDateTime.now(ZoneOffset.UTC))) {
-            order.setStatus(OrderStatus.EXPIRED);
-            orderRepository.save(order);
-            throw new IllegalStateException("Order has expired");
-        }
-
-        // 2. Mark order as PROCESSING (prevents double-spend)
-        order.setStatus(OrderStatus.PROCESSING);
-        order.setSignedXdr(signedXdr);
-        orderRepository.save(order);
-
+        // 2. Verify the signed XDR is EXACTLY the transaction this backend prepared.
+        // Hash equality covers every field; explicit checks of amount, native asset,
+        // destinations and memo against the DB snapshot add defense in depth.
+        final org.stellar.sdk.Transaction transaction;
         try {
-            // 3. Submit to Stellar network
-            String txHash = stellarTxService.submitTransaction(signedXdr);
-
-            // 4. Mark order COMPLETED
-            order.setStellarTxHash(txHash);
-            order.setStatus(OrderStatus.COMPLETED);
-            order.setCompletedAt(LocalDateTime.now(ZoneOffset.UTC));
-            orderRepository.save(order);
-
-            // 5. Expire all other PENDING orders for this buyer.
-            // A successful submission changes the buyer's on-chain sequence number,
-            // which invalidates the XDR in any previously prepared orders (tx_bad_seq).
-            expireStalePendingOrders(order.getTenantId(), order.getUserId(), order.getId());
-
-            // 6. Create entitlement
-            createEntitlement(order);
-
-            logger.info("Payment completed: orderId={}, txHash={}, entryId={}, collectionId={}",
-                    orderId, txHash, order.getEntryId(), order.getCollectionId());
-
-            return new SubmitPaymentResponse(
-                    orderId,
-                    txHash,
-                    OrderStatus.COMPLETED.name(),
-                    order.getEntryId(),
-                    order.getCollectionId()
-            );
-
-        } catch (Exception e) {
-            // Mark order as FAILED
-            order.setStatus(OrderStatus.FAILED);
-            orderRepository.save(order);
-            logger.error("Payment submission failed: orderId={}", orderId, e);
-            throw new RuntimeException("Payment failed: " + e.getMessage(), e);
+            transaction = stellarTxService.verifySignedXdrAgainstOrder(signedXdr, order);
+        } catch (SecurityException e) {
+            failOrder(tenantId, orderId);
+            logger.error("Rejected tampered/mismatched signed XDR: orderId={}, userId={}: {}",
+                    orderId, userId, e.getMessage());
+            throw new IllegalArgumentException("Signed transaction does not match the prepared order");
         }
+
+        String expectedTxHash = order.getStellarTxHash();
+
+        // 3. Anti-replay: a Stellar tx hash may unlock content at most once.
+        if (orderRepository.existsCompletedByStellarTxHashExcludingOrder(expectedTxHash, orderId)) {
+            failOrder(tenantId, orderId);
+            logger.error("Replay attempt blocked: txHash={} already consumed by another order (orderId={})",
+                    expectedTxHash, orderId);
+            throw new IllegalStateException("Transaction hash already used by a completed order");
+        }
+
+        // 4. Submit to the Stellar network and resolve the real outcome.
+        StellarTransactionService.SubmissionOutcome outcome = stellarTxService.submitTransaction(transaction);
+        if (outcome == StellarTransactionService.SubmissionOutcome.REJECTED) {
+            failOrder(tenantId, orderId);
+            throw new RuntimeException("Payment failed: transaction rejected by the Stellar network");
+        }
+
+        // 5. Server-side confirmation against Horizon — the ONLY source of truth.
+        // Even when Horizon's submit response claimed success, we re-verify the
+        // exact tx hash on-chain (existence, successful=true, ledger inclusion,
+        // source account) before releasing anything.
+        boolean confirmed = confirmOnChainWithRetry(expectedTxHash, order,
+                outcome == StellarTransactionService.SubmissionOutcome.UNKNOWN);
+        if (!confirmed) {
+            failOrder(tenantId, orderId);
+            logger.error("Payment not confirmed on-chain: orderId={}, txHash={}", orderId, expectedTxHash);
+            throw new RuntimeException("Payment failed: transaction could not be confirmed on the Stellar network");
+        }
+
+        // 6. Atomic CAS PROCESSING → COMPLETED. If another thread already moved
+        // the state, do NOT create a second entitlement.
+        Order completed = orderRepository.tryComplete(tenantId, orderId, expectedTxHash,
+                        LocalDateTime.now(ZoneOffset.UTC))
+                .orElseThrow(() -> new IllegalStateException(
+                        "Order state changed concurrently during completion (orderId=" + orderId + ")"));
+
+        // 7. Expire all other PENDING orders for this buyer (single atomic bulk update).
+        // A successful submission changes the buyer's on-chain sequence number,
+        // which invalidates the XDR in any previously prepared orders (tx_bad_seq).
+        long expired = orderRepository.expirePendingOrdersForUserExcept(tenantId, userId, orderId);
+        if (expired > 0) {
+            logger.info("Expired {} stale PENDING orders for buyer userId={} after successful payment",
+                    expired, userId);
+        }
+
+        // 8. Create entitlement from the confirmed COMPLETED order (idempotent).
+        createEntitlement(completed);
+
+        logger.info("Payment completed: orderId={}, txHash={}, entryId={}, collectionId={}",
+                orderId, expectedTxHash, completed.getEntryId(), completed.getCollectionId());
+
+        return new SubmitPaymentResponse(
+                orderId,
+                expectedTxHash,
+                OrderStatus.COMPLETED.name(),
+                completed.getEntryId(),
+                completed.getCollectionId()
+        );
     }
 
     /**
-     * Creates an ACTIVE entitlement for the buyer after successful payment.
+     * Confirms the tx on-chain via Horizon. When the submission outcome was
+     * ambiguous (timeout), polls a few times to let the ledger close before
+     * giving a final verdict. Never returns true without positive confirmation.
+     */
+    private boolean confirmOnChainWithRetry(String txHash, Order order, boolean ambiguousOutcome) {
+        int attempts = ambiguousOutcome ? ONCHAIN_VERIFY_MAX_ATTEMPTS : 2;
+        for (int i = 0; i < attempts; i++) {
+            if (i > 0) {
+                try {
+                    Thread.sleep(ONCHAIN_VERIFY_DELAY_MS);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+            if (stellarTxService.verifyTransactionOnChain(txHash, order)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Diagnoses why the atomic PROCESSING lock could not be acquired and maps it
+     * to the appropriate error. Also expires the order if its window elapsed.
+     */
+    private RuntimeException explainLockFailure(String tenantId, String orderId, String userId, LocalDateTime now) {
+        Optional<Order> existing = orderRepository.findByTenantIdAndId(tenantId, orderId);
+        if (existing.isEmpty()) {
+            return new IllegalArgumentException("Order not found");
+        }
+        Order order = existing.get();
+        if (!order.getUserId().equals(userId)) {
+            return new IllegalArgumentException("Order does not belong to this user");
+        }
+        if (order.getStatus() == OrderStatus.PENDING
+                && order.getExpiresAt() != null && !order.getExpiresAt().isAfter(now)) {
+            orderRepository.tryTransitionStatus(tenantId, orderId, OrderStatus.PENDING, OrderStatus.EXPIRED);
+            return new IllegalStateException("Order has expired");
+        }
+        return new IllegalStateException("Order is not in PENDING state (current: " + order.getStatus() + ")");
+    }
+
+    /** Atomically marks a PROCESSING order as FAILED (CAS — never downgrades COMPLETED). */
+    private void failOrder(String tenantId, String orderId) {
+        orderRepository.tryTransitionStatus(tenantId, orderId, OrderStatus.PROCESSING, OrderStatus.FAILED)
+                .ifPresentOrElse(
+                        o -> logger.info("Order marked FAILED: orderId={}", orderId),
+                        () -> logger.warn("Could not mark order FAILED (state already changed): orderId={}", orderId));
+    }
+
+    /**
+     * Creates an ACTIVE entitlement for the buyer after a confirmed payment.
+     * Hard precondition: the backing order MUST be COMPLETED with an on-chain tx hash.
+     * Idempotent: a duplicate-key on the unique (userId + entryId/collectionId)
+     * index means the entitlement already exists and is treated as success.
      */
     private void createEntitlement(Order order) {
+        if (order.getStatus() != OrderStatus.COMPLETED || order.getStellarTxHash() == null) {
+            throw new IllegalStateException(
+                    "Refusing to create entitlement: order is not a confirmed COMPLETED payment (orderId="
+                            + order.getId() + ", status=" + order.getStatus() + ")");
+        }
+
         Entitlement entitlement = new Entitlement();
         entitlement.setTenantId(order.getTenantId());
         entitlement.setUserId(order.getUserId());
@@ -385,33 +493,15 @@ public class PaymentService {
         entitlement.setStatus(EntitlementStatus.ACTIVE);
         entitlement.setGrantedAt(LocalDateTime.now(ZoneOffset.UTC));
 
-        entitlementRepository.save(entitlement);
+        try {
+            entitlementRepository.save(entitlement);
+        } catch (DuplicateKeyException e) {
+            logger.warn("Entitlement already exists (idempotent create): userId={}, orderId={}",
+                    order.getUserId(), order.getId());
+            return;
+        }
         logger.info("Entitlement created: userId={}, entryId={}, collectionId={}, orderId={}",
                 order.getUserId(), order.getEntryId(), order.getCollectionId(), order.getId());
-    }
-
-    /**
-     * Expires all other PENDING orders for the same buyer.
-     * After a successful Stellar submission the buyer's on-chain sequence number
-     * has been incremented, so any previously built XDR is no longer valid (tx_bad_seq).
-     * Expiring them forces a fresh prepare on retry.
-     */
-    private void expireStalePendingOrders(String tenantId, String userId, String completedOrderId) {
-        List<Order> pendingOrders = orderRepository.findAllByTenantIdAndUserIdAndStatus(
-                tenantId, userId, OrderStatus.PENDING);
-
-        int expired = 0;
-        for (Order pending : pendingOrders) {
-            if (pending.getId().equals(completedOrderId)) continue;
-            pending.setStatus(OrderStatus.EXPIRED);
-            orderRepository.save(pending);
-            expired++;
-        }
-
-        if (expired > 0) {
-            logger.info("Expired {} stale PENDING orders for buyer userId={} after successful payment",
-                    expired, userId);
-        }
     }
 
     /**

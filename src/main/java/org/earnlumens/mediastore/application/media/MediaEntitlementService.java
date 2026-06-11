@@ -5,24 +5,25 @@ import org.earnlumens.mediastore.domain.media.model.Asset;
 import org.earnlumens.mediastore.domain.media.model.AssetStatus;
 import org.earnlumens.mediastore.domain.media.model.Collection;
 import org.earnlumens.mediastore.domain.media.model.CollectionStatus;
+import org.earnlumens.mediastore.domain.media.model.Entitlement;
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
+import org.earnlumens.mediastore.domain.media.model.GrantType;
 import org.earnlumens.mediastore.domain.media.model.MediaKind;
-import org.earnlumens.mediastore.domain.media.model.PricingMode;
-import org.earnlumens.mediastore.domain.media.model.TargetType;
+import org.earnlumens.mediastore.domain.media.model.Order;
+import org.earnlumens.mediastore.domain.media.model.OrderStatus;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
+import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 @Service
 public class MediaEntitlementService {
@@ -33,15 +34,18 @@ public class MediaEntitlementService {
     private final EntitlementRepository entitlementRepository;
     private final AssetRepository assetRepository;
     private final CollectionRepository collectionRepository;
+    private final OrderRepository orderRepository;
 
     public MediaEntitlementService(EntryRepository entryRepository,
                                    EntitlementRepository entitlementRepository,
                                    AssetRepository assetRepository,
-                                   CollectionRepository collectionRepository) {
+                                   CollectionRepository collectionRepository,
+                                   OrderRepository orderRepository) {
         this.entryRepository = entryRepository;
         this.entitlementRepository = entitlementRepository;
         this.assetRepository = assetRepository;
         this.collectionRepository = collectionRepository;
+        this.orderRepository = orderRepository;
     }
 
     /**
@@ -86,11 +90,12 @@ public class MediaEntitlementService {
             return buildAssetResponse(tenantId, entry);
         }
 
-        // Paid content requires an active entitlement (purchase)
-        boolean entitled = entitlementRepository
-                .existsByTenantIdAndUserIdAndEntryIdAndStatus(tenantId, userId, entryId, EntitlementStatus.ACTIVE);
+        // Paid content requires an active entitlement (purchase), and the
+        // entitlement itself must be backed by a server-confirmed COMPLETED order.
+        Optional<Entitlement> entryEntitlement = entitlementRepository
+                .findByTenantIdAndUserIdAndEntryIdAndStatus(tenantId, userId, entryId, EntitlementStatus.ACTIVE);
 
-        if (entitled) {
+        if (entryEntitlement.isPresent() && isBackedByCompletedOrder(entryEntitlement.get())) {
             logger.debug("Access granted (entry entitlement): userId={}, entryId={}", userId, entryId);
             return buildAssetResponse(tenantId, entry);
         }
@@ -107,12 +112,16 @@ public class MediaEntitlementService {
                     .toList();
 
             if (!collIds.isEmpty()) {
-                Set<String> entitledCollIds = entitlementRepository.findEntitledCollectionIds(
-                        tenantId, userId, collIds, EntitlementStatus.ACTIVE);
+                List<Entitlement> collEntitlements = entitlementRepository
+                        .findByTenantIdAndUserIdAndCollectionIdsAndStatus(
+                                tenantId, userId, collIds, EntitlementStatus.ACTIVE);
 
-                if (!entitledCollIds.isEmpty()) {
-                    logger.debug("Access granted (collection entitlement): userId={}, entryId={}, collectionIds={}",
-                            userId, entryId, entitledCollIds);
+                boolean entitledViaCollection = collEntitlements.stream()
+                        .anyMatch(this::isBackedByCompletedOrder);
+
+                if (entitledViaCollection) {
+                    logger.debug("Access granted (collection entitlement): userId={}, entryId={}",
+                            userId, entryId);
                     return buildAssetResponse(tenantId, entry);
                 }
             }
@@ -120,6 +129,35 @@ public class MediaEntitlementService {
 
         logger.debug("Access denied (no entitlement): tenantId={}, userId={}, entryId={}", tenantId, userId, entryId);
         return Optional.empty();
+    }
+
+    /**
+     * Defense in depth for unlock endpoints: a PURCHASE entitlement only grants
+     * access if its backing order is COMPLETED with an on-chain tx hash recorded.
+     * An entitlement that somehow exists without a confirmed payment never
+     * releases content. Non-purchase grants (e.g. promotional) pass through.
+     */
+    private boolean isBackedByCompletedOrder(Entitlement entitlement) {
+        if (entitlement.getGrantType() != GrantType.PURCHASE) {
+            return true;
+        }
+        if (entitlement.getOrderId() == null) {
+            logger.warn("PURCHASE entitlement without orderId — denying access: entitlementId={}",
+                    entitlement.getId());
+            return false;
+        }
+        Optional<Order> order = orderRepository.findByTenantIdAndId(
+                entitlement.getTenantId(), entitlement.getOrderId());
+        boolean valid = order.isPresent()
+                && order.get().getStatus() == OrderStatus.COMPLETED
+                && order.get().getStellarTxHash() != null;
+        if (!valid) {
+            logger.warn("PURCHASE entitlement not backed by a confirmed COMPLETED order — denying access: "
+                            + "entitlementId={}, orderId={}, orderStatus={}",
+                    entitlement.getId(), entitlement.getOrderId(),
+                    order.map(o -> o.getStatus().name()).orElse("MISSING"));
+        }
+        return valid;
     }
 
     private Optional<MediaEntitlementResponse> buildAssetResponse(String tenantId, Entry entry) {

@@ -119,13 +119,15 @@ class CrossTenantIsolationTest {
                 });
 
         entitlementService = new MediaEntitlementService(
-                entryRepository, entitlementRepository, assetRepository, collectionRepository);
+                entryRepository, entitlementRepository, assetRepository, collectionRepository,
+                mock(OrderRepository.class));
 
         uploadService = new EntryUploadService(
                 entryRepository,
                 assetRepository,
                 mock(UserRepository.class),
                 mock(OrderRepository.class),
+                mock(org.earnlumens.mediastore.domain.media.repository.CollectionRepository.class),
                 mock(R2PresignedUrlService.class),
                 mock(org.earnlumens.mediastore.infrastructure.r2.R2StorageService.class),
                 mock(org.earnlumens.mediastore.domain.media.repository.UploadSessionRepository.class),

@@ -6,6 +6,7 @@ import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
+import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -37,6 +38,7 @@ class MediaEntitlementServiceTest {
     private EntitlementRepository entitlementRepository;
     private AssetRepository assetRepository;
     private CollectionRepository collectionRepository;
+    private OrderRepository orderRepository;
     private MediaEntitlementService service;
 
     @BeforeEach
@@ -45,10 +47,44 @@ class MediaEntitlementServiceTest {
         entitlementRepository = mock(EntitlementRepository.class);
         assetRepository = mock(AssetRepository.class);
         collectionRepository = mock(CollectionRepository.class);
+        orderRepository = mock(OrderRepository.class);
         // Default: no parent collections for entry (collection-level access fallback returns empty)
         when(collectionRepository.findByTenantIdAndStatusAndItemsEntryId(any(), any(), any()))
                 .thenReturn(List.of());
-        service = new MediaEntitlementService(entryRepository, entitlementRepository, assetRepository, collectionRepository);
+        // Default: no entitlements (overridden per test)
+        when(entitlementRepository.findByTenantIdAndUserIdAndEntryIdAndStatus(any(), any(), any(), any()))
+                .thenReturn(Optional.empty());
+        when(entitlementRepository.findByTenantIdAndUserIdAndCollectionIdsAndStatus(any(), any(), any(), any()))
+                .thenReturn(List.of());
+        service = new MediaEntitlementService(
+                entryRepository, entitlementRepository, assetRepository, collectionRepository, orderRepository);
+    }
+
+    /** Stubs an ACTIVE PURCHASE entitlement backed by a confirmed COMPLETED order. */
+    private void stubActivePurchaseEntitlement(String userId) {
+        String orderId = "order-001";
+        Entitlement ent = new Entitlement();
+        ent.setId("ent-001");
+        ent.setTenantId(TENANT);
+        ent.setUserId(userId);
+        ent.setEntryId(ENTRY_ID);
+        ent.setTargetType(TargetType.ENTRY);
+        ent.setGrantType(GrantType.PURCHASE);
+        ent.setOrderId(orderId);
+        ent.setStatus(EntitlementStatus.ACTIVE);
+
+        Order order = new Order();
+        order.setId(orderId);
+        order.setTenantId(TENANT);
+        order.setUserId(userId);
+        order.setStatus(OrderStatus.COMPLETED);
+        order.setStellarTxHash("abc123txhash");
+
+        when(entitlementRepository.findByTenantIdAndUserIdAndEntryIdAndStatus(
+                TENANT, userId, ENTRY_ID, EntitlementStatus.ACTIVE))
+                .thenReturn(Optional.of(ent));
+        when(orderRepository.findByTenantIdAndId(TENANT, orderId))
+                .thenReturn(Optional.of(order));
     }
 
     private Entry paidEntry() {
@@ -114,9 +150,7 @@ class MediaEntitlementServiceTest {
     void buyer_withActiveEntitlement_isAllowed() {
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
                 .thenReturn(Optional.of(paidEntry()));
-        when(entitlementRepository.existsByTenantIdAndUserIdAndEntryIdAndStatus(
-                TENANT, BUYER_ID, ENTRY_ID, EntitlementStatus.ACTIVE))
-                .thenReturn(true);
+        stubActivePurchaseEntitlement(BUYER_ID);
         configureFullAsset();
 
         Optional<MediaEntitlementResponse> result =
@@ -136,16 +170,13 @@ class MediaEntitlementServiceTest {
     void buyer_withNonActiveEntitlement_isDenied() {
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
                 .thenReturn(Optional.of(paidEntry()));
-        when(entitlementRepository.existsByTenantIdAndUserIdAndEntryIdAndStatus(
-                TENANT, BUYER_ID, ENTRY_ID, EntitlementStatus.ACTIVE))
-                .thenReturn(false);
 
         Optional<MediaEntitlementResponse> result =
                 service.checkEntitlement(TENANT, BUYER_ID, ENTRY_ID);
 
         assertTrue(result.isEmpty());
         verify(entitlementRepository, times(1))
-                .existsByTenantIdAndUserIdAndEntryIdAndStatus(
+                .findByTenantIdAndUserIdAndEntryIdAndStatus(
                         TENANT, BUYER_ID, ENTRY_ID, EntitlementStatus.ACTIVE);
     }
 
@@ -158,9 +189,6 @@ class MediaEntitlementServiceTest {
 
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
                 .thenReturn(Optional.of(publicEntry));
-        when(entitlementRepository.existsByTenantIdAndUserIdAndEntryIdAndStatus(
-                TENANT, STRANGER_ID, ENTRY_ID, EntitlementStatus.ACTIVE))
-                .thenReturn(false);
 
         Optional<MediaEntitlementResponse> result =
                 service.checkEntitlement(TENANT, STRANGER_ID, ENTRY_ID);
@@ -174,16 +202,13 @@ class MediaEntitlementServiceTest {
     void stranger_withoutEntitlement_isDenied() {
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
                 .thenReturn(Optional.of(paidEntry()));
-        when(entitlementRepository.existsByTenantIdAndUserIdAndEntryIdAndStatus(
-                TENANT, STRANGER_ID, ENTRY_ID, EntitlementStatus.ACTIVE))
-                .thenReturn(false);
 
         Optional<MediaEntitlementResponse> result =
                 service.checkEntitlement(TENANT, STRANGER_ID, ENTRY_ID);
 
         assertTrue(result.isEmpty());
         verify(entitlementRepository, times(1))
-                .existsByTenantIdAndUserIdAndEntryIdAndStatus(
+                .findByTenantIdAndUserIdAndEntryIdAndStatus(
                         TENANT, STRANGER_ID, ENTRY_ID, EntitlementStatus.ACTIVE);
     }
 
@@ -293,9 +318,7 @@ class MediaEntitlementServiceTest {
 
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
                 .thenReturn(Optional.of(resource));
-        when(entitlementRepository.existsByTenantIdAndUserIdAndEntryIdAndStatus(
-                TENANT, BUYER_ID, ENTRY_ID, EntitlementStatus.ACTIVE))
-                .thenReturn(true);
+        stubActivePurchaseEntitlement(BUYER_ID);
         when(assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(
                 TENANT, ENTRY_ID, MediaKind.FULL, AssetStatus.READY))
                 .thenReturn(Optional.empty());
@@ -315,9 +338,6 @@ class MediaEntitlementServiceTest {
 
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID))
                 .thenReturn(Optional.of(resource));
-        when(entitlementRepository.existsByTenantIdAndUserIdAndEntryIdAndStatus(
-                TENANT, STRANGER_ID, ENTRY_ID, EntitlementStatus.ACTIVE))
-                .thenReturn(false);
 
         Optional<MediaEntitlementResponse> result =
                 service.checkEntitlement(TENANT, STRANGER_ID, ENTRY_ID);

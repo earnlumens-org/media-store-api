@@ -29,4 +29,48 @@ public interface OrderRepository {
     List<Order> findByTenantIdAndSellerIdAndStatus(String tenantId, String sellerId, OrderStatus status);
 
     Order save(Order order);
+
+    // ── Atomic state-machine operations (race-condition safe) ──
+
+    /**
+     * Atomically locks an order for submission: PENDING → PROCESSING.
+     * The compare-and-swap query enforces, in a single atomic operation:
+     * tenant match, ownership, PENDING status and non-expired window.
+     * Stores the signed XDR as part of the same update.
+     *
+     * @return the locked order, or empty if any precondition failed (lock not acquired)
+     */
+    Optional<Order> tryLockForProcessing(String tenantId, String orderId, String userId,
+                                         String signedXdr, LocalDateTime now);
+
+    /**
+     * Atomically completes an order: PROCESSING → COMPLETED, setting the
+     * verified Stellar tx hash and completion timestamp.
+     *
+     * @return the completed order, or empty if the order was no longer PROCESSING
+     */
+    Optional<Order> tryComplete(String tenantId, String orderId, String stellarTxHash,
+                                LocalDateTime completedAt);
+
+    /**
+     * Atomic compare-and-swap of the order status.
+     *
+     * @return the updated order, or empty if the current status did not match {@code expected}
+     */
+    Optional<Order> tryTransitionStatus(String tenantId, String orderId,
+                                        OrderStatus expected, OrderStatus next);
+
+    /**
+     * Anti-replay: true if any other order is already COMPLETED with this Stellar tx hash.
+     * Cross-tenant on purpose — an on-chain tx hash can only ever unlock content once.
+     */
+    boolean existsCompletedByStellarTxHashExcludingOrder(String stellarTxHash, String excludeOrderId);
+
+    /**
+     * Atomically expires every PENDING order of a buyer except the given one
+     * (single bulk update — no read-modify-write races).
+     *
+     * @return number of orders expired
+     */
+    long expirePendingOrdersForUserExcept(String tenantId, String userId, String excludeOrderId);
 }

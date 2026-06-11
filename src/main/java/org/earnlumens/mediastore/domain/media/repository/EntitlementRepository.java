@@ -7,12 +7,21 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 
 public interface EntitlementRepository {
 
     boolean existsByTenantIdAndUserIdAndEntryIdAndStatus(
             String tenantId, String userId, String entryId, EntitlementStatus status);
+
+    /** Full entitlement for an entry (used to verify the backing order before unlocking). */
+    Optional<Entitlement> findByTenantIdAndUserIdAndEntryIdAndStatus(
+            String tenantId, String userId, String entryId, EntitlementStatus status);
+
+    /** Full collection entitlements (used to verify the backing orders before unlocking). */
+    List<Entitlement> findByTenantIdAndUserIdAndCollectionIdsAndStatus(
+            String tenantId, String userId, List<String> collectionIds, EntitlementStatus status);
 
     /** Check if user has an active collection entitlement */
     boolean existsByTenantIdAndUserIdAndTargetTypeAndCollectionIdAndStatus(

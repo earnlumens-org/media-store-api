@@ -83,7 +83,7 @@ class EntryUploadServiceTest {
         platformConfig = new PlatformConfig();
         platformConfig.setWallet(PLATFORM_WALLET);
         platformConfig.setFeePercent(new BigDecimal("10.00"));
-        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, r2PresignedUrlService, r2StorageService, uploadSessionRepository, platformConfig, transcodingJobService, moderationJobService, userBadgeService, spaceValidationService, 20, 10);
+        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, mock(org.earnlumens.mediastore.domain.media.repository.CollectionRepository.class), r2PresignedUrlService, r2StorageService, uploadSessionRepository, platformConfig, transcodingJobService, moderationJobService, userBadgeService, spaceValidationService, 20, 10);
         when(userRepository.findAllById(any())).thenReturn(java.util.List.of());
         when(transcodingJobService.getMaxRetries()).thenReturn(3);
         when(transcodingJobService.createJob(any(TranscodingJob.class)))

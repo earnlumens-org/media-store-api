@@ -28,6 +28,7 @@ import org.earnlumens.mediastore.domain.media.model.ModerationJobStatus;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus;
 import org.earnlumens.mediastore.domain.media.model.UploadSession;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
+import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.earnlumens.mediastore.domain.media.repository.UploadSessionRepository;
@@ -156,6 +157,7 @@ public class EntryUploadService {
     private final AssetRepository assetRepository;
     private final UserRepository userRepository;
     private final OrderRepository orderRepository;
+    private final CollectionRepository collectionRepository;
     private final R2PresignedUrlService r2PresignedUrlService;
     private final R2StorageService r2StorageService;
     private final UploadSessionRepository uploadSessionRepository;
@@ -172,6 +174,7 @@ public class EntryUploadService {
             AssetRepository assetRepository,
             UserRepository userRepository,
             OrderRepository orderRepository,
+            CollectionRepository collectionRepository,
             R2PresignedUrlService r2PresignedUrlService,
             R2StorageService r2StorageService,
             UploadSessionRepository uploadSessionRepository,
@@ -187,6 +190,7 @@ public class EntryUploadService {
         this.assetRepository = assetRepository;
         this.userRepository = userRepository;
         this.orderRepository = orderRepository;
+        this.collectionRepository = collectionRepository;
         this.r2PresignedUrlService = r2PresignedUrlService;
         this.r2StorageService = r2StorageService;
         this.uploadSessionRepository = uploadSessionRepository;
@@ -1056,27 +1060,58 @@ public class EntryUploadService {
 
     /**
      * Returns the list of completed sales for a seller, with payment split breakdown.
-     * Each sale includes the entry title, gross amount, splits (with computed XLM amounts),
-     * and the Stellar transaction hash for on-chain verification.
+     * Each sale includes the target title (entry or collection), gross amount,
+     * splits (with computed XLM amounts), and the Stellar transaction hash
+     * for on-chain verification. Collection sales are reported with type COLLECTION.
      */
     public List<org.earnlumens.mediastore.domain.media.dto.response.SellerOrderResponse> getSellerSales(
             String tenantId, String sellerId) {
         var orders = orderRepository.findByTenantIdAndSellerIdAndStatus(
                 tenantId, sellerId, OrderStatus.COMPLETED);
 
-        // Batch-load entry titles
-        List<String> entryIds = orders.stream().map(o -> o.getEntryId()).distinct().toList();
+        // Batch-load entry titles (legacy orders without targetType are entry sales)
+        List<String> entryIds = orders.stream()
+                .filter(o -> o.getTargetType() != org.earnlumens.mediastore.domain.media.model.TargetType.COLLECTION)
+                .map(o -> o.getEntryId())
+                .filter(java.util.Objects::nonNull)
+                .distinct().toList();
         java.util.Map<String, Entry> entryMap = new java.util.HashMap<>();
         if (!entryIds.isEmpty()) {
             entryRepository.findByTenantIdAndIdIn(tenantId, entryIds)
                     .forEach(e -> entryMap.put(e.getId(), e));
         }
 
+        // Batch-load collection titles
+        List<String> collectionIds = orders.stream()
+                .filter(o -> o.getTargetType() == org.earnlumens.mediastore.domain.media.model.TargetType.COLLECTION)
+                .map(o -> o.getCollectionId())
+                .filter(java.util.Objects::nonNull)
+                .distinct().toList();
+        java.util.Map<String, org.earnlumens.mediastore.domain.media.model.Collection> collectionMap =
+                new java.util.HashMap<>();
+        if (!collectionIds.isEmpty()) {
+            collectionRepository.findByTenantIdAndIdIn(tenantId, collectionIds)
+                    .forEach(c -> collectionMap.put(c.getId(), c));
+        }
+
         return orders.stream().map(order -> {
-            // Look up entry title
-            Entry entry = entryMap.get(order.getEntryId());
-            String entryTitle = entry != null ? entry.getTitle() : "—";
-            String entryType = entry != null && entry.getType() != null ? entry.getType().name() : "RESOURCE";
+            boolean isCollection =
+                    order.getTargetType() == org.earnlumens.mediastore.domain.media.model.TargetType.COLLECTION;
+
+            String targetId;
+            String targetTitle;
+            String targetType;
+            if (isCollection) {
+                var collection = collectionMap.get(order.getCollectionId());
+                targetId = order.getCollectionId();
+                targetTitle = collection != null ? collection.getTitle() : "—";
+                targetType = "COLLECTION";
+            } else {
+                Entry entry = entryMap.get(order.getEntryId());
+                targetId = order.getEntryId();
+                targetTitle = entry != null ? entry.getTitle() : "—";
+                targetType = entry != null && entry.getType() != null ? entry.getType().name() : "RESOURCE";
+            }
 
             // Build split details with computed XLM amounts
             BigDecimal gross = order.getAmountXlm() != null ? order.getAmountXlm() : BigDecimal.ZERO;
@@ -1089,7 +1124,7 @@ public class EntryUploadService {
                     }).toList();
 
             return new org.earnlumens.mediastore.domain.media.dto.response.SellerOrderResponse(
-                    order.getId(), order.getEntryId(), entryTitle, entryType,
+                    order.getId(), targetId, targetTitle, targetType,
                     gross, order.getStellarTxHash(), order.getCompletedAt(), splits);
         }).toList();
     }

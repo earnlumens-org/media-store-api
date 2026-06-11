@@ -56,7 +56,11 @@ class TenantIsolationArchTest {
             // Platform-level thumbnail watchdog recovers stale jobs across all tenants
             "ThumbnailJobRepository#findAllStaleJobs",
             // Platform-level cleanup job aborts stale PENDING upload sessions across all tenants
-            "UploadSessionRepository#findByStatusAndCreatedAtBefore"
+            "UploadSessionRepository#findByStatusAndCreatedAtBefore",
+            // Anti-replay guard: a Stellar tx hash is globally unique on-chain, so the
+            // "already consumed" check MUST be cross-tenant — scoping it by tenant would
+            // allow replaying the same on-chain payment in a different tenant.
+            "OrderRepository#existsCompletedByStellarTxHashExcludingOrder"
     );
 
     // ── Methods that carry tenantId inside the entity (e.g. save) ──

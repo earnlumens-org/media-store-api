@@ -27,6 +27,9 @@ dependencies {
     implementation 'org.mapstruct:mapstruct:1.5.5.Final'
     implementation 'software.amazon.awssdk:s3:2.25.0'
     implementation 'network.lightsail:stellar-sdk:2.2.3'
+    // Required at compile time: the Stellar SDK request builders expose okhttp3 types
+    // in their signatures (e.g. TransactionsRequestBuilder.transaction).
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
     implementation 'com.google.auth:google-auth-library-oauth2-http:1.31.0'
     annotationProcessor 'org.mapstruct:mapstruct-processor:1.5.5.Final'
     implementation 'io.jsonwebtoken:jjwt-api:0.12.6'

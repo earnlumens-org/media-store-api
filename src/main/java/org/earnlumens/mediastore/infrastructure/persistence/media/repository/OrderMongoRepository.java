@@ -22,4 +22,10 @@ public interface OrderMongoRepository extends MongoRepository<OrderEntity, Strin
     long countByTenantIdAndSellerIdAndStatus(String tenantId, String sellerId, String status);
 
     List<OrderEntity> findByTenantIdAndSellerIdAndStatusOrderByCompletedAtDesc(String tenantId, String sellerId, String status);
+
+    /**
+     * Anti-replay check: does any OTHER order already hold this Stellar tx hash in the given status?
+     * Tx hashes are globally unique on-chain, so the check is deliberately cross-tenant.
+     */
+    boolean existsByStellarTxHashAndStatusAndIdNot(String stellarTxHash, String status, String id);
 }

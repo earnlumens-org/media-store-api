@@ -6,6 +6,11 @@ import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.OrderEntity;
 import org.earnlumens.mediastore.infrastructure.persistence.media.mapper.OrderMapper;
 import org.earnlumens.mediastore.infrastructure.persistence.media.repository.OrderMongoRepository;
+import org.springframework.data.mongodb.core.FindAndModifyOptions;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
@@ -15,12 +20,19 @@ import java.util.Optional;
 @Repository
 public class OrderRepositoryImpl implements OrderRepository {
 
+    /** findAndModify must return the post-update document so callers see the new status. */
+    private static final FindAndModifyOptions RETURN_NEW = FindAndModifyOptions.options().returnNew(true);
+
     private final OrderMongoRepository orderMongoRepository;
     private final OrderMapper orderMapper;
+    private final MongoTemplate mongoTemplate;
 
-    public OrderRepositoryImpl(OrderMongoRepository orderMongoRepository, OrderMapper orderMapper) {
+    public OrderRepositoryImpl(OrderMongoRepository orderMongoRepository,
+                               OrderMapper orderMapper,
+                               MongoTemplate mongoTemplate) {
         this.orderMongoRepository = orderMongoRepository;
         this.orderMapper = orderMapper;
+        this.mongoTemplate = mongoTemplate;
     }
 
     @Override
@@ -79,5 +91,63 @@ public class OrderRepositoryImpl implements OrderRepository {
         OrderEntity entity = orderMapper.toEntity(order);
         OrderEntity saved = orderMongoRepository.save(entity);
         return orderMapper.toModel(saved);
+    }
+
+    // ── Atomic state-machine operations ──
+
+    @Override
+    public Optional<Order> tryLockForProcessing(String tenantId, String orderId, String userId,
+                                                String signedXdr, LocalDateTime now) {
+        Query query = Query.query(Criteria.where("_id").is(orderId)
+                .and("tenantId").is(tenantId)
+                .and("userId").is(userId)
+                .and("status").is(OrderStatus.PENDING.name())
+                .and("expiresAt").gt(now));
+        Update update = new Update()
+                .set("status", OrderStatus.PROCESSING.name())
+                .set("signedXdr", signedXdr);
+        OrderEntity updated = mongoTemplate.findAndModify(query, update, RETURN_NEW, OrderEntity.class);
+        return Optional.ofNullable(updated).map(orderMapper::toModel);
+    }
+
+    @Override
+    public Optional<Order> tryComplete(String tenantId, String orderId, String stellarTxHash,
+                                       LocalDateTime completedAt) {
+        Query query = Query.query(Criteria.where("_id").is(orderId)
+                .and("tenantId").is(tenantId)
+                .and("status").is(OrderStatus.PROCESSING.name()));
+        Update update = new Update()
+                .set("status", OrderStatus.COMPLETED.name())
+                .set("stellarTxHash", stellarTxHash)
+                .set("completedAt", completedAt);
+        OrderEntity updated = mongoTemplate.findAndModify(query, update, RETURN_NEW, OrderEntity.class);
+        return Optional.ofNullable(updated).map(orderMapper::toModel);
+    }
+
+    @Override
+    public Optional<Order> tryTransitionStatus(String tenantId, String orderId,
+                                               OrderStatus expected, OrderStatus next) {
+        Query query = Query.query(Criteria.where("_id").is(orderId)
+                .and("tenantId").is(tenantId)
+                .and("status").is(expected.name()));
+        Update update = new Update().set("status", next.name());
+        OrderEntity updated = mongoTemplate.findAndModify(query, update, RETURN_NEW, OrderEntity.class);
+        return Optional.ofNullable(updated).map(orderMapper::toModel);
+    }
+
+    @Override
+    public boolean existsCompletedByStellarTxHashExcludingOrder(String stellarTxHash, String excludeOrderId) {
+        return orderMongoRepository.existsByStellarTxHashAndStatusAndIdNot(
+                stellarTxHash, OrderStatus.COMPLETED.name(), excludeOrderId);
+    }
+
+    @Override
+    public long expirePendingOrdersForUserExcept(String tenantId, String userId, String excludeOrderId) {
+        Query query = Query.query(Criteria.where("tenantId").is(tenantId)
+                .and("userId").is(userId)
+                .and("status").is(OrderStatus.PENDING.name())
+                .and("_id").ne(excludeOrderId));
+        Update update = new Update().set("status", OrderStatus.EXPIRED.name());
+        return mongoTemplate.updateMulti(query, update, OrderEntity.class).getModifiedCount();
     }
 }

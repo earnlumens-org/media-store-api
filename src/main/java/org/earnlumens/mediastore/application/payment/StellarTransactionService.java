@@ -1,5 +1,6 @@
 package org.earnlumens.mediastore.application.payment;
 
+import org.earnlumens.mediastore.domain.media.model.Order;
 import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
 import org.earnlumens.mediastore.infrastructure.config.StellarConfig;
 import org.slf4j.Logger;
@@ -9,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.stellar.sdk.*;
 import org.stellar.sdk.exception.AccountNotFoundException;
 import org.stellar.sdk.exception.BadRequestException;
+import org.stellar.sdk.operations.Operation;
 import org.stellar.sdk.operations.PaymentOperation;
 import org.stellar.sdk.responses.FeeStatsResponse;
 import org.stellar.sdk.responses.TransactionResponse;
@@ -18,8 +20,10 @@ import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.HashMap;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Builds, hashes and submits Stellar XLM payment transactions.
@@ -161,36 +165,167 @@ public class StellarTransactionService {
     }
 
     /**
-     * Submits a signed transaction to the Stellar network via Horizon.
+     * Strictly validates that a client-supplied signed XDR is byte-for-byte the
+     * transaction this backend built for the given order. Nothing from the
+     * client is trusted: every parameter is contrasted against the persisted order.
      *
-     * @param signedXdr the signed transaction envelope XDR (base-64)
-     * @return the transaction hash on success
-     * @throws RuntimeException if the submission fails
+     * Checks performed:
+     * <ol>
+     *   <li>The XDR parses against the configured network passphrase.</li>
+     *   <li>The transaction hash equals the hash persisted at prepare time.
+     *       The hash covers source account, sequence, fee, memo, time bounds and
+     *       every operation — any tampering with amounts/destinations changes it.</li>
+     *   <li>The envelope carries at least one signature.</li>
+     *   <li>Defense in depth (explicit field checks, in case of any hash handling bug):
+     *       source account == buyer wallet, MEMO_TEXT == order memo, and every
+     *       operation is a native-XLM PaymentOperation whose destination/amount
+     *       exactly match the split amounts recomputed from the order snapshot.</li>
+     * </ol>
+     *
+     * @return the parsed, verified transaction ready for submission
+     * @throws SecurityException if any check fails
      */
-    public String submitTransaction(String signedXdr) {
+    public Transaction verifySignedXdrAgainstOrder(String signedXdr, Order order) {
+        Transaction transaction;
         try {
-            // AbstractTransaction.fromEnvelopeXdr(String, Network) returns AbstractTransaction
-            Transaction transaction = (Transaction) AbstractTransaction.fromEnvelopeXdr(signedXdr, network);
+            transaction = (Transaction) AbstractTransaction.fromEnvelopeXdr(signedXdr, network);
+        } catch (Exception e) {
+            throw new SecurityException("Signed XDR is not a valid transaction envelope", e);
+        }
 
-            // SDK 2.x: submitTransaction returns TransactionResponse, throws on network error
+        // 1. Cryptographic identity: the hash must equal the one computed at prepare time.
+        String actualHash = HexFormat.of().formatHex(transaction.hash());
+        if (order.getStellarTxHash() == null || !actualHash.equalsIgnoreCase(order.getStellarTxHash())) {
+            throw new SecurityException("Signed XDR does not match the prepared transaction (hash mismatch)");
+        }
+
+        // 2. Must actually be signed.
+        if (transaction.getSignatures() == null || transaction.getSignatures().isEmpty()) {
+            throw new SecurityException("Transaction envelope carries no signatures");
+        }
+
+        // 3. Explicit field-level checks (defense in depth).
+        if (!transaction.getSourceAccount().equals(order.getBuyerWallet())) {
+            throw new SecurityException("Transaction source account does not match the order's buyer wallet");
+        }
+        if (!(transaction.getMemo() instanceof MemoText memoText)
+                || !memoText.getText().toString().equals(order.getMemo())) {
+            throw new SecurityException("Transaction memo does not match the order");
+        }
+
+        Map<String, BigDecimal> expected = expectedPaymentsByDestination(order);
+        Map<String, BigDecimal> actual = new HashMap<>();
+        for (Operation op : transaction.getOperations()) {
+            if (!(op instanceof PaymentOperation payment)) {
+                throw new SecurityException("Transaction contains a non-payment operation");
+            }
+            if (!(payment.getAsset() instanceof AssetTypeNative)) {
+                throw new SecurityException("Transaction contains a non-native (non-XLM) asset");
+            }
+            actual.merge(payment.getDestination(), payment.getAmount(), BigDecimal::add);
+        }
+        if (actual.size() != expected.size()) {
+            throw new SecurityException("Unexpected number of payment destinations in transaction");
+        }
+        for (Map.Entry<String, BigDecimal> e : expected.entrySet()) {
+            BigDecimal actualAmount = actual.get(e.getKey());
+            if (actualAmount == null || actualAmount.compareTo(e.getValue()) != 0) {
+                throw new SecurityException("Payment amount/destination mismatch against order splits");
+            }
+        }
+
+        return transaction;
+    }
+
+    /**
+     * Recomputes the exact per-destination amounts from the order's persisted
+     * split snapshot, using the same rounding as {@link #buildTransaction}.
+     */
+    private Map<String, BigDecimal> expectedPaymentsByDestination(Order order) {
+        Map<String, BigDecimal> expected = new HashMap<>();
+        for (PaymentSplit split : order.getPaymentSplits()) {
+            BigDecimal amount = order.getAmountXlm().multiply(split.getPercent())
+                    .divide(ONE_HUNDRED, 7, RoundingMode.DOWN);
+            if (amount.compareTo(BigDecimal.ZERO) <= 0) {
+                continue;
+            }
+            expected.merge(split.getWallet(), amount, BigDecimal::add);
+        }
+        return expected;
+    }
+
+    /**
+     * Submits a verified, signed transaction to the Stellar network via Horizon.
+     *
+     * @param transaction a transaction already verified with {@link #verifySignedXdrAgainstOrder}
+     * @return classified submission outcome — never trusts an ambiguous response as success
+     */
+    public SubmissionOutcome submitTransaction(Transaction transaction) {
+        String expectedHash = HexFormat.of().formatHex(transaction.hash());
+        try {
             TransactionResponse response = server.submitTransaction(transaction);
 
             if (Boolean.TRUE.equals(response.getSuccessful())) {
                 logger.info("Stellar tx submitted successfully: hash={}", response.getHash());
-                return response.getHash();
-            } else {
-                String resultXdr = response.getResultXdr() != null
-                        ? response.getResultXdr()
-                        : "unknown";
-                logger.error("Stellar tx submission failed: resultXdr={}", resultXdr);
-                throw new RuntimeException("Stellar transaction failed: " + resultXdr);
+                return SubmissionOutcome.SUBMITTED;
             }
-        } catch (RuntimeException e) {
-            throw e;
+            String resultXdr = response.getResultXdr() != null ? response.getResultXdr() : "unknown";
+            logger.error("Stellar tx submission rejected: hash={}, resultXdr={}", expectedHash, resultXdr);
+            return SubmissionOutcome.REJECTED;
+        } catch (BadRequestException e) {
+            // Horizon definitively rejected the tx (e.g. tx_bad_seq, tx_bad_auth).
+            logger.error("Stellar tx rejected by Horizon (400): hash={}", expectedHash, e);
+            return SubmissionOutcome.REJECTED;
         } catch (Exception e) {
-            logger.error("Failed to submit Stellar transaction", e);
-            throw new RuntimeException("Failed to submit transaction to Stellar network", e);
+            // Timeout / 504 / network error: the tx MAY still have made it on-chain.
+            // The caller must resolve via verifyTransactionOnChain before failing the order.
+            logger.warn("Stellar tx submission outcome unknown (will verify on-chain): hash={}", expectedHash, e);
+            return SubmissionOutcome.UNKNOWN;
         }
+    }
+
+    /**
+     * Server-side source of truth: queries Horizon's official
+     * {@code GET /transactions/{hash}} endpoint and confirms the transaction
+     * exists, was applied successfully, was included in a ledger and matches
+     * the order (source account + memo). No client data is involved.
+     *
+     * @return true only if the exact transaction is confirmed successful on-chain
+     */
+    public boolean verifyTransactionOnChain(String txHash, Order order) {
+        try {
+            TransactionResponse tx = server.transactions().transaction(txHash);
+            if (tx == null) {
+                return false;
+            }
+            boolean successful = Boolean.TRUE.equals(tx.getSuccessful());
+            boolean hashMatches = txHash.equalsIgnoreCase(tx.getHash());
+            boolean inLedger = tx.getLedger() != null && tx.getLedger() > 0;
+            boolean sourceMatches = order.getBuyerWallet() != null
+                    && order.getBuyerWallet().equals(tx.getSourceAccount());
+
+            if (!(successful && hashMatches && inLedger && sourceMatches)) {
+                logger.error("On-chain verification FAILED: hash={}, successful={}, hashMatches={}, inLedger={}, sourceMatches={}",
+                        txHash, successful, hashMatches, inLedger, sourceMatches);
+                return false;
+            }
+            logger.info("On-chain verification OK: hash={}, ledger={}", txHash, tx.getLedger());
+            return true;
+        } catch (Exception e) {
+            // Not found / network error → NOT verified. Never assume success.
+            logger.warn("On-chain verification could not confirm tx: hash={}", txHash, e);
+            return false;
+        }
+    }
+
+    /** Classified result of a Horizon submission attempt. */
+    public enum SubmissionOutcome {
+        /** Horizon accepted the tx and reported successful=true (still re-verified on-chain). */
+        SUBMITTED,
+        /** Horizon definitively rejected the tx. */
+        REJECTED,
+        /** Outcome ambiguous (timeout); must be resolved by on-chain lookup. */
+        UNKNOWN
     }
 
     /**
