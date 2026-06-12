@@ -1,22 +1,28 @@
 package org.earnlumens.mediastore.infrastructure.security;
 
 import jakarta.servlet.http.HttpServletRequest;
+import org.earnlumens.mediastore.infrastructure.counter.DistributedCounter;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
+import java.time.Duration;
+import java.util.OptionalLong;
 
 /**
  * Per-IP budget for <em>anonymous</em> searches, mirroring how large platforms
  * let visitors run a handful of searches before asking them to sign in.
  *
- * <p>This is deliberately in-memory and lock-free (a fixed-window counter per IP
- * per hour) so it costs effectively nothing per tenant — no database round-trips,
- * no shared state, and trivially cheap on hardware. It is a soft, UX-level gate
+ * <p>The budget is a fixed-window counter per IP per hour backed by a
+ * {@link DistributedCounter} shared by every API instance (Phase 3, task 3.1
+ * of SCALABILITY-AUDIT.md — P0-5), so the 25-search allowance cannot be
+ * multiplied by scaling out Cloud Run. It is a soft, UX-level gate
  * ("sign in to keep searching"), layered on top of the hard, IP-based
  * {@link RateLimitFilter} that protects the database from denial-of-service.
+ *
+ * <p><b>Fail-open by design:</b> if the counter backend errors, the search is
+ * allowed through — this gate is a product nicety, not a security boundary,
+ * and the cdn-worker edge rate limit plus the {@code SEARCH} tier of
+ * {@link RateLimitFilter} remain in force.
  *
  * <p>Authenticated users are never subject to this budget; they are still
  * covered by {@link RateLimitFilter} so a logged-in account cannot hammer the
@@ -25,21 +31,28 @@ import java.util.concurrent.atomic.AtomicLong;
 @Component
 public class AnonymousSearchBudget {
 
+    /** Scope name for budget windows in the shared counter backend. */
+    static final String COUNTER_SCOPE = "search";
+
+    /** Slack over the window length for Mongo's ~60 s TTL sweep granularity. */
+    private static final Duration RETENTION_SLACK = Duration.ofMinutes(1);
+
     /** Free anonymous searches per IP per rolling window before login is required. */
     private final int maxAnonymousSearches;
     private final long windowMs;
+    private final Duration retention;
 
-    /** Key: "ip:windowBucket" → counter. */
-    private final ConcurrentHashMap<String, WindowCounter> counters = new ConcurrentHashMap<>();
-    private final AtomicLong lastCleanup = new AtomicLong(System.currentTimeMillis());
-    private static final long CLEANUP_INTERVAL_MS = 300_000; // 5 minutes
+    private final DistributedCounter distributedCounter;
 
     public AnonymousSearchBudget(
             @Value("${mediastore.search.anonymous-budget:25}") int maxAnonymousSearches,
-            @Value("${mediastore.search.anonymous-window-minutes:60}") long windowMinutes
+            @Value("${mediastore.search.anonymous-window-minutes:60}") long windowMinutes,
+            DistributedCounter distributedCounter
     ) {
         this.maxAnonymousSearches = maxAnonymousSearches;
         this.windowMs = windowMinutes * 60_000;
+        this.retention = Duration.ofMillis(windowMs).plus(RETENTION_SLACK);
+        this.distributedCounter = distributedCounter;
     }
 
     /**
@@ -52,14 +65,11 @@ public class AnonymousSearchBudget {
     public boolean tryConsume(HttpServletRequest request) {
         String ip = resolveClientIp(request);
         long bucket = System.currentTimeMillis() / windowMs;
-        String key = ip + ":" + bucket;
 
-        WindowCounter counter = counters.computeIfAbsent(key, k -> new WindowCounter(bucket));
-        int count = counter.incrementAndGet();
+        OptionalLong count = distributedCounter.incrementAndGet(COUNTER_SCOPE, ip, bucket, retention);
 
-        cleanupIfNeeded();
-
-        return count <= maxAnonymousSearches;
+        // Fail-open: a backend hiccup must never block a visitor's search.
+        return count.isEmpty() || count.getAsLong() <= maxAnonymousSearches;
     }
 
     // ── IP resolution (Cloudflare-aware) — same precedence as RateLimitFilter ──
@@ -74,28 +84,5 @@ public class AnonymousSearchBudget {
             return xff.split(",")[0].strip();
         }
         return request.getRemoteAddr();
-    }
-
-    private void cleanupIfNeeded() {
-        long now = System.currentTimeMillis();
-        long last = lastCleanup.get();
-        if (now - last < CLEANUP_INTERVAL_MS) return;
-        if (!lastCleanup.compareAndSet(last, now)) return;
-
-        long currentBucket = now / windowMs;
-        counters.entrySet().removeIf(e -> e.getValue().bucket < currentBucket);
-    }
-
-    private static class WindowCounter {
-        final long bucket;
-        private final AtomicInteger count = new AtomicInteger(0);
-
-        WindowCounter(long bucket) {
-            this.bucket = bucket;
-        }
-
-        int incrementAndGet() {
-            return count.incrementAndGet();
-        }
     }
 }

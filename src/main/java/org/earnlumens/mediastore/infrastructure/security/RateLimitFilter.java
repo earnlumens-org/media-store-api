@@ -4,6 +4,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.earnlumens.mediastore.infrastructure.counter.DistributedCounter;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -14,9 +15,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.time.Duration;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -40,6 +43,15 @@ import java.util.concurrent.atomic.AtomicLong;
  *
  * <p>IP is extracted Cloudflare-aware: CF-Connecting-IP → X-Forwarded-For → remoteAddr.
  * Expired windows are cleaned up lazily every 2 minutes.
+ *
+ * <p><b>Horizontal scaling (Phase 3, task 3.1 — P0-5):</b> the AUTH tier is
+ * enforced through a {@link DistributedCounter} shared by every instance, so
+ * the brute-force limit stays 10/min/IP regardless of how many Cloud Run
+ * instances are serving — and it is <b>fail-closed</b>: if the counter backend
+ * is unreachable the login attempt is rejected, never silently unmetered.
+ * All other tiers are DoS mitigations where a per-instance window is an
+ * acceptable approximation; they intentionally stay in-memory (zero added
+ * latency, no extra writes — see Decision 2.4 of SCALABILITY-AUDIT.md).
  */
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 1) // right after TenantFilter
@@ -69,6 +81,17 @@ public class RateLimitFilter extends OncePerRequestFilter {
     private final AtomicLong lastCleanup = new AtomicLong(System.currentTimeMillis());
     private static final long CLEANUP_INTERVAL_MS = 120_000; // 2 minutes
 
+    /** Scope name for AUTH-tier windows in the shared counter backend. */
+    static final String AUTH_COUNTER_SCOPE = "auth";
+    /**
+     * How long the backend keeps an AUTH window document: the 1-minute window
+     * plus slack for Mongo's ~60 s TTL sweep granularity.
+     */
+    private static final Duration AUTH_COUNTER_RETENTION = Duration.ofMinutes(2);
+
+    /** Cross-instance counter backing the fail-closed AUTH tier. */
+    private final DistributedCounter distributedCounter;
+
     /**
      * CORS allow-list for 429 responses. Loaded from the same config as
      * {@link WebSecurityConfig#corsConfigurationSource()} so the two stay in
@@ -78,8 +101,10 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     public RateLimitFilter(
             @Value("${mediastore.frontend.uri:}") String frontendUri,
-            @Value("${mediastore.cors.allowed-origins:}") String allowedOriginsConfig
+            @Value("${mediastore.cors.allowed-origins:}") String allowedOriginsConfig,
+            DistributedCounter distributedCounter
     ) {
+        this.distributedCounter = distributedCounter;
         Set<String> origins = new HashSet<>();
         if (allowedOriginsConfig != null && !allowedOriginsConfig.isBlank()) {
             Arrays.stream(allowedOriginsConfig.split(","))
@@ -112,11 +137,24 @@ public class RateLimitFilter extends OncePerRequestFilter {
         String ip = resolveClientIp(request);
         Tier tier = classifyRequest(path);
         long minute = System.currentTimeMillis() / 60_000;
-        String key = ip + ":" + tier.name() + ":" + minute;
 
-        WindowCounter counter = counters.computeIfAbsent(key,
-                k -> new WindowCounter(minute));
-        int count = counter.incrementAndGet();
+        long count;
+        if (tier == Tier.AUTH) {
+            // Shared across all instances; fail-closed on backend failure.
+            OptionalLong shared = distributedCounter.incrementAndGet(
+                    AUTH_COUNTER_SCOPE, ip, minute, AUTH_COUNTER_RETENTION);
+            if (shared.isEmpty()) {
+                logger.error("Auth rate-limit counter unavailable — failing closed: ip={}, path={}", ip, path);
+                rejectTooManyRequests(request, response, tier, 0);
+                return;
+            }
+            count = shared.getAsLong();
+        } else {
+            String key = ip + ":" + tier.name() + ":" + minute;
+            WindowCounter counter = counters.computeIfAbsent(key,
+                    k -> new WindowCounter(minute));
+            count = counter.incrementAndGet();
+        }
 
         // Set rate limit headers (standard draft RFC)
         response.setHeader("X-RateLimit-Limit", String.valueOf(tier.maxPerMinute));
@@ -126,11 +164,8 @@ public class RateLimitFilter extends OncePerRequestFilter {
         if (count > tier.maxPerMinute) {
             logger.warn("Rate limited: ip={}, tier={}, count={}, path={}",
                     ip, tier, count, path);
-            addCorsHeaders(request, response);
-            response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
-            response.setContentType("application/json");
-            response.setHeader("Retry-After", "60");
-            response.getWriter().write("{\"error\":\"Too Many Requests\"}");
+            rejectTooManyRequests(request, response, tier,
+                    Math.max(0, tier.maxPerMinute - count));
             return;
         }
 
@@ -181,6 +216,21 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
         long currentMinute = now / 60_000;
         counters.entrySet().removeIf(e -> e.getValue().minute < currentMinute - 1);
+    }
+
+    // ── 429 response ──────────────────────────────────────────────
+
+    private void rejectTooManyRequests(HttpServletRequest request,
+                                       HttpServletResponse response,
+                                       Tier tier,
+                                       long remaining) throws IOException {
+        response.setHeader("X-RateLimit-Limit", String.valueOf(tier.maxPerMinute));
+        response.setHeader("X-RateLimit-Remaining", String.valueOf(remaining));
+        addCorsHeaders(request, response);
+        response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
+        response.setContentType("application/json");
+        response.setHeader("Retry-After", "60");
+        response.getWriter().write("{\"error\":\"Too Many Requests\"}");
     }
 
     // ── CORS helper for rejected responses ───────────────────────

@@ -2,6 +2,7 @@ package org.earnlumens.mediastore.infrastructure.security;
 
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
+import org.earnlumens.mediastore.infrastructure.counter.DistributedCounter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -9,19 +10,49 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.mock.web.MockHttpServletResponse;
 
 import java.io.IOException;
+import java.time.Duration;
+import java.util.OptionalLong;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 
 import static org.junit.jupiter.api.Assertions.*;
 
 class RateLimitFilterTest {
 
+    /**
+     * In-memory {@link DistributedCounter} double — behaves like the shared
+     * Mongo backend (one counter per scope:key:window across every filter
+     * instance) and can be switched into failure mode to exercise the
+     * fail-closed path.
+     */
+    static class FakeCounter implements DistributedCounter {
+        final ConcurrentHashMap<String, AtomicLong> counts = new ConcurrentHashMap<>();
+        volatile boolean failing = false;
+
+        @Override
+        public OptionalLong incrementAndGet(String scope, String key, long windowBucket, Duration retention) {
+            if (failing) return OptionalLong.empty();
+            return OptionalLong.of(counts
+                    .computeIfAbsent(scope + ":" + key + ":" + windowBucket, k -> new AtomicLong())
+                    .incrementAndGet());
+        }
+    }
+
+    private FakeCounter counter;
     private RateLimitFilter filter;
     private FilterChain chain;
 
     @BeforeEach
     void setUp() {
-        filter = new RateLimitFilter("https://earnlumens.org",
-                "https://earnlumens.org,https://app-dev.earnlumens.org,http://localhost:3000");
+        counter = new FakeCounter();
+        filter = newFilter(counter);
         chain = (req, res) -> {}; // no-op chain
+    }
+
+    private static RateLimitFilter newFilter(DistributedCounter counter) {
+        return new RateLimitFilter("https://earnlumens.org",
+                "https://earnlumens.org,https://app-dev.earnlumens.org,http://localhost:3000",
+                counter);
     }
 
     private MockHttpServletRequest request(String path, String ip) {
@@ -199,6 +230,69 @@ class RateLimitFilterTest {
             assertEquals(429, res.getStatus());
             assertEquals("60", res.getHeader("Retry-After"));
             assertTrue(res.getContentAsString().contains("Too Many Requests"));
+        }
+    }
+
+    @Nested
+    class DistributedAuthTier {
+
+        @Test
+        void authLimit_isSharedAcrossInstances() throws ServletException, IOException {
+            // Two filter instances simulate two Cloud Run instances sharing
+            // the same counter backend.
+            RateLimitFilter instanceA = newFilter(counter);
+            RateLimitFilter instanceB = newFilter(counter);
+            String ip = "20.0.0.1";
+
+            for (int i = 0; i < 5; i++) {
+                instanceA.doFilter(request("/api/auth/session", ip), new MockHttpServletResponse(), chain);
+                instanceB.doFilter(request("/api/auth/session", ip), new MockHttpServletResponse(), chain);
+            }
+
+            // 10 requests consumed across both instances → the 11th is blocked
+            // no matter which instance serves it.
+            var res = new MockHttpServletResponse();
+            instanceB.doFilter(request("/api/auth/session", ip), res, chain);
+            assertEquals(429, res.getStatus());
+        }
+
+        @Test
+        void authTier_failsClosed_whenCounterBackendUnavailable() throws ServletException, IOException {
+            counter.failing = true;
+
+            var res = new MockHttpServletResponse();
+            filter.doFilter(request("/api/auth/session", "20.0.0.2"), res, chain);
+
+            assertEquals(429, res.getStatus());
+            assertEquals("60", res.getHeader("Retry-After"));
+        }
+
+        @Test
+        void nonAuthTiers_unaffectedByCounterBackendFailure() throws ServletException, IOException {
+            counter.failing = true;
+
+            var res = new MockHttpServletResponse();
+            filter.doFilter(request("/public/entries", "20.0.0.3"), res, chain);
+
+            // Non-auth tiers stay on the in-memory window and keep serving.
+            assertNotEquals(429, res.getStatus());
+        }
+
+        @Test
+        void authWindows_rotateByMinuteBucket() throws ServletException, IOException {
+            String ip = "20.0.0.4";
+            for (int i = 0; i < 10; i++) {
+                filter.doFilter(request("/api/auth/session", ip), new MockHttpServletResponse(), chain);
+            }
+            var blocked = new MockHttpServletResponse();
+            filter.doFilter(request("/api/auth/session", ip), blocked, chain);
+            assertEquals(429, blocked.getStatus());
+
+            // A new minute bucket starts a fresh shared counter.
+            counter.counts.clear();
+            var res = new MockHttpServletResponse();
+            filter.doFilter(request("/api/auth/session", ip), res, chain);
+            assertNotEquals(429, res.getStatus());
         }
     }
 }
