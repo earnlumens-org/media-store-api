@@ -394,7 +394,15 @@ public class PaymentService {
     }
 
     /**
-     * Phase 2: Submit a signed transaction.
+     * Result of the fast, non-blocking phase of {@code submit()}: the order is
+     * atomically locked in PROCESSING and the signed XDR fully verified. The
+     * remaining work (Horizon submission + on-chain confirmation) is blocking
+     * and may run inline (sync mode) or on a background executor (async mode).
+     */
+    public record LockedSubmission(Order order, org.stellar.sdk.Transaction transaction) {}
+
+    /**
+     * Phase 2: Submit a signed transaction (full synchronous pipeline).
      *
      * Hardened pipeline:
      * <ol>
@@ -413,6 +421,15 @@ public class PaymentService {
      * </ol>
      */
     public SubmitPaymentResponse submit(String tenantId, String userId, SubmitPaymentRequest request) {
+        return finalizeSubmission(lockAndVerify(tenantId, userId, request));
+    }
+
+    /**
+     * Fast phase of the submit pipeline (steps 1–3): atomic PROCESSING lock,
+     * strict signed-XDR verification and anti-replay. No network I/O against
+     * Horizon — completes in milliseconds, never blocks the caller.
+     */
+    public LockedSubmission lockAndVerify(String tenantId, String userId, SubmitPaymentRequest request) {
         String orderId = request.orderId();
         String signedXdr = request.signedXdr();
         LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
@@ -446,6 +463,24 @@ public class PaymentService {
                     expectedTxHash, orderId);
             throw new IllegalStateException("Transaction hash already used by a completed order");
         }
+
+        return new LockedSubmission(order, transaction);
+    }
+
+    /**
+     * Blocking phase of the submit pipeline (steps 4–8): Horizon submission,
+     * mandatory on-chain confirmation (may poll up to ~20 s), CAS completion
+     * and idempotent entitlement creation. In async mode this runs on a
+     * background executor; any failure leaves the order FAILED for the
+     * reconciliation watchdog to issue the final verdict against the chain.
+     */
+    public SubmitPaymentResponse finalizeSubmission(LockedSubmission locked) {
+        Order order = locked.order();
+        org.stellar.sdk.Transaction transaction = locked.transaction();
+        String tenantId = order.getTenantId();
+        String orderId = order.getId();
+        String userId = order.getUserId();
+        String expectedTxHash = order.getStellarTxHash();
 
         // 4. Submit to the Stellar network and resolve the real outcome.
         StellarTransactionService.SubmissionOutcome outcome = stellarTxService.submitTransaction(transaction);
@@ -503,6 +538,24 @@ public class PaymentService {
                 OrderStatus.COMPLETED.name(),
                 completed.getEntryId(),
                 completed.getCollectionId()
+        );
+    }
+
+    /**
+     * Read-only status of a buyer's own order — polled by the frontend while an
+     * async submission is being confirmed on-chain. Ownership and tenant are
+     * enforced; never leaks other users' orders.
+     */
+    public SubmitPaymentResponse getOrderStatus(String tenantId, String userId, String orderId) {
+        Order order = orderRepository.findByTenantIdAndId(tenantId, orderId)
+                .filter(o -> o.getUserId().equals(userId))
+                .orElseThrow(() -> new IllegalArgumentException("Order not found"));
+        return new SubmitPaymentResponse(
+                order.getId(),
+                order.getStellarTxHash(),
+                order.getStatus().name(),
+                order.getEntryId(),
+                order.getCollectionId()
         );
     }
 

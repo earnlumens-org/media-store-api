@@ -2,6 +2,7 @@ package org.earnlumens.mediastore.web.payment;
 
 import jakarta.validation.Valid;
 import org.earnlumens.mediastore.application.payment.PaymentService;
+import org.earnlumens.mediastore.application.payment.PaymentSubmissionCoordinator;
 import org.earnlumens.mediastore.domain.media.dto.request.PreparePaymentRequest;
 import org.earnlumens.mediastore.domain.media.dto.request.SubmitPaymentRequest;
 import org.earnlumens.mediastore.domain.media.dto.response.PreparePaymentResponse;
@@ -19,10 +20,13 @@ import java.util.Map;
 
 /**
  * REST controller for the two-phase payment flow:
- *   POST /api/payments/prepare  — builds unsigned XDR, returns orderId + XDR
- *   POST /api/payments/submit   — accepts signed XDR, submits to Stellar, creates entitlement
+ *   POST /api/payments/prepare          — builds unsigned XDR, returns orderId + XDR
+ *   POST /api/payments/submit           — accepts signed XDR; verifies and locks the order
+ *                                         inline, then confirms on-chain asynchronously
+ *                                         (202 + PROCESSING; poll the order status)
+ *   GET  /api/payments/orders/{orderId} — buyer-owned order status (poll until final)
  *
- * Both endpoints require authentication (refresh cookie / JWT).
+ * All endpoints require authentication (refresh cookie / JWT).
  */
 @RestController
 @RequestMapping("/api/payments")
@@ -31,9 +35,12 @@ public class PaymentController {
     private static final Logger logger = LoggerFactory.getLogger(PaymentController.class);
 
     private final PaymentService paymentService;
+    private final PaymentSubmissionCoordinator submissionCoordinator;
 
-    public PaymentController(PaymentService paymentService) {
+    public PaymentController(PaymentService paymentService,
+                             PaymentSubmissionCoordinator submissionCoordinator) {
         this.paymentService = paymentService;
+        this.submissionCoordinator = submissionCoordinator;
     }
 
     @PostMapping("/prepare")
@@ -74,7 +81,12 @@ public class PaymentController {
         String tenantId = TenantContext.require();
 
         try {
-            SubmitPaymentResponse response = paymentService.submit(tenantId, userId, request);
+            SubmitPaymentResponse response = submissionCoordinator.submit(tenantId, userId, request);
+            // Async mode: the order is locked and verified, but the on-chain
+            // confirmation continues in background — the client polls the order.
+            if ("PROCESSING".equals(response.status())) {
+                return ResponseEntity.accepted().body(response);
+            }
             return ResponseEntity.ok(response);
         } catch (IllegalArgumentException e) {
             logger.warn("Submit payment failed (400): {}", e.getMessage());
@@ -85,6 +97,30 @@ public class PaymentController {
         } catch (RuntimeException e) {
             logger.error("Submit payment failed (500): {}", e.getMessage());
             return ResponseEntity.internalServerError().body(Map.of("error", "Payment submission failed"));
+        }
+    }
+
+    /**
+     * Status of the buyer's own order — polled by the frontend after a 202
+     * submit until the order reaches a final state (COMPLETED / FAILED /
+     * EXPIRED). Never cacheable: the whole point is freshness.
+     */
+    @GetMapping("/orders/{orderId}")
+    public ResponseEntity<?> orderStatus(@PathVariable String orderId) {
+        String userId = extractUserId();
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+
+        String tenantId = TenantContext.require();
+
+        try {
+            SubmitPaymentResponse response = paymentService.getOrderStatus(tenantId, userId, orderId);
+            return ResponseEntity.ok()
+                    .header("Cache-Control", "private, no-store")
+                    .body(response);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.status(404).body(Map.of("error", "Order not found"));
         }
     }
 
