@@ -20,8 +20,8 @@ public interface CollectionMongoRepository extends MongoRepository<CollectionEnt
     Page<CollectionEntity> findByTenantIdAndUserIdOrderByCreatedAtDesc(
             String tenantId, String userId, Pageable pageable);
 
-    Page<CollectionEntity> findByTenantIdAndAuthorUsernameIgnoreCaseAndStatusAndVisibilityOrderByPublishedAtDesc(
-            String tenantId, String authorUsername, String status, String visibility, Pageable pageable);
+    Page<CollectionEntity> findByTenantIdAndAuthorUsernameLowerAndStatusAndVisibilityOrderByPublishedAtDesc(
+            String tenantId, String authorUsernameLower, String status, String visibility, Pageable pageable);
 
     List<CollectionEntity> findByTenantIdAndStatusAndItems_EntryId(
             String tenantId, String status, String entryId);

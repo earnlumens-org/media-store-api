@@ -47,13 +47,17 @@ public class EntryRepositoryImpl implements EntryRepository {
 
     @Override
     public Page<Entry> findByTenantIdAndAuthorUsernameAndStatus(String tenantId, String authorUsername, EntryStatus status, Pageable pageable) {
-        return entryMongoRepository.findByTenantIdAndAuthorUsernameIgnoreCaseAndStatusOrderByPublishedAtDesc(tenantId, authorUsername, status.name(), pageable)
+        // Case-insensitive lookup via the denormalized authorUsernameLower field,
+        // which is index-backed (unlike the previous IgnoreCase regex query).
+        return entryMongoRepository.findByTenantIdAndAuthorUsernameLowerAndStatusOrderByPublishedAtDesc(
+                tenantId, authorUsername.toLowerCase(java.util.Locale.ROOT), status.name(), pageable)
                 .map(entryMapper::toModel);
     }
 
     @Override
     public Page<Entry> findByTenantIdAndAuthorUsernameAndStatusAndType(String tenantId, String authorUsername, EntryStatus status, EntryType type, Pageable pageable) {
-        return entryMongoRepository.findByTenantIdAndAuthorUsernameIgnoreCaseAndStatusAndTypeOrderByPublishedAtDesc(tenantId, authorUsername, status.name(), type.name(), pageable)
+        return entryMongoRepository.findByTenantIdAndAuthorUsernameLowerAndStatusAndTypeOrderByPublishedAtDesc(
+                tenantId, authorUsername.toLowerCase(java.util.Locale.ROOT), status.name(), type.name(), pageable)
                 .map(entryMapper::toModel);
     }
 

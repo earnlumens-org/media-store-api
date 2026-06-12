@@ -287,10 +287,12 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
                                                                   String type, String search) {
         List<AggregationOperation> ops = new ArrayList<>();
 
-        // 1. Match PUBLISHED entries for this author
-        String usernamePattern = "^" + Pattern.quote(authorUsername) + "$";
+        // 1. Match PUBLISHED entries for this author.
+        // Exact match on the denormalized lowercase field: index-backed
+        // (idx_tenant_status_authorlower_published), unlike a case-insensitive regex.
+        String usernameLower = authorUsername.toLowerCase(java.util.Locale.ROOT);
         ops.add(Aggregation.match(Criteria.where("tenantId").is(tenantId)
-                .and("authorUsername").regex(usernamePattern, "i")
+                .and("authorUsernameLower").is(usernameLower)
                 .and("status").is("PUBLISHED")));
 
         // 2. Normalize entry docs
@@ -306,9 +308,7 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
         // 3. $unionWith PUBLISHED + PUBLIC collections by the same author
         Document collMatch = new Document("$match",
                 new Document("tenantId", tenantId)
-                        .append("authorUsername",
-                                new Document("$regex", "^" + Pattern.quote(authorUsername) + "$")
-                                        .append("$options", "i"))
+                        .append("authorUsernameLower", usernameLower)
                         .append("status", "PUBLISHED")
                         .append("visibility", "PUBLIC"));
         Document collAddFields = Document.parse("""
@@ -643,6 +643,7 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
         Query query = new Query(Criteria.where("tenantId").is(tenantId).and("userId").is(userId));
         Update update = new Update()
                 .set("authorUsername", newUsername)
+                .set("authorUsernameLower", newUsername == null ? null : newUsername.toLowerCase(java.util.Locale.ROOT))
                 .set("authorAvatarUrl", newAvatarUrl);
 
         UpdateResult result = mongoTemplate.updateMulti(query, update, EntryEntity.class);

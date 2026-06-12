@@ -39,7 +39,13 @@ public interface EntryMapper {
     @Mapping(target = "pricingMode", source = "pricingMode", qualifiedByName = "pricingModeToString")
     @Mapping(target = "paymentSplits", source = "paymentSplits", qualifiedByName = "splitsToEntities")
     @Mapping(target = "statusHistory", source = "statusHistory", qualifiedByName = "statusHistoryToEntities")
+    @Mapping(target = "authorUsernameLower", source = "authorUsername", qualifiedByName = "toLowerCase")
     EntryEntity toEntity(Entry model);
+
+    @Named("toLowerCase")
+    default String toLowerCase(String value) {
+        return value == null ? null : value.toLowerCase(java.util.Locale.ROOT);
+    }
 
     @Named("stringToEntryType")
     default EntryType stringToEntryType(String value) {

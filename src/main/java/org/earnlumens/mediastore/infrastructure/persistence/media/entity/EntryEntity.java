@@ -19,6 +19,12 @@ import java.util.List;
 @CompoundIndex(name = "idx_tenant_status_published", def = "{'tenantId': 1, 'status': 1, 'publishedAt': -1}")
 @CompoundIndex(name = "idx_tenant_status_type_published", def = "{'tenantId': 1, 'status': 1, 'type': 1, 'publishedAt': -1}")
 @CompoundIndex(name = "idx_tenant_space_status_published", def = "{'tenantId': 1, 'spaceIds': 1, 'status': 1, 'publishedAt': -1}")
+// Hot-feed indexes (scalability): community feed filters by authorBadge and the
+// profile feed by authorUsernameLower. Without them both queries collection-scan
+// the tenant's PUBLISHED partition on every request. Created explicitly by
+// HotFeedIndexMigration (auto-index-creation is disabled).
+@CompoundIndex(name = "idx_tenant_status_badge_published", def = "{'tenantId': 1, 'status': 1, 'authorBadge': 1, 'publishedAt': -1}")
+@CompoundIndex(name = "idx_tenant_status_authorlower_published", def = "{'tenantId': 1, 'status': 1, 'authorUsernameLower': 1, 'publishedAt': -1}")
 public class EntryEntity {
 
     @Id
@@ -31,6 +37,14 @@ public class EntryEntity {
     private String userId;
 
     private String authorUsername;
+
+    /**
+     * Lowercased copy of {@link #authorUsername}, kept in sync by the persistence
+     * mapper and by {@code updateAuthorInfoByUserId}. Exists so profile-feed
+     * lookups can use an exact, index-backed match instead of a case-insensitive
+     * regex (which cannot use index bounds in MongoDB).
+     */
+    private String authorUsernameLower;
 
     private String authorAvatarUrl;
 
@@ -141,6 +155,9 @@ public class EntryEntity {
 
     public String getAuthorUsername() { return authorUsername; }
     public void setAuthorUsername(String authorUsername) { this.authorUsername = authorUsername; }
+
+    public String getAuthorUsernameLower() { return authorUsernameLower; }
+    public void setAuthorUsernameLower(String authorUsernameLower) { this.authorUsernameLower = authorUsernameLower; }
 
     public String getAuthorAvatarUrl() { return authorAvatarUrl; }
     public void setAuthorAvatarUrl(String authorAvatarUrl) { this.authorAvatarUrl = authorAvatarUrl; }

@@ -18,6 +18,11 @@ import java.util.List;
 @CompoundIndex(name = "idx_coll_tenant_user", def = "{'tenantId': 1, 'userId': 1}")
 @CompoundIndex(name = "idx_coll_tenant_status_published", def = "{'tenantId': 1, 'status': 1, 'publishedAt': -1}")
 @CompoundIndex(name = "idx_coll_tenant_items_entry", def = "{'tenantId': 1, 'items.entryId': 1}")
+// Hot-feed indexes (scalability): the community/profile feeds $unionWith this
+// collection with the same filters used on entries. See EntryEntity for the
+// rationale. Created explicitly by HotFeedIndexMigration.
+@CompoundIndex(name = "idx_coll_tenant_status_badge_published", def = "{'tenantId': 1, 'status': 1, 'authorBadge': 1, 'publishedAt': -1}")
+@CompoundIndex(name = "idx_coll_tenant_status_authorlower_published", def = "{'tenantId': 1, 'status': 1, 'authorUsernameLower': 1, 'publishedAt': -1}")
 public class CollectionEntity {
 
     @Id
@@ -30,6 +35,13 @@ public class CollectionEntity {
     private String userId;
 
     private String authorUsername;
+
+    /**
+     * Lowercased copy of {@link #authorUsername}, kept in sync by the persistence
+     * mapper. Enables exact, index-backed profile-feed matches instead of
+     * case-insensitive regex scans. See EntryEntity#authorUsernameLower.
+     */
+    private String authorUsernameLower;
 
     private String authorAvatarUrl;
 
@@ -97,6 +109,9 @@ public class CollectionEntity {
 
     public String getAuthorUsername() { return authorUsername; }
     public void setAuthorUsername(String authorUsername) { this.authorUsername = authorUsername; }
+
+    public String getAuthorUsernameLower() { return authorUsernameLower; }
+    public void setAuthorUsernameLower(String authorUsernameLower) { this.authorUsernameLower = authorUsernameLower; }
 
     public String getAuthorAvatarUrl() { return authorAvatarUrl; }
     public void setAuthorAvatarUrl(String authorAvatarUrl) { this.authorAvatarUrl = authorAvatarUrl; }

@@ -58,7 +58,9 @@ public class CollectionRepositoryImpl implements CollectionRepository {
     @Override
     public Page<Collection> findByTenantIdAndAuthorUsernameAndStatusAndVisibility(
             String tenantId, String authorUsername, CollectionStatus status, MediaVisibility visibility, Pageable pageable) {
-        return collectionMongoRepository.findByTenantIdAndAuthorUsernameIgnoreCaseAndStatusAndVisibilityOrderByPublishedAtDesc(
+        // Case-insensitive lookup via the denormalized authorUsernameLower field,
+        // which is index-backed (unlike the previous IgnoreCase regex query).
+        return collectionMongoRepository.findByTenantIdAndAuthorUsernameLowerAndStatusAndVisibilityOrderByPublishedAtDesc(
                 tenantId, authorUsername, status.name(), visibility.name(), pageable)
                 .map(collectionMapper::toModel);
     }

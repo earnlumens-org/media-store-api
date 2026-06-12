@@ -32,7 +32,13 @@ public interface CollectionMapper {
     @Mapping(target = "visibility", source = "visibility", qualifiedByName = "mediaVisibilityToString")
     @Mapping(target = "priceCurrency", source = "priceCurrency", qualifiedByName = "priceCurrencyToString")
     @Mapping(target = "paymentSplits", source = "paymentSplits", qualifiedByName = "splitsToEntities")
+    @Mapping(target = "authorUsernameLower", source = "authorUsername", qualifiedByName = "toLowerCase")
     CollectionEntity toEntity(Collection model);
+
+    @Named("toLowerCase")
+    default String toLowerCase(String value) {
+        return value == null ? null : value.toLowerCase(java.util.Locale.ROOT);
+    }
 
     CollectionItem toModel(CollectionItemEmbeddable embeddable);
 

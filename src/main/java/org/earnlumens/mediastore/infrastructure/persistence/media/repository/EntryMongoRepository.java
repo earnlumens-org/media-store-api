@@ -26,9 +26,9 @@ public interface EntryMongoRepository extends MongoRepository<EntryEntity, Strin
     Page<EntryEntity> findByTenantIdAndSpaceIdsContainingAndStatusOrderByPublishedAtDesc(
             String tenantId, String spaceId, String status, Pageable pageable);
 
-    Page<EntryEntity> findByTenantIdAndAuthorUsernameIgnoreCaseAndStatusOrderByPublishedAtDesc(String tenantId, String authorUsername, String status, Pageable pageable);
+    Page<EntryEntity> findByTenantIdAndAuthorUsernameLowerAndStatusOrderByPublishedAtDesc(String tenantId, String authorUsernameLower, String status, Pageable pageable);
 
-    Page<EntryEntity> findByTenantIdAndAuthorUsernameIgnoreCaseAndStatusAndTypeOrderByPublishedAtDesc(String tenantId, String authorUsername, String status, String type, Pageable pageable);
+    Page<EntryEntity> findByTenantIdAndAuthorUsernameLowerAndStatusAndTypeOrderByPublishedAtDesc(String tenantId, String authorUsernameLower, String status, String type, Pageable pageable);
 
     Page<EntryEntity> findByTenantIdAndUserIdOrderByCreatedAtDesc(String tenantId, String userId, Pageable pageable);
 
