@@ -13,6 +13,7 @@ import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Repository;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -655,121 +656,248 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
     /** Hard cap on query tokens so a pathological query can never explode the pipeline. */
     private static final int MAX_SEARCH_TOKENS = 6;
 
+    /** Normalizes entry docs for the shared feed projection + materializes the text score. */
+    private static final String ENTRY_SEARCH_ADD_FIELDS = """
+        { "$addFields": {
+            "kind": "entry",
+            "sortDate": "$publishedAt",
+            "itemCount": { "$literal": 0 },
+            "coverR2Key": { "$literal": null },
+            "searchScore": { "$meta": "textScore" }
+        }}
+        """;
+
+    /** Normalizes collection docs for the shared feed projection + materializes the text score. */
+    private static final String COLLECTION_SEARCH_ADD_FIELDS = """
+        { "$addFields": {
+            "kind": "collection",
+            "type": { "$ifNull": [ { "$toLower": "$collectionType" }, "catalog" ] },
+            "sortDate": "$publishedAt",
+            "itemCount": { "$cond": { "if": { "$isArray": "$items" }, "then": { "$size": "$items" }, "else": 0 } },
+            "durationSec": { "$literal": null },
+            "viewCount": { "$literal": 0 },
+            "thumbnailR2Key": { "$literal": null },
+            "searchScore": { "$meta": "textScore" }
+        }}
+        """;
+
+    /**
+     * Full-text search across PUBLISHED entries and PUBLIC collections, backed by
+     * the weighted text indexes created by {@code SearchTextIndexMigration}
+     * (title:10, tags:8, authorUsername:5, description:1).
+     *
+     * <p>{@code $text} must be the first stage of a pipeline and is not allowed
+     * inside {@code $unionWith} sub-pipelines, so the search runs as TWO
+     * index-backed aggregations (entries + collections), each fetching its top
+     * {@code skip + limit} hits, which are then merge-sorted in memory and
+     * sliced. Both totals come from exact {@code $count} facets. Page depth is
+     * capped by the service layer, so the in-memory merge stays bounded.
+     *
+     * <p>Returns the same {@code {data: […], count: [{total}]}} facet document
+     * the previous single-pipeline implementation produced, so callers are
+     * unchanged.
+     */
     @Override
     public Document findSearchFeed(String tenantId, String query, String type, String sort,
                                    int skip, int limit) {
-        List<AggregationOperation> ops = buildSearchFeedPipeline(tenantId, query, type);
+        String textQuery = buildTextSearchQuery(query);
+        if (textQuery.isEmpty()) {
+            return new Document("data", List.of())
+                    .append("count", List.of(new Document("total", 0L)));
+        }
 
-        Document sortDoc = buildSearchSortDocument(sort);
+        boolean collectionsOnly = "COLLECTION".equalsIgnoreCase(type);
+        boolean entriesWanted = !collectionsOnly;
+        boolean collectionsWanted = collectionsOnly || type == null || type.isBlank();
+        int fetch = Math.max(1, skip + limit);
+        Document sortKeys = buildSearchSortKeys(sort);
 
+        List<Document> entryData = List.of();
+        long entryTotal = 0L;
+        if (entriesWanted) {
+            // tenantId + status equality is REQUIRED: the text index is compound
+            // with those prefix keys, partitioning it per tenant.
+            Document match = new Document("$text", new Document("$search", textQuery))
+                    .append("tenantId", tenantId)
+                    .append("status", "PUBLISHED");
+            if (type != null && !type.isBlank()) {
+                match.append("type", type.toUpperCase());
+            }
+            Document facet = runTextSearchFacet("entries", match, ENTRY_SEARCH_ADD_FIELDS, sortKeys, fetch);
+            entryData = facet.getList("data", Document.class, List.of());
+            entryTotal = extractFacetTotal(facet);
+        }
+
+        List<Document> collectionData = List.of();
+        long collectionTotal = 0L;
+        if (collectionsWanted) {
+            Document match = new Document("$text", new Document("$search", textQuery))
+                    .append("tenantId", tenantId)
+                    .append("status", "PUBLISHED")
+                    .append("visibility", "PUBLIC");
+            Document facet = runTextSearchFacet("collections", match, COLLECTION_SEARCH_ADD_FIELDS, sortKeys, fetch);
+            collectionData = facet.getList("data", Document.class, List.of());
+            collectionTotal = extractFacetTotal(facet);
+        }
+
+        List<Document> merged = mergeSorted(entryData, collectionData, searchComparator(sort));
+        int from = Math.min(skip, merged.size());
+        int to = Math.min(skip + limit, merged.size());
+        List<Document> page = new ArrayList<>(merged.subList(from, to));
+        // Internal merge key — keep the wire payload identical to before.
+        page.forEach(doc -> doc.remove("searchScore"));
+
+        return new Document("data", page)
+                .append("count", List.of(new Document("total", entryTotal + collectionTotal)));
+    }
+
+    private Document runTextSearchFacet(String collection, Document match, String addFields,
+                                        Document sortKeys, int fetch) {
+        Document project = Document.parse(PUBLIC_FEED_PROJECT);
+        project.get("$project", Document.class).append("searchScore", 1);
+
+        List<AggregationOperation> ops = new ArrayList<>();
+        ops.add(context -> new Document("$match", match));
+        ops.add(context -> Document.parse(addFields));
         ops.add(context -> new Document("$facet", new Document()
                 .append("data", List.of(
-                        sortDoc,
-                        new Document("$skip", skip),
-                        new Document("$limit", limit),
-                        Document.parse(PUBLIC_FEED_PROJECT)))
-                .append("count", List.of(
-                        new Document("$count", "total")))));
+                        new Document("$sort", sortKeys),
+                        new Document("$limit", fetch),
+                        project))
+                .append("count", List.of(new Document("$count", "total")))));
 
         Aggregation agg = Aggregation.newAggregation(ops);
-        return mongoTemplate.aggregate(agg, "entries", Document.class).getUniqueMappedResult();
+        Document result = mongoTemplate.aggregate(agg, collection, Document.class).getUniqueMappedResult();
+        return result != null ? result : new Document();
     }
 
-    private List<AggregationOperation> buildSearchFeedPipeline(String tenantId, String query, String type) {
-        List<AggregationOperation> ops = new ArrayList<>();
-
-        // 1. Match ALL PUBLISHED entries for this tenant.
-        ops.add(Aggregation.match(Criteria.where("tenantId").is(tenantId)
-                .and("status").is("PUBLISHED")));
-
-        // 2. Normalize entry docs.
-        ops.add(context -> Document.parse("""
-            { "$addFields": {
-                "kind": "entry",
-                "sortDate": "$publishedAt",
-                "itemCount": { "$literal": 0 },
-                "coverR2Key": { "$literal": null }
-            }}
-            """));
-
-        // 3. $unionWith ALL PUBLISHED + PUBLIC collections for this tenant.
-        Document collMatch = new Document("$match",
-                new Document("tenantId", tenantId)
-                        .append("status", "PUBLISHED")
-                        .append("visibility", "PUBLIC"));
-        Document collAddFields = Document.parse("""
-            { "$addFields": {
-                "kind": "collection",
-                "type": { "$ifNull": [ { "$toLower": "$collectionType" }, "catalog" ] },
-                "sortDate": "$publishedAt",
-                "itemCount": { "$cond": { "if": { "$isArray": "$items" }, "then": { "$size": "$items" }, "else": 0 } },
-                "durationSec": { "$literal": null },
-                "viewCount": { "$literal": 0 },
-                "thumbnailR2Key": { "$literal": null },
-                "tags": { "$literal": [] }
-            }}
-            """);
-        ops.add(context -> new Document("$unionWith",
-                new Document("coll", "collections")
-                        .append("pipeline", List.of(collMatch, collAddFields))));
-
-        // 4. Full-text style token filter (title / description / tags / author).
-        addFullTextSearchFilter(ops, query);
-
-        // 5. Optional type filter.
-        addTypeFilter(ops, type);
-
-        return ops;
+    private static long extractFacetTotal(Document facet) {
+        List<Document> count = facet.getList("count", Document.class, List.of());
+        if (count.isEmpty()) {
+            return 0L;
+        }
+        Number total = count.get(0).get("total", Number.class);
+        return total != null ? total.longValue() : 0L;
     }
 
     /**
-     * Tokenized, multi-field search filter. The query is split on whitespace and
-     * every token must match (AND) at least one of {@code title}, {@code description},
-     * {@code tags} or {@code authorUsername} (case-insensitive, OR within a token) —
-     * the "all words must appear somewhere" behavior large platforms use.
-     *
-     * <p>The tenant + status compound index narrows the scan to one tenant's
-     * published documents before the regex runs, so this stays bounded even on
-     * large collections.
+     * Builds the {@code $text} search expression: tokens (capped at
+     * {@link #MAX_SEARCH_TOKENS}) are each wrapped in quotes so every one is a
+     * required phrase (AND), matching the previous "all words must appear"
+     * regex semantics. The text indexes use {@code default_language: "none"},
+     * so matching is exact-token, case- and diacritic-insensitive.
      */
-    private void addFullTextSearchFilter(List<AggregationOperation> ops, String query) {
+    static String buildTextSearchQuery(String query) {
         if (query == null || query.isBlank()) {
-            return;
+            return "";
         }
-        String[] tokens = query.trim().split("\\s+");
-        List<Criteria> tokenCriteria = new ArrayList<>();
+        StringBuilder sb = new StringBuilder();
         int used = 0;
-        for (String token : tokens) {
-            if (token.isBlank()) continue;
-            if (used >= MAX_SEARCH_TOKENS) break;
-            String escaped = Pattern.quote(token);
-            tokenCriteria.add(new Criteria().orOperator(
-                    Criteria.where("title").regex(escaped, "i"),
-                    Criteria.where("description").regex(escaped, "i"),
-                    Criteria.where("tags").regex(escaped, "i"),
-                    Criteria.where("authorUsername").regex(escaped, "i")
-            ));
+        for (String token : query.trim().split("\\s+")) {
+            String cleaned = token.replace("\"", "");
+            if (cleaned.isBlank()) {
+                continue;
+            }
+            if (used >= MAX_SEARCH_TOKENS) {
+                break;
+            }
+            if (sb.length() > 0) {
+                sb.append(' ');
+            }
+            sb.append('"').append(cleaned).append('"');
             used++;
         }
-        if (tokenCriteria.isEmpty()) {
-            return;
-        }
-        Criteria combined = new Criteria().andOperator(tokenCriteria.toArray(new Criteria[0]));
-        ops.add(Aggregation.match(combined));
+        return sb.toString();
     }
 
     /**
-     * Search sort order. The default ("relevance") approximates relevance with
-     * popularity + recency, which is robust without a scoring index.
+     * Mongo-side sort for each search aggregation. Must stay in lock-step with
+     * {@link #searchComparator}, which merges the two result sets in memory.
+     * The default ("relevance") uses the weighted text score with popularity +
+     * recency as tie-breakers.
      */
-    private Document buildSearchSortDocument(String sort) {
-        if (sort == null) sort = "relevance";
+    private static Document buildSearchSortKeys(String sort) {
+        if (sort == null) {
+            sort = "relevance";
+        }
         return switch (sort) {
-            case "newest" -> new Document("$sort", new Document("sortDate", -1));
-            case "oldest" -> new Document("$sort", new Document("sortDate", 1));
-            case "views" -> new Document("$sort", new Document("viewCount", -1).append("sortDate", -1));
-            default -> new Document("$sort", new Document("viewCount", -1).append("sortDate", -1));
+            case "newest" -> new Document("sortDate", -1);
+            case "oldest" -> new Document("sortDate", 1);
+            case "views" -> new Document("viewCount", -1).append("sortDate", -1);
+            default -> new Document("searchScore", -1)
+                    .append("viewCount", -1).append("sortDate", -1);
         };
+    }
+
+    /** In-memory comparator mirroring {@link #buildSearchSortKeys}. */
+    static Comparator<Document> searchComparator(String sort) {
+        Comparator<Document> dateDesc =
+                Comparator.comparingLong(EntryMongoRepositoryCustomImpl::sortDateMillis).reversed();
+        Comparator<Document> viewsDesc =
+                Comparator.comparingLong((Document doc) -> numberValue(doc, "viewCount")).reversed();
+        if (sort == null) {
+            sort = "relevance";
+        }
+        return switch (sort) {
+            case "newest" -> dateDesc;
+            case "oldest" -> Comparator.comparingLong(EntryMongoRepositoryCustomImpl::sortDateMillis);
+            case "views" -> viewsDesc.thenComparing(dateDesc);
+            default -> Comparator.comparingDouble(EntryMongoRepositoryCustomImpl::scoreValue).reversed()
+                    .thenComparing(viewsDesc).thenComparing(dateDesc);
+        };
+    }
+
+    /** Stable two-pointer merge of two lists already sorted by {@code comparator}. */
+    static List<Document> mergeSorted(List<Document> a, List<Document> b,
+                                      Comparator<Document> comparator) {
+        if (a.isEmpty()) return b;
+        if (b.isEmpty()) return a;
+        List<Document> merged = new ArrayList<>(a.size() + b.size());
+        int i = 0;
+        int j = 0;
+        while (i < a.size() && j < b.size()) {
+            if (comparator.compare(a.get(i), b.get(j)) <= 0) {
+                merged.add(a.get(i++));
+            } else {
+                merged.add(b.get(j++));
+            }
+        }
+        while (i < a.size()) merged.add(a.get(i++));
+        while (j < b.size()) merged.add(b.get(j++));
+        return merged;
+    }
+
+    private static long sortDateMillis(Document doc) {
+        Object value = doc.get("sortDate");
+        return value instanceof java.util.Date date ? date.getTime() : Long.MIN_VALUE;
+    }
+
+    private static long numberValue(Document doc, String field) {
+        Object value = doc.get(field);
+        return value instanceof Number number ? number.longValue() : 0L;
+    }
+
+    private static double scoreValue(Document doc) {
+        Object value = doc.get("searchScore");
+        return value instanceof Number number ? number.doubleValue() : 0d;
+    }
+
+    /**
+     * Escapes regex metacharacters one-by-one (no {@code \Q…\E}) so an anchored
+     * prefix stays a "simple prefix" the Mongo planner can turn into tight
+     * index bounds.
+     */
+    static String escapeSimplePrefixRegex(String value) {
+        StringBuilder sb = new StringBuilder(value.length() + 8);
+        for (int i = 0; i < value.length(); i++) {
+            char c = value.charAt(i);
+            if (Character.isLetterOrDigit(c) || c == '_' || c >= 128) {
+                sb.append(c);
+            } else {
+                sb.append('\\').append(c);
+            }
+        }
+        return sb.toString();
     }
 
     @Override
@@ -777,13 +905,16 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
         if (query == null || query.isBlank()) {
             return List.of();
         }
-        String escaped = Pattern.quote(query.trim());
+        // Anchored prefix on the denormalized lowercase field so the match is
+        // index-backed (idx_tenant_status_authorlower_published) instead of a
+        // case-insensitive substring regex that scans every published doc.
+        String prefix = escapeSimplePrefixRegex(query.trim().toLowerCase(java.util.Locale.ROOT));
 
         List<AggregationOperation> ops = new ArrayList<>();
         // Tenant-scoped: only PUBLISHED content of THIS tenant, author name match.
         ops.add(Aggregation.match(Criteria.where("tenantId").is(tenantId)
                 .and("status").is("PUBLISHED")
-                .and("authorUsername").regex(escaped, "i")));
+                .and("authorUsernameLower").regex("^" + prefix)));
         // Newest first so the grouped avatar/badge reflect the latest publish.
         ops.add(context -> new Document("$sort", new Document("publishedAt", -1)));
         ops.add(context -> Document.parse("""
@@ -801,21 +932,58 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
         return mongoTemplate.aggregate(agg, "entries", Document.class).getMappedResults();
     }
 
+    /**
+     * As-you-type title suggestions. Two index-backed lookups instead of the old
+     * case-insensitive substring regex (which scanned the tenant's whole
+     * PUBLISHED partition):
+     * <ol>
+     *   <li>Anchored prefix on the denormalized {@code titleLower} field
+     *       (idx_tenant_status_titlelower) — handles the partially-typed last
+     *       word.</li>
+     *   <li>If slots remain, whole-word matches anywhere in the title via the
+     *       weighted text index — covers mid-title hits a prefix can't see.</li>
+     * </ol>
+     */
     @Override
     public List<String> searchSuggestions(String tenantId, String query, int limit) {
         if (query == null || query.isBlank()) {
             return List.of();
         }
-        String escaped = Pattern.quote(query.trim());
+        String trimmed = query.trim();
 
+        String prefix = escapeSimplePrefixRegex(trimmed.toLowerCase(java.util.Locale.ROOT));
+        Document prefixMatch = new Document("tenantId", tenantId)
+                .append("status", "PUBLISHED")
+                .append("titleLower", new Document("$regex", "^" + prefix));
+        List<String> suggestions = new ArrayList<>(runSuggestionPipeline(prefixMatch, limit));
+
+        if (suggestions.size() < limit) {
+            String textQuery = buildTextSearchQuery(trimmed);
+            if (!textQuery.isEmpty()) {
+                Document textMatch = new Document("$text", new Document("$search", textQuery))
+                        .append("tenantId", tenantId)
+                        .append("status", "PUBLISHED");
+                for (String title : runSuggestionPipeline(textMatch, limit)) {
+                    boolean duplicate = suggestions.stream().anyMatch(s -> s.equalsIgnoreCase(title));
+                    if (!duplicate) {
+                        suggestions.add(title);
+                        if (suggestions.size() >= limit) {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        return suggestions;
+    }
+
+    private List<String> runSuggestionPipeline(Document matchStage, int limit) {
         List<AggregationOperation> ops = new ArrayList<>();
-        ops.add(Aggregation.match(Criteria.where("tenantId").is(tenantId)
-                .and("status").is("PUBLISHED")
-                .and("title").regex(escaped, "i")));
+        ops.add(context -> new Document("$match", matchStage));
         // Collapse duplicate titles, keeping the most-viewed representative.
         ops.add(context -> Document.parse("""
             { "$group": {
-                "_id": { "$toLower": "$title" },
+                "_id": { "$ifNull": [ "$titleLower", { "$toLower": "$title" } ] },
                 "title": { "$first": "$title" },
                 "views": { "$max": "$viewCount" }
             }}

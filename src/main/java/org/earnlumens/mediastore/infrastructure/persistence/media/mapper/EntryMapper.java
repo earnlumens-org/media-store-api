@@ -40,6 +40,7 @@ public interface EntryMapper {
     @Mapping(target = "paymentSplits", source = "paymentSplits", qualifiedByName = "splitsToEntities")
     @Mapping(target = "statusHistory", source = "statusHistory", qualifiedByName = "statusHistoryToEntities")
     @Mapping(target = "authorUsernameLower", source = "authorUsername", qualifiedByName = "toLowerCase")
+    @Mapping(target = "titleLower", source = "title", qualifiedByName = "toLowerCase")
     EntryEntity toEntity(Entry model);
 
     @Named("toLowerCase")

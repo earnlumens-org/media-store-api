@@ -25,6 +25,11 @@ import java.util.List;
 // HotFeedIndexMigration (auto-index-creation is disabled).
 @CompoundIndex(name = "idx_tenant_status_badge_published", def = "{'tenantId': 1, 'status': 1, 'authorBadge': 1, 'publishedAt': -1}")
 @CompoundIndex(name = "idx_tenant_status_authorlower_published", def = "{'tenantId': 1, 'status': 1, 'authorUsernameLower': 1, 'publishedAt': -1}")
+// Search indexes (scalability Phase 2): suggestion prefix lookups use titleLower;
+// full-text search uses a weighted text index (title:10, tags:8, authorUsername:5,
+// description:1) that cannot be expressed as a @CompoundIndex. Both are created
+// explicitly by SearchTextIndexMigration (auto-index-creation is disabled).
+@CompoundIndex(name = "idx_tenant_status_titlelower", def = "{'tenantId': 1, 'status': 1, 'titleLower': 1}")
 public class EntryEntity {
 
     @Id
@@ -54,6 +59,13 @@ public class EntryEntity {
     @NotBlank
     @Size(max = 200)
     private String title;
+
+    /**
+     * Lowercased copy of {@link #title}, kept in sync by the persistence mapper.
+     * Exists so search suggestions can use an index-backed prefix match instead
+     * of a case-insensitive regex over every published title.
+     */
+    private String titleLower;
 
     @Size(max = 2000)
     private String description;
@@ -167,6 +179,9 @@ public class EntryEntity {
 
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
+
+    public String getTitleLower() { return titleLower; }
+    public void setTitleLower(String titleLower) { this.titleLower = titleLower; }
 
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
