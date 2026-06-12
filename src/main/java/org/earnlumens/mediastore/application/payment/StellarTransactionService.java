@@ -207,8 +207,12 @@ public class StellarTransactionService {
         }
     }
 
-    /** TTL for cached positive activation checks (10 minutes). */
-    private static final long ACTIVE_CACHE_TTL_MS = 10 * 60_000L;
+    /**
+     * TTL for cached positive activation checks (60 s — Phase 3, task 3.2 of
+     * SCALABILITY-AUDIT.md, P1-4: the cache is per-instance, so the short TTL
+     * bounds cross-instance divergence; the Horizon query is cheap).
+     */
+    private static final long ACTIVE_CACHE_TTL_MS = 60_000L;
 
     /** wallet → cache-entry expiry epoch millis. Positive results only. */
     private final Map<String, Long> activeAccountCache = new ConcurrentHashMap<>();
@@ -217,7 +221,7 @@ public class StellarTransactionService {
      * Same as {@link #isAccountActive(String)} but caches positive results for
      * {@value #ACTIVE_CACHE_TTL_MS} ms, so re-validating every split wallet on
      * each payment prepare adds ~0 ms on the hot path (one Horizon call per
-     * wallet per 10 minutes, worst case). Negative results are never cached:
+     * wallet per minute, worst case). Negative results are never cached:
      * an account can be funded at any moment and must become sellable
      * immediately. Inherits the fail-open behaviour of isAccountActive, so a
      * Horizon outage never blocks purchases.

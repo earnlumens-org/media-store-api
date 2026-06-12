@@ -15,6 +15,11 @@ import java.util.concurrent.ConcurrentHashMap;
  * on every request. The fee schedule changes rarely; a short in-memory TTL is a
  * good tradeoff between freshness and throughput.
  * <p>
+ * The TTL is 60 s (Phase 3, task 3.2 of SCALABILITY-AUDIT.md — P1-4): this cache
+ * is per-instance, so with N instances a fee change propagates instance by
+ * instance — the short TTL bounds that divergence window to ≤60 s without
+ * needing a shared cache or pub/sub invalidation.
+ * <p>
  * <b>Security note.</b> Only ACTIVE tenants are returned to callers. Blocked
  * or deleted tenants cause a fall-through to {@link Optional#empty()} so that
  * downstream code applies the safest default (e.g. global platform fee, no
@@ -24,7 +29,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class TenantConfigService {
 
     private static final Logger logger = LoggerFactory.getLogger(TenantConfigService.class);
-    private static final Duration TTL = Duration.ofMinutes(5);
+    private static final Duration TTL = Duration.ofSeconds(60);
 
     private final TenantReadRepository repository;
     private final ConcurrentHashMap<String, CacheEntry> cache = new ConcurrentHashMap<>();
