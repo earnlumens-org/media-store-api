@@ -51,7 +51,7 @@ export default function () {
   rateLimited.add(res.status === 429);
   if (res.status === 200) {
     const body = res.json();
-    budgetExhausted.add(body && body.loginRequired === true);
+    budgetExhausted.add(body && body.requiresLogin === true);
     check(res, { 'search 200': () => true });
   }
 
