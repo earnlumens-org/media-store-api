@@ -179,7 +179,7 @@ class AuthControllerTest {
 
         verify(jwtUtils).validateJwtToken("refresh.jwt");
         verify(jwtUtils, never()).getAllClaimsFromToken(any());
-        verify(jwtUtils, never()).generateAccessTokenFromClaims(any());
+        verify(jwtUtils, never()).generateAccessTokenFromClaims(any(), any());
     }
 
     @Test
@@ -189,7 +189,7 @@ class AuthControllerTest {
         when(jwtUtils.validateJwtToken("refresh.jwt")).thenReturn(true);
         when(jwtUtils.getAllClaimsFromToken("refresh.jwt")).thenReturn(claims);
         when(jwtUtils.getTenantIdFromClaims(claims)).thenReturn("earnlumens");
-        when(jwtUtils.generateAccessTokenFromClaims(claims)).thenReturn("new.access.jwt");
+        when(jwtUtils.generateAccessTokenFromClaims(eq(claims), any())).thenReturn("new.access.jwt");
 
         mockMvc.perform(post("/api/auth/refresh").cookie(new Cookie("_rFTo", "refresh.jwt")))
                 .andExpect(status().isOk())
@@ -198,7 +198,7 @@ class AuthControllerTest {
         verify(jwtUtils).validateJwtToken("refresh.jwt");
         verify(jwtUtils).getAllClaimsFromToken("refresh.jwt");
         verify(jwtUtils).getTenantIdFromClaims(claims);
-        verify(jwtUtils).generateAccessTokenFromClaims(claims);
+        verify(jwtUtils).generateAccessTokenFromClaims(eq(claims), any());
     }
 
     @Test
@@ -218,7 +218,7 @@ class AuthControllerTest {
                 .andExpect(jsonPath("$.error").value("Unauthorized"));
 
         verify(jwtUtils).getTenantIdFromClaims(claims);
-        verify(jwtUtils, never()).generateAccessTokenFromClaims(any());
+        verify(jwtUtils, never()).generateAccessTokenFromClaims(any(), any());
     }
 
     @Test
@@ -236,7 +236,7 @@ class AuthControllerTest {
                 .andExpect(status().isUnauthorized())
                 .andExpect(jsonPath("$.error").value("Unauthorized"));
 
-        verify(jwtUtils, never()).generateAccessTokenFromClaims(any());
+        verify(jwtUtils, never()).generateAccessTokenFromClaims(any(), any());
     }
 
     @Test

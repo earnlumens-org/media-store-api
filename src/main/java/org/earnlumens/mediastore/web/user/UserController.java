@@ -6,6 +6,7 @@ import org.earnlumens.mediastore.application.user.UserBadgeService;
 import org.earnlumens.mediastore.application.user.UserService;
 import org.earnlumens.mediastore.domain.user.dto.request.UpdateContentLanguagePreferencesRequest;
 import org.earnlumens.mediastore.domain.user.model.User;
+import org.earnlumens.mediastore.infrastructure.security.jwt.JwtUtils;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantResolver;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
@@ -30,12 +31,14 @@ public class UserController {
     private final UserService userService;
     private final UserBadgeService userBadgeService;
     private final TenantResolver tenantResolver;
+    private final JwtUtils jwtUtils;
 
     public UserController(UserService userService, UserBadgeService userBadgeService,
-                          TenantResolver tenantResolver) {
+                          TenantResolver tenantResolver, JwtUtils jwtUtils) {
         this.userService = userService;
         this.userBadgeService = userBadgeService;
         this.tenantResolver = tenantResolver;
+        this.jwtUtils = jwtUtils;
     }
 
     @GetMapping("/me")
@@ -91,7 +94,15 @@ public class UserController {
         }
 
         return userService.updateContentLanguagePreferences(idAttr.toString(), request)
-                .<ResponseEntity<?>>map(user -> ResponseEntity.ok(toPreferencesMap(user)))
+                .<ResponseEntity<?>>map(user -> {
+                    Map<String, Object> body = toPreferencesMap(user);
+                    // Language prefs live as access-token claims (P1-1), so a
+                    // stale token would keep filtering feeds by the OLD prefs
+                    // until it expires. Mint a fresh token carrying the new
+                    // claims; the UI swaps it in before refetching feeds.
+                    body.put("accessToken", jwtUtils.generateJwtToken(user));
+                    return ResponseEntity.ok(body);
+                })
                 .orElseGet(() -> ResponseEntity.status(404).body(Map.of("error", "user not found")));
     }
 

@@ -31,14 +31,16 @@ class UserControllerTest {
     private UserService userService;
     private UserBadgeService userBadgeService;
     private TenantResolver tenantResolver;
+    private org.earnlumens.mediastore.infrastructure.security.jwt.JwtUtils jwtUtils;
 
     @BeforeEach
     void setUp() {
         userService = mock(UserService.class);
         userBadgeService = mock(UserBadgeService.class);
         tenantResolver = mock(TenantResolver.class);
+        jwtUtils = mock(org.earnlumens.mediastore.infrastructure.security.jwt.JwtUtils.class);
         when(tenantResolver.resolve(org.mockito.ArgumentMatchers.any())).thenReturn("earnlumens");
-        mockMvc = MockMvcBuilders.standaloneSetup(new UserController(userService, userBadgeService, tenantResolver)).build();
+        mockMvc = MockMvcBuilders.standaloneSetup(new UserController(userService, userBadgeService, tenantResolver, jwtUtils)).build();
     }
 
     @AfterEach

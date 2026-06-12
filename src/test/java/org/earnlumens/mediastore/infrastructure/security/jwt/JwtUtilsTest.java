@@ -125,6 +125,84 @@ class JwtUtilsTest {
     }
 
     @Test
+    void generateJwtToken_embedsLanguagePreferenceClaims() {
+        ReflectionTestUtils.setField(jwtUtils, "jwtExpirationMs", 60_000);
+
+        User user = new User();
+        user.setOauthUserId("oauth-id");
+        user.setUsername("user123");
+        user.setOauthProvider("x");
+        user.setContentLanguages(java.util.List.of("es", "en"));
+        user.setIncludeMulti(false);
+        user.setShowAllLanguages(true);
+
+        Claims claims = jwtUtils.getAllClaimsFromToken(jwtUtils.generateJwtToken(user));
+
+        assertEquals(java.util.List.of("es", "en"), claims.get("content_languages"));
+        assertEquals(Boolean.FALSE, claims.get("include_multi"));
+        assertEquals(Boolean.TRUE, claims.get("show_all_languages"));
+    }
+
+    @Test
+    void generateJwtToken_languageClaimsDefaultsWhenUnset() {
+        ReflectionTestUtils.setField(jwtUtils, "jwtExpirationMs", 60_000);
+
+        User user = new User();
+        user.setOauthUserId("oauth-id");
+        user.setUsername("user123");
+        user.setOauthProvider("x");
+
+        Claims claims = jwtUtils.getAllClaimsFromToken(jwtUtils.generateJwtToken(user));
+
+        assertEquals(java.util.List.of(), claims.get("content_languages"));
+        assertEquals(Boolean.TRUE, claims.get("include_multi"));
+        assertEquals(Boolean.FALSE, claims.get("show_all_languages"));
+    }
+
+    @Test
+    void generateAccessTokenFromClaims_withUser_mintsFreshLanguageClaims() {
+        ReflectionTestUtils.setField(jwtUtils, "jwtExpirationMs", 60_000);
+
+        User user = new User();
+        user.setOauthUserId("oauth-id");
+        user.setUsername("user123");
+        user.setOauthProvider("x");
+
+        String refresh = jwtUtils.generateRefreshToken(user, "earnlumens");
+        Claims refreshClaims = jwtUtils.getAllClaimsFromToken(refresh);
+
+        // Preferences changed AFTER the refresh token was minted — the new
+        // access token must carry the CURRENT values, not stale ones.
+        user.setContentLanguages(java.util.List.of("fr"));
+        user.setIncludeMulti(false);
+
+        Claims accessClaims = jwtUtils.getAllClaimsFromToken(
+                jwtUtils.generateAccessTokenFromClaims(refreshClaims, user));
+
+        assertEquals(java.util.List.of("fr"), accessClaims.get("content_languages"));
+        assertEquals(Boolean.FALSE, accessClaims.get("include_multi"));
+    }
+
+    @Test
+    void generateAccessTokenFromClaims_withoutUser_omitsLanguageClaims() {
+        ReflectionTestUtils.setField(jwtUtils, "jwtExpirationMs", 60_000);
+
+        User user = new User();
+        user.setOauthUserId("oauth-id");
+        user.setUsername("user123");
+        user.setOauthProvider("x");
+
+        String refresh = jwtUtils.generateRefreshToken(user, "earnlumens");
+        Claims refreshClaims = jwtUtils.getAllClaimsFromToken(refresh);
+
+        Claims accessClaims = jwtUtils.getAllClaimsFromToken(
+                jwtUtils.generateAccessTokenFromClaims(refreshClaims, null));
+
+        // Legacy fallback: consumers detect the missing claim and use the DB.
+        assertNull(accessClaims.get("content_languages"));
+    }
+
+    @Test
     void validateJwtToken_whenTampered_returnsFalse() {
         User user = new User();
         user.setOauthUserId("oauth-id");

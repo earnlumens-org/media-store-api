@@ -20,6 +20,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 
 public class AuthTokenFilter extends OncePerRequestFilter {
@@ -65,6 +66,18 @@ public class AuthTokenFilter extends OncePerRequestFilter {
                 attributes.put("oauth_provider", claims.get("oauth_provider", String.class));
                 Number followersCount = claims.get("followers_count", Number.class);
                 attributes.put("followers_count", followersCount != null ? followersCount.intValue() : 0);
+
+                // Language-preference claims (P1-1). Only present on tokens
+                // minted after the migration; their absence tells consumers
+                // (PublicEntryController) to fall back to a DB lookup.
+                Object contentLanguages = claims.get("content_languages");
+                if (contentLanguages instanceof List<?> languages) {
+                    attributes.put("content_languages", languages);
+                    Boolean includeMulti = claims.get("include_multi", Boolean.class);
+                    Boolean showAllLanguages = claims.get("show_all_languages", Boolean.class);
+                    attributes.put("include_multi", includeMulti == null || includeMulti);
+                    attributes.put("show_all_languages", showAllLanguages != null && showAllLanguages);
+                }
 
                 OAuth2UserAuthority authority = new OAuth2UserAuthority("ROLE_USER", attributes);
                 OAuth2User oauth2User = new DefaultOAuth2User(

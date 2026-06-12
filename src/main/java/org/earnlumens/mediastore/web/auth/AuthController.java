@@ -142,6 +142,7 @@ public class AuthController {
             // refresh is a low-frequency operation (once per access-token
             // lifetime, default 15-30 min).
             String oauthUserId = claims.getSubject();
+            User refreshUser = null;
             if (oauthUserId != null) {
                 Optional<User> userOpt = userService.findByOauthUserId(oauthUserId);
                 if (userOpt.isPresent()) {
@@ -154,10 +155,15 @@ public class AuthController {
                             return ResponseEntity.status(403).body(buildBanResponse(user));
                         }
                     }
+                    refreshUser = user;
                 }
             }
 
-            String newAccessToken = jwtUtils.generateAccessTokenFromClaims(claims);
+            // Mint with the user's CURRENT language preferences as claims
+            // (P1-1) — the user doc was just loaded for the ban gate, so this
+            // costs nothing extra. When the doc is missing, the token simply
+            // carries no language claims and feeds fall back to a DB lookup.
+            String newAccessToken = jwtUtils.generateAccessTokenFromClaims(claims, refreshUser);
             return ResponseEntity.ok(Map.of("accessToken", newAccessToken));
         } catch (Exception e) {
             return unauthorizedResponse();

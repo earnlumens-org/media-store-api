@@ -2,6 +2,7 @@ package org.earnlumens.mediastore.infrastructure.security.jwt;
 
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.ExpiredJwtException;
+import io.jsonwebtoken.JwtBuilder;
 import io.jsonwebtoken.MalformedJwtException;
 import io.jsonwebtoken.UnsupportedJwtException;
 import io.jsonwebtoken.Jwts;
@@ -17,6 +18,7 @@ import org.springframework.stereotype.Component;
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
 import java.util.Date;
+import java.util.List;
 
 @Component
 public class JwtUtils {
@@ -50,7 +52,7 @@ public class JwtUtils {
     }
 
     public String generateJwtToken(User user) {
-        return Jwts.builder()
+        return withLanguageClaims(Jwts.builder(), user)
                 .subject(user.getOauthUserId())
                 .claim("name", user.getDisplayName())
                 .claim("username", user.getUsername())
@@ -61,6 +63,23 @@ public class JwtUtils {
                 .expiration(new Date(System.currentTimeMillis() + jwtExpirationMs))
                 .signWith(key())
                 .compact();
+    }
+
+    /**
+     * Adds the consumer language preferences as access-token claims (P1-1).
+     * Feed endpoints read these from the principal instead of hitting the
+     * {@code users} collection on every request. Staleness is bounded by the
+     * short access-token expiry; the preferences PATCH endpoint additionally
+     * returns a freshly minted token so the UI never waits for it.
+     */
+    private JwtBuilder withLanguageClaims(JwtBuilder builder, User user) {
+        return builder
+                .claim("content_languages",
+                        user.getContentLanguages() == null ? List.of() : user.getContentLanguages())
+                .claim("include_multi",
+                        user.getIncludeMulti() == null || user.getIncludeMulti())
+                .claim("show_all_languages",
+                        user.getShowAllLanguages() != null && user.getShowAllLanguages());
     }
 
     /**
@@ -146,13 +165,28 @@ public class JwtUtils {
     }
 
     public String generateAccessTokenFromClaims(Claims claims) {
-        return Jwts.builder()
+        return generateAccessTokenFromClaims(claims, null);
+    }
+
+    /**
+     * Mints an access token from refresh-token claims. When {@code user} is
+     * non-null (the refresh endpoint already loads it for the ban gate), the
+     * current language preferences are minted in as claims so feeds keep
+     * skipping the per-request user lookup after every token rotation — read
+     * fresh from the DB, NOT copied from the (up to weeks old) refresh token.
+     */
+    public String generateAccessTokenFromClaims(Claims claims, User user) {
+        JwtBuilder builder = Jwts.builder()
                 .subject(claims.getSubject())
                 .claim("name", claims.get("name"))
                 .claim("username", claims.get("username"))
                 .claim("profile_image_url", claims.get("profile_image_url"))
                 .claim("oauth_provider", claims.get("oauth_provider"))
-                .claim("followers_count", claims.get("followers_count"))
+                .claim("followers_count", claims.get("followers_count"));
+        if (user != null) {
+            builder = withLanguageClaims(builder, user);
+        }
+        return builder
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + jwtExpirationMs))
                 .signWith(key())

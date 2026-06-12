@@ -100,8 +100,13 @@ public class PublicEntryController {
      *       toggle in the UI).</li>
      *   <li>If unauthenticated, return {@link LanguageFilter#NONE} (anonymous
      *       users see everything; the UI can prompt them to sign in).</li>
-     *   <li>Otherwise read the persisted user preferences. Missing/null
-     *       fields fall back to {@code includeMulti=true} and
+     *   <li>If the access token carries language claims (all tokens minted
+     *       after the P1-1 migration), build the filter from the principal —
+     *       zero DB lookups on the feed hot path. Staleness is bounded by the
+     *       short access-token expiry, and the preferences PATCH returns a
+     *       freshly minted token so changes apply immediately.</li>
+     *   <li>Otherwise (legacy token) read the persisted user preferences.
+     *       Missing/null fields fall back to {@code includeMulti=true} and
      *       {@code showAllLanguages=false}.</li>
      * </ol>
      */
@@ -117,6 +122,17 @@ public class PublicEntryController {
         if (idAttr == null) {
             return LanguageFilter.NONE;
         }
+        Object langsAttr = principal.getAttribute("content_languages");
+        if (langsAttr instanceof java.util.List<?> languages) {
+            Boolean includeMulti = principal.getAttribute("include_multi");
+            Boolean showAllLanguages = principal.getAttribute("show_all_languages");
+            return new LanguageFilter(
+                    languages.stream().map(String::valueOf).toList(),
+                    includeMulti == null || includeMulti,
+                    showAllLanguages != null && showAllLanguages);
+        }
+        // Legacy tokens minted before the claims migration: one DB lookup,
+        // self-healing within a single access-token lifetime.
         return userService.findByOauthUserId(idAttr.toString())
                 .map(user -> new LanguageFilter(
                         user.getContentLanguages() == null ? java.util.List.of() : user.getContentLanguages(),
