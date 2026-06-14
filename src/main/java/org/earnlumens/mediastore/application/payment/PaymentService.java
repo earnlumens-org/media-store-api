@@ -284,7 +284,7 @@ public class PaymentService {
         }
 
         // Build the MEMO
-        String memo = "TOTAL: " + totalXlm.toPlainString() + " XLM";
+        String memo = "TOTAL: " + formatXlmForMemo(totalXlm) + " XLM";
 
         // Build the unsigned Stellar transaction
         StellarTransactionService.BuildResult buildResult =
@@ -456,7 +456,7 @@ public class PaymentService {
             }
         }
 
-        String memo = "TIP: " + totalXlm.toPlainString() + " XLM";
+        String memo = "TIP: " + formatXlmForMemo(totalXlm) + " XLM";
 
         StellarTransactionService.BuildResult buildResult =
                 stellarTxService.buildTransaction(buyerWallet, totalXlm, splits, memo);
@@ -498,6 +498,16 @@ public class PaymentService {
                 buyerWallet, amountUsd.toPlainString(), totalXlm.toPlainString());
 
         return toResponse(saved);
+    }
+
+    /**
+     * Formats an XLM amount for the human-readable transaction MEMO: at most 4
+     * decimals (truncated, since the MEMO is purely indicative) and no trailing
+     * zeros (e.g. {@code 33.1429792 -> "33.1429"}, {@code 5.00 -> "5"}). The exact
+     * on-chain amount is unaffected; only the MEMO label uses this format.
+     */
+    private String formatXlmForMemo(BigDecimal xlm) {
+        return xlm.setScale(4, RoundingMode.DOWN).stripTrailingZeros().toPlainString();
     }
 
     /**
