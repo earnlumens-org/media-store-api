@@ -3,6 +3,7 @@ package org.earnlumens.mediastore.application.media;
 import org.earnlumens.mediastore.domain.media.model.*;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.ReportEntity;
 import org.earnlumens.mediastore.infrastructure.persistence.media.repository.ReportMongoRepository;
+import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -63,11 +64,14 @@ public class ReportService {
 
     private final ReportMongoRepository reportRepository;
     private final EntryRepository entryRepository;
+    private final CollectionRepository collectionRepository;
 
     public ReportService(ReportMongoRepository reportRepository,
-                         EntryRepository entryRepository) {
+                         EntryRepository entryRepository,
+                         CollectionRepository collectionRepository) {
         this.reportRepository = reportRepository;
         this.entryRepository = entryRepository;
+        this.collectionRepository = collectionRepository;
     }
 
     // ── Public API ─────────────────────────────────────────────
@@ -125,6 +129,7 @@ public class ReportService {
         // 8. Save report
         ReportEntity report = new ReportEntity();
         report.setTenantId(tenantId);
+        report.setTargetType("ENTRY");
         report.setEntryId(entryId);
         report.setCreatorUserId(entry.getUserId());
         report.setReporterUserId(reporterUserId);
@@ -147,6 +152,87 @@ public class ReportService {
         if (shouldEscalate(priority, totalReports, entry)) {
             escalateToReview(entry, tenantId, totalReports);
         }
+
+        return saved;
+    }
+
+    /**
+     * Submit a new report against a published collection. Returns the created
+     * report entity. Mirrors {@link #submitReport} but targets a collection;
+     * the report is stored with {@code targetType=COLLECTION} and the
+     * collection id placed in the {@code entryId} field (the generic target
+     * id), so the existing per-target queries, indexes and the moderator
+     * queue all keep working unchanged.
+     *
+     * <p>Collections do not auto-escalate (there is no AI pipeline for them);
+     * moderators triage collection reports manually from the queue.
+     *
+     * @throws IllegalArgumentException on invalid input
+     * @throws IllegalStateException    on rate-limit or duplicate
+     */
+    public ReportEntity submitCollectionReport(String tenantId, String reporterUserId,
+                                               String reporterUsername, String collectionId,
+                                               ReportReason reason, String comment) {
+
+        // 1. Validate collection exists and is published
+        Collection collection = collectionRepository.findByTenantIdAndId(tenantId, collectionId)
+                .orElseThrow(() -> new IllegalArgumentException("COLLECTION_NOT_FOUND"));
+
+        if (collection.getStatus() != CollectionStatus.PUBLISHED) {
+            throw new IllegalArgumentException("COLLECTION_NOT_REPORTABLE");
+        }
+
+        // 2. Prevent self-report
+        if (collection.getUserId().equals(reporterUserId)) {
+            throw new IllegalArgumentException("CANNOT_REPORT_OWN_CONTENT");
+        }
+
+        // 3. Duplicate check (one report per user per target)
+        if (reportRepository.existsByTenantIdAndReporterUserIdAndEntryId(tenantId, reporterUserId, collectionId)) {
+            throw new IllegalStateException("ALREADY_REPORTED");
+        }
+
+        // 4. Rate limit: shared daily cap across all targets
+        LocalDateTime yesterday = LocalDateTime.now().minusDays(1);
+        long recentCount = reportRepository.countByTenantIdAndReporterUserIdAndCreatedAtAfter(
+                tenantId, reporterUserId, yesterday);
+        if (recentCount >= DAILY_REPORT_LIMIT) {
+            throw new IllegalStateException("DAILY_REPORT_LIMIT_REACHED");
+        }
+
+        // 5. Compute severity
+        ReportSeverity severity = computeSeverity(reason);
+
+        // 6. Compute priority score (counts keyed on the generic target id)
+        int priority = computePriority(tenantId, collectionId, collection.getUserId(),
+                reporterUserId, severity);
+
+        // 7. Build snapshot from the collection (cover doubles as thumbnail)
+        ReportEntity.SnapshotEmbeddable snapshot = new ReportEntity.SnapshotEmbeddable();
+        snapshot.setTitle(collection.getTitle());
+        snapshot.setDescription(truncate(collection.getDescription(), 500));
+        snapshot.setThumbnailR2Key(collection.getCoverR2Key());
+        snapshot.setAuthorUsername(collection.getAuthorUsername());
+
+        // 8. Save report
+        ReportEntity report = new ReportEntity();
+        report.setTenantId(tenantId);
+        report.setTargetType("COLLECTION");
+        report.setEntryId(collectionId);
+        report.setCreatorUserId(collection.getUserId());
+        report.setReporterUserId(reporterUserId);
+        report.setReporterUsername(reporterUsername);
+        report.setReason(reason.name());
+        report.setSeverity(severity.name());
+        report.setComment(truncate(comment, 500));
+        report.setSnapshot(snapshot);
+        report.setPriorityScore(priority);
+        report.setResolution(ReportResolution.OPEN.name());
+        report.setCreatedAt(LocalDateTime.now());
+
+        ReportEntity saved = reportRepository.save(report);
+        logger.info("Collection report created: id={}, collection={}, reason={}, severity={}, priority={}, reporter={}",
+                saved.getId(), collectionId, reason, severity, priority, reporterUsername);
 
         return saved;
     }

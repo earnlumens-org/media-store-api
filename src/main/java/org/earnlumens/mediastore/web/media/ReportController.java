@@ -83,6 +83,53 @@ public class ReportController {
         }
     }
 
+    /**
+     * Submit a report against a published collection.
+     * Body: { "reason": "SCAM", "comment": "optional text" }
+     */
+    @PostMapping("/collection/{collectionId}")
+    public ResponseEntity<?> submitCollectionReport(
+            @PathVariable("collectionId") String collectionId,
+            @RequestBody SubmitReportRequest body,
+            HttpServletRequest request) {
+
+        String userId = extractUserId();
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+        String tenantId = tenantResolver.resolve(request);
+        String username = extractUsername();
+
+        // Validate reason
+        ReportReason reason;
+        try {
+            reason = ReportReason.valueOf(body.reason().toUpperCase());
+        } catch (IllegalArgumentException | NullPointerException e) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "INVALID_REASON"));
+        }
+
+        try {
+            ReportEntity report = reportService.submitCollectionReport(
+                    tenantId, userId, username, collectionId, reason, body.comment());
+
+            return ResponseEntity.status(201).body(Map.of(
+                    "id", report.getId(),
+                    "severity", report.getSeverity(),
+                    "message", "Report submitted"
+            ));
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (IllegalStateException e) {
+            String msg = e.getMessage();
+            if ("DAILY_REPORT_LIMIT_REACHED".equals(msg)) {
+                return ResponseEntity.status(429).body(Map.of("error", msg));
+            }
+            // ALREADY_REPORTED
+            return ResponseEntity.status(409).body(Map.of("error", msg));
+        }
+    }
+
     private String extractUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || !(auth.getPrincipal() instanceof OAuth2User principal)) return null;

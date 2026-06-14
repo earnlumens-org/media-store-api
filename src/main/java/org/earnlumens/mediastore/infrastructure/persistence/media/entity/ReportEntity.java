@@ -38,6 +38,13 @@ public class ReportEntity {
     @NotBlank
     private String entryId;
 
+    /**
+     * Discriminates the kind of content the {@code entryId} points at.
+     * {@code "ENTRY"} (default, for backward compatibility with legacy
+     * documents that predate collection reports) or {@code "COLLECTION"}.
+     */
+    private String targetType = "ENTRY";
+
     /** Owner of the reported entry (denormalized for creator-history queries). */
     @NotBlank
     private String creatorUserId;
@@ -83,6 +90,9 @@ public class ReportEntity {
 
     public String getEntryId() { return entryId; }
     public void setEntryId(String entryId) { this.entryId = entryId; }
+
+    public String getTargetType() { return targetType; }
+    public void setTargetType(String targetType) { this.targetType = targetType; }
 
     public String getCreatorUserId() { return creatorUserId; }
     public void setCreatorUserId(String creatorUserId) { this.creatorUserId = creatorUserId; }
