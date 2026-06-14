@@ -4,6 +4,7 @@ import jakarta.validation.Valid;
 import org.earnlumens.mediastore.application.payment.PaymentService;
 import org.earnlumens.mediastore.application.payment.PaymentSubmissionCoordinator;
 import org.earnlumens.mediastore.domain.media.dto.request.PreparePaymentRequest;
+import org.earnlumens.mediastore.domain.media.dto.request.PrepareTipRequest;
 import org.earnlumens.mediastore.domain.media.dto.request.SubmitPaymentRequest;
 import org.earnlumens.mediastore.domain.media.dto.response.PreparePaymentResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.SubmitPaymentResponse;
@@ -66,6 +67,37 @@ public class PaymentController {
         } catch (Exception e) {
             logger.error("Prepare payment failed (500)", e);
             return ResponseEntity.internalServerError().body(Map.of("error", "Internal error preparing payment"));
+        }
+    }
+
+    /**
+     * Prepare a TIP (voluntary creator support) payment. Same audited two-phase
+     * flow as a purchase — the returned order is signed by the buyer's wallet and
+     * settled via {@code POST /submit}. A tip grants no entitlement.
+     */
+    @PostMapping("/tip/prepare")
+    public ResponseEntity<?> prepareTip(
+            @Valid @RequestBody PrepareTipRequest request
+    ) {
+        String userId = extractUserId();
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+
+        String tenantId = TenantContext.require();
+
+        try {
+            PreparePaymentResponse response = paymentService.prepareTip(tenantId, userId, request);
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            logger.warn("Prepare tip failed (400): {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (IllegalStateException e) {
+            logger.warn("Prepare tip failed (409): {}", e.getMessage());
+            return ResponseEntity.status(409).body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            logger.error("Prepare tip failed (500)", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "Internal error preparing tip"));
         }
     }
 

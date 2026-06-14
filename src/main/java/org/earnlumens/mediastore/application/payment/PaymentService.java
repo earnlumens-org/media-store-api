@@ -1,6 +1,7 @@
 package org.earnlumens.mediastore.application.payment;
 
 import org.earnlumens.mediastore.domain.media.dto.request.PreparePaymentRequest;
+import org.earnlumens.mediastore.domain.media.dto.request.PrepareTipRequest;
 import org.earnlumens.mediastore.domain.media.dto.request.SubmitPaymentRequest;
 import org.earnlumens.mediastore.domain.media.dto.response.PreparePaymentResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.SubmitPaymentResponse;
@@ -18,6 +19,8 @@ import org.earnlumens.mediastore.infrastructure.tenant.read.TenantReadModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.dao.DuplicateKeyException;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 
 import org.earnlumens.mediastore.infrastructure.config.PlatformConfig;
@@ -54,6 +57,12 @@ public class PaymentService {
     private static final Logger logger = LoggerFactory.getLogger(PaymentService.class);
 
     private static final BigDecimal ONE_HUNDRED = new BigDecimal("100.00");
+
+    /** Tip amount bounds (USD) — the single price input accepted from the client, strictly enforced server-side. */
+    private static final BigDecimal TIP_MIN_USD = new BigDecimal("0.25");
+    private static final BigDecimal TIP_MAX_USD = new BigDecimal("100.00");
+    /** How many of the creator's most recent items to scan for a payout wallet when tipping free content. */
+    private static final int TIP_WALLET_LOOKUP_SCAN = 50;
 
     /** On-chain confirmation polling for ambiguous Horizon submissions. */
     private static final int ONCHAIN_VERIFY_MAX_ATTEMPTS = 10;
@@ -323,7 +332,217 @@ public class PaymentService {
     }
 
     /**
+     * Phase 1 (TIP): Prepare a voluntary creator-support payment.
+     *
+     * <p>Reuses the exact audited transaction-building / split / verification
+     * pipeline as a content purchase, with these tip-specific rules:
+     * <ul>
+     *   <li>The amount is chosen by the buyer in USD and is the ONLY price input
+     *       accepted from the client — bounded to [0.25, 100.00] server-side and
+     *       converted to XLM at the locked snapshot rate.</li>
+     *   <li>Any PUBLISHED entry/collection can be tipped (paid or free); the
+     *       target's {@code isPaid} flag is irrelevant.</li>
+     *   <li>The recipient is the creator's payout wallet (the content's
+     *       {@code sellerWallet}, or — for free content — the most recent payout
+     *       wallet the creator has used on any of their content).</li>
+     *   <li>The same commission scale applies (platform / tenant / franchise),
+     *       carved exactly like a purchase via {@link #buildFullSplits}.</li>
+     *   <li>No duplicate-purchase blocking (tips may be repeated) and NO
+     *       entitlement is granted.</li>
+     *   <li>A creator cannot tip their own content.</li>
+     * </ul>
+     */
+    public PreparePaymentResponse prepareTip(String tenantId, String userId, PrepareTipRequest request) {
+        String entryId = request.entryId();
+        String collectionId = request.collectionId();
+        String buyerWallet = request.buyerWallet();
+
+        boolean isCollectionTip = collectionId != null && !collectionId.isBlank();
+        boolean isEntryTip = entryId != null && !entryId.isBlank();
+
+        if (!isCollectionTip && !isEntryTip) {
+            throw new IllegalArgumentException("Either entryId or collectionId is required");
+        }
+        if (isCollectionTip && isEntryTip) {
+            throw new IllegalArgumentException("Cannot specify both entryId and collectionId");
+        }
+
+        // ── Validate and normalize the tip amount (server is the source of truth) ──
+        BigDecimal amountUsd = request.amountUsd();
+        if (amountUsd == null) {
+            throw new IllegalArgumentException("Tip amount is required");
+        }
+        amountUsd = amountUsd.setScale(2, RoundingMode.HALF_UP);
+        if (amountUsd.compareTo(TIP_MIN_USD) < 0 || amountUsd.compareTo(TIP_MAX_USD) > 0) {
+            throw new IllegalArgumentException("TIP_AMOUNT_OUT_OF_RANGE");
+        }
+
+        // ── Resolve the tipped content + the creator's payout wallet ──
+        String creatorUserId;
+        String contentOwnWallet;
+        if (isCollectionTip) {
+            Collection collection = collectionRepository.findByTenantIdAndId(tenantId, collectionId)
+                    .orElseThrow(() -> new IllegalArgumentException("Collection not found"));
+            if (collection.getStatus() != CollectionStatus.PUBLISHED) {
+                throw new IllegalArgumentException("Collection is not published");
+            }
+            creatorUserId = collection.getUserId();
+            contentOwnWallet = collection.getSellerWallet();
+        } else {
+            Entry entry = entryRepository.findByTenantIdAndId(tenantId, entryId)
+                    .orElseThrow(() -> new IllegalArgumentException("Entry not found"));
+            if (entry.getStatus() != EntryStatus.PUBLISHED) {
+                throw new IllegalArgumentException("Entry is not published");
+            }
+            creatorUserId = entry.getUserId();
+            contentOwnWallet = entry.getSellerWallet();
+        }
+
+        if (userId.equals(creatorUserId)) {
+            throw new IllegalArgumentException("Cannot tip your own content");
+        }
+
+        String creatorWallet = resolveCreatorTipWallet(tenantId, creatorUserId, contentOwnWallet);
+        if (creatorWallet == null) {
+            throw new IllegalArgumentException("CREATOR_TIPS_UNAVAILABLE");
+        }
+        if (creatorWallet.equals(platformConfig.getWallet())) {
+            // Should never happen (the platform wallet is never a seller wallet),
+            // but guard against a degenerate split where the creator == platform.
+            throw new IllegalArgumentException("CREATOR_TIPS_UNAVAILABLE");
+        }
+
+        // ── USD → XLM at the locked snapshot rate ──
+        var snapshot = xlmUsdPriceService.getPrice();
+        BigDecimal rate = snapshot != null ? snapshot.price() : null;
+        if (rate == null || rate.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalStateException("XLM/USD price unavailable — cannot process tips");
+        }
+        BigDecimal totalXlm = amountUsd.divide(rate, 7, RoundingMode.CEILING);
+        if (totalXlm.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalStateException("Computed tip amount is non-positive");
+        }
+        logger.info("TIP USD→XLM conversion: ${} / {} = {} XLM",
+                amountUsd.toPlainString(), rate.toPlainString(), totalXlm.toPlainString());
+
+        // The tip target split is the creator, 100% of the non-reserved portion.
+        List<PaymentSplit> targetSplits = List.of(
+                new PaymentSplit(creatorWallet, SplitRole.SELLER, ONE_HUNDRED));
+
+        // Resolve the franchise storefront, if this tip came through one (/f/<slug>).
+        FranchiseReadModel franchise = null;
+        String franchiseSlug = request.franchiseSlug();
+        if (franchiseSlug != null && !franchiseSlug.isBlank()) {
+            franchise = franchiseReadRepository
+                    .findByTenantIdAndSlug(tenantId, franchiseSlug.trim().toLowerCase())
+                    .filter(FranchiseReadModel::isActive)
+                    .orElseThrow(() -> new IllegalArgumentException("Franchise not available"));
+            if (userId.equals(franchise.getOwnerOauthUserId())) {
+                throw new IllegalArgumentException("FRANCHISE_SELF_PURCHASE");
+            }
+        }
+
+        // Build the full payment splits (platform + optional tenant + creator + franchise).
+        List<PaymentSplit> splits = buildFullSplits(tenantId, targetSplits, franchise);
+
+        // Re-validate every split destination is an active Stellar account before signing.
+        for (PaymentSplit split : splits) {
+            if (!stellarTxService.isAccountActiveCached(split.getWallet())) {
+                logger.error("TIP split wallet no longer active on Stellar: role={}, wallet={}, tenant={}, {}={}",
+                        split.getRole(), split.getWallet(), tenantId,
+                        isCollectionTip ? "collectionId" : "entryId",
+                        isCollectionTip ? collectionId : entryId);
+                throw new IllegalArgumentException("SPLIT_WALLET_NOT_ACTIVE");
+            }
+        }
+
+        String memo = "TIP: " + totalXlm.toPlainString() + " XLM";
+
+        StellarTransactionService.BuildResult buildResult =
+                stellarTxService.buildTransaction(buyerWallet, totalXlm, splits, memo);
+
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        LocalDateTime expiresAt = now.plusSeconds(stellarConfig.getTxTimeoutSeconds());
+
+        Order order = new Order();
+        order.setTenantId(tenantId);
+        order.setUserId(userId);
+        order.setSellerId(creatorUserId);
+        order.setFranchiseId(franchise != null ? franchise.getId() : null);
+        order.setAmountXlm(totalXlm);
+        order.setOriginalAmountUsd(amountUsd);
+        order.setXlmUsdRate(rate);
+        order.setPriceCurrency("USD");
+        order.setBuyerWallet(buyerWallet);
+        order.setMemo(memo);
+        order.setUnsignedXdr(buildResult.unsignedXdr());
+        order.setIntegrityHash(buildResult.integrityHash());
+        order.setStellarTxHash(buildResult.txHash());
+        order.setStatus(OrderStatus.PENDING);
+        order.setExpiresAt(expiresAt);
+        order.setPaymentSplits(splits);
+        order.setTargetType(TargetType.TIP);
+        // Record the tipped content as context (never grants an entitlement).
+        if (isCollectionTip) {
+            order.setCollectionId(collectionId);
+        } else {
+            order.setEntryId(entryId);
+        }
+
+        Order saved = orderRepository.save(order);
+
+        logger.info("Tip prepared: orderId={}, {}={}, buyer={}, amount=${}, total={} XLM",
+                saved.getId(),
+                isCollectionTip ? "collectionId" : "entryId",
+                isCollectionTip ? collectionId : entryId,
+                buyerWallet, amountUsd.toPlainString(), totalXlm.toPlainString());
+
+        return toResponse(saved);
+    }
+
+    /**
+     * Resolves the creator's payout wallet for a tip.
+     * <ol>
+     *   <li>The tipped content's own {@code sellerWallet} when present (paid content).</li>
+     *   <li>Otherwise the most recent payout wallet the creator has used on any of
+     *       their PUBLISHED content (covers tips on free content). Wallets were
+     *       validated as active Stellar accounts when the content was published,
+     *       and are re-validated before the buyer signs.</li>
+     * </ol>
+     * Returns {@code null} when the creator has never configured a payout wallet.
+     */
+    private String resolveCreatorTipWallet(String tenantId, String creatorUserId, String contentOwnWallet) {
+        if (contentOwnWallet != null && !contentOwnWallet.isBlank()) {
+            return contentOwnWallet;
+        }
+
+        var pageable = PageRequest.of(0, TIP_WALLET_LOOKUP_SCAN,
+                Sort.by(Sort.Direction.DESC, "createdAt"));
+
+        String fromEntries = entryRepository
+                .findByTenantIdAndUserIdAndStatus(tenantId, creatorUserId, EntryStatus.PUBLISHED, pageable)
+                .getContent().stream()
+                .map(Entry::getSellerWallet)
+                .filter(w -> w != null && !w.isBlank())
+                .findFirst()
+                .orElse(null);
+        if (fromEntries != null) {
+            return fromEntries;
+        }
+
+        return collectionRepository
+                .findByTenantIdAndUserId(tenantId, creatorUserId, pageable)
+                .getContent().stream()
+                .filter(c -> c.getStatus() == CollectionStatus.PUBLISHED)
+                .map(Collection::getSellerWallet)
+                .filter(w -> w != null && !w.isBlank())
+                .findFirst()
+                .orElse(null);
+    }
+
+    /**
      * Process existing orders for the same buyer + target before creating a new one.
+
      * <ul>
      *   <li>COMPLETED — self-heals a missing entitlement (crash between completion
      *       and grant), then rejects with "Content already purchased".</li>
@@ -704,6 +923,13 @@ public class PaymentService {
             throw new IllegalStateException(
                     "Refusing to create entitlement: order is not a confirmed COMPLETED payment (orderId="
                             + order.getId() + ", status=" + order.getStatus() + ")");
+        }
+
+        // Tips never grant an entitlement — they unlock nothing. The payment is
+        // already settled on-chain (creator paid directly); there is nothing else
+        // to do. Returning here keeps the reconciliation/watchdog paths no-ops too.
+        if (order.getTargetType() == TargetType.TIP) {
+            return;
         }
 
         Entitlement entitlement = new Entitlement();

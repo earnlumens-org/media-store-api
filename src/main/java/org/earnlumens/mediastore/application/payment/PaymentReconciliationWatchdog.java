@@ -152,6 +152,11 @@ public class PaymentReconciliationWatchdog {
             if (withEntitlement.contains(order.getId())) {
                 continue;
             }
+            // Tips never have an entitlement by design — skip them so they are
+            // not reported (and "repaired") on every cycle.
+            if (order.getTargetType() == org.earnlumens.mediastore.domain.media.model.TargetType.TIP) {
+                continue;
+            }
             try {
                 logger.warn("COMPLETED order without entitlement detected — repairing: orderId={}, "
                         + "userId={}, txHash={}", order.getId(), order.getUserId(), order.getStellarTxHash());
