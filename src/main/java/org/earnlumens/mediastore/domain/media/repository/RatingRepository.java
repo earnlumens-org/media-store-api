@@ -29,13 +29,13 @@ public interface RatingRepository {
     Page<Rating> findByTenantIdAndTargetTypeAndTargetId(
             String tenantId, TargetType targetType, String targetId, Pageable pageable);
 
-    /** Count ratings with a given star value (aggregate recomputation). */
-    long countByTenantIdAndTargetTypeAndTargetIdAndStars(
-            String tenantId, TargetType targetType, String targetId, int stars);
+    /** Count ratings with a given like/dislike value (aggregate recomputation). */
+    long countByTenantIdAndTargetTypeAndTargetIdAndLiked(
+            String tenantId, TargetType targetType, String targetId, boolean liked);
 
-    /** Count verified-proof ratings with a given star value (aggregate recomputation). */
-    long countByTenantIdAndTargetTypeAndTargetIdAndProofTypeAndStars(
-            String tenantId, TargetType targetType, String targetId, RatingProofType proofType, int stars);
+    /** Count verified-proof ratings with a given like/dislike value (aggregate recomputation). */
+    long countByTenantIdAndTargetTypeAndTargetIdAndProofTypeAndLiked(
+            String tenantId, TargetType targetType, String targetId, RatingProofType proofType, boolean liked);
 
     /** Persist (create or update) a rating. */
     Rating save(Rating rating);

@@ -1,23 +1,27 @@
 package org.earnlumens.mediastore.domain.media.dto.response;
 
-import java.util.List;
-
 /**
- * Public rating summary for a target (entry or collection).
+ * Public like/dislike summary for a target (entry or collection).
  *
- * <p>The {@code verified*} fields are computed from {@code PURCHASE}-backed
- * ratings only, so callers can surface a buyer-only score independent of any
- * {@code FREE_VIEW} ratings.</p>
+ * <p>Roblox-style: {@code likePercent} is the headline score
+ * ({@code likes / count * 100}). The {@code verified*} fields are computed
+ * from {@code PURCHASE}-backed votes only, so callers can surface a buyer-only
+ * score independent of any {@code FREE_VIEW} votes.</p>
  *
- * @param distribution star histogram, index 0 = 1★ … index 4 = 5★.
+ * @param count        total votes ({@code likes + dislikes}).
+ * @param likes        number of likes (thumbs up).
+ * @param dislikes     number of dislikes (thumbs down).
+ * @param likePercent  percentage of likes, 0&ndash;100 (0 when no votes).
  */
 public record RatingAggregateResponse(
         String targetType,
         String targetId,
         long count,
-        double average,
+        long likes,
+        long dislikes,
+        double likePercent,
         long verifiedCount,
-        double verifiedAverage,
-        double bayesianScore,
-        List<Long> distribution
+        long verifiedLikes,
+        long verifiedDislikes,
+        double verifiedLikePercent
 ) {}

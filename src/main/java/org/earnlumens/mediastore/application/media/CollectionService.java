@@ -557,6 +557,21 @@ public class CollectionService {
                 })
                 .toList();
 
+        // Resolve live author identity so the avatar/username always reflect the
+        // owner's current profile, falling back to the denormalized snapshot when
+        // the user record can't be loaded.
+        String authorUsername = collection.getAuthorUsername();
+        String authorAvatarUrl = collection.getAuthorAvatarUrl();
+        var owner = userRepository.findByOauthUserId(collection.getUserId());
+        if (owner.isPresent()) {
+            if (owner.get().getUsername() != null) {
+                authorUsername = owner.get().getUsername();
+            }
+            if (owner.get().getProfileImageUrl() != null) {
+                authorAvatarUrl = owner.get().getProfileImageUrl();
+            }
+        }
+
         return Optional.of(new CollectionDetailResponse(
                 collection.getId(),
                 collection.getTitle(),
@@ -565,8 +580,8 @@ public class CollectionService {
                 collection.getCoverR2Key(),
                 collection.getStatus() != null ? collection.getStatus().name() : null,
                 collection.getVisibility() != null ? collection.getVisibility().name() : null,
-                collection.getAuthorUsername(),
-                collection.getAuthorAvatarUrl(),
+                authorUsername,
+                authorAvatarUrl,
                 collection.getAuthorBadge(),
                 collection.getPublishedAt() != null ? collection.getPublishedAt().format(ISO_FORMATTER) : null,
                 collection.isPaid(),

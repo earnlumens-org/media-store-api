@@ -3,10 +3,12 @@ package org.earnlumens.mediastore.domain.media.model;
 import java.time.LocalDateTime;
 
 /**
- * Domain model for a single user rating (1&ndash;5 stars + optional review)
+ * Domain model for a single user vote (like / dislike + optional review)
  * of a <em>target</em> &mdash; an entry or a whole collection.
  *
- * <p>Tenant-scoped: every rating belongs to exactly one tenant. The
+ * <p>Roblox-style: a user either likes ({@code liked = true}) or dislikes
+ * ({@code liked = false}) the target; the public score is the percentage of
+ * likes. Tenant-scoped: every rating belongs to exactly one tenant. The
  * {@link #proofType} is the immutable anti-fraud spine that survives
  * public&harr;paid transitions; it is never downgraded once set.</p>
  */
@@ -19,7 +21,7 @@ public class Rating {
     private String userId;
     private String username;
     private String creatorUserId;
-    private int stars;
+    private boolean liked;
     private String comment;
     private RatingProofType proofType;
     private String proofRef;
@@ -49,8 +51,8 @@ public class Rating {
     public String getCreatorUserId() { return creatorUserId; }
     public void setCreatorUserId(String creatorUserId) { this.creatorUserId = creatorUserId; }
 
-    public int getStars() { return stars; }
-    public void setStars(int stars) { this.stars = stars; }
+    public boolean isLiked() { return liked; }
+    public void setLiked(boolean liked) { this.liked = liked; }
 
     public String getComment() { return comment; }
     public void setComment(String comment) { this.comment = comment; }

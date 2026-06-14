@@ -54,17 +54,17 @@ public class RatingRepositoryImpl implements RatingRepository {
     }
 
     @Override
-    public long countByTenantIdAndTargetTypeAndTargetIdAndStars(
-            String tenantId, TargetType targetType, String targetId, int stars) {
+    public long countByTenantIdAndTargetTypeAndTargetIdAndLiked(
+            String tenantId, TargetType targetType, String targetId, boolean liked) {
         return mongoRepository
-                .countByTenantIdAndTargetTypeAndTargetIdAndStars(tenantId, targetType.name(), targetId, stars);
+                .countByTenantIdAndTargetTypeAndTargetIdAndLiked(tenantId, targetType.name(), targetId, liked);
     }
 
     @Override
-    public long countByTenantIdAndTargetTypeAndTargetIdAndProofTypeAndStars(
-            String tenantId, TargetType targetType, String targetId, RatingProofType proofType, int stars) {
-        return mongoRepository.countByTenantIdAndTargetTypeAndTargetIdAndProofTypeAndStars(
-                tenantId, targetType.name(), targetId, proofType.name(), stars);
+    public long countByTenantIdAndTargetTypeAndTargetIdAndProofTypeAndLiked(
+            String tenantId, TargetType targetType, String targetId, RatingProofType proofType, boolean liked) {
+        return mongoRepository.countByTenantIdAndTargetTypeAndTargetIdAndProofTypeAndLiked(
+                tenantId, targetType.name(), targetId, proofType.name(), liked);
     }
 
     @Override

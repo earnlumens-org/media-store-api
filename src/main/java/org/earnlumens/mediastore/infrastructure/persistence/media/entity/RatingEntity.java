@@ -1,7 +1,5 @@
 package org.earnlumens.mediastore.infrastructure.persistence.media.entity;
 
-import jakarta.validation.constraints.Max;
-import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import org.springframework.data.annotation.CreatedDate;
@@ -13,8 +11,8 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import java.time.LocalDateTime;
 
 /**
- * MongoDB document for the {@code ratings} collection — one star rating
- * (1&ndash;5) and optional review comment per user per <em>target</em>
+ * MongoDB document for the {@code ratings} collection — one like/dislike
+ * vote and optional review comment per user per <em>target</em>
  * (an entry or a collection).
  *
  * <p>Indexes:
@@ -26,14 +24,14 @@ import java.time.LocalDateTime;
  *       newest first.</li>
  *   <li><b>idx_tenant_user_created</b> — rate-limit window: a user's recent
  *       ratings.</li>
- *   <li><b>idx_tenant_target_stars</b> — fast histogram recomputation.</li>
+ *   <li><b>idx_tenant_target_liked</b> — fast like/dislike tally recomputation.</li>
  * </ul>
  */
 @Document(collection = "ratings")
 @CompoundIndex(name = "idx_tenant_user_target", def = "{'tenantId': 1, 'userId': 1, 'targetType': 1, 'targetId': 1}", unique = true)
 @CompoundIndex(name = "idx_tenant_target_created", def = "{'tenantId': 1, 'targetType': 1, 'targetId': 1, 'createdAt': -1}")
 @CompoundIndex(name = "idx_tenant_user_created", def = "{'tenantId': 1, 'userId': 1, 'createdAt': -1}")
-@CompoundIndex(name = "idx_tenant_target_stars", def = "{'tenantId': 1, 'targetType': 1, 'targetId': 1, 'stars': 1}")
+@CompoundIndex(name = "idx_tenant_target_liked", def = "{'tenantId': 1, 'targetType': 1, 'targetId': 1, 'liked': 1}")
 public class RatingEntity {
 
     @Id
@@ -60,9 +58,8 @@ public class RatingEntity {
     @NotBlank
     private String creatorUserId;
 
-    @Min(1)
-    @Max(5)
-    private int stars;
+    /** {@code true} = like (thumbs up), {@code false} = dislike (thumbs down). */
+    private boolean liked;
 
     /** Optional plain-text review. Sanitized (no markup) before persistence. */
     @Size(max = 1000)
@@ -110,8 +107,8 @@ public class RatingEntity {
     public String getCreatorUserId() { return creatorUserId; }
     public void setCreatorUserId(String creatorUserId) { this.creatorUserId = creatorUserId; }
 
-    public int getStars() { return stars; }
-    public void setStars(int stars) { this.stars = stars; }
+    public boolean isLiked() { return liked; }
+    public void setLiked(boolean liked) { this.liked = liked; }
 
     public String getComment() { return comment; }
     public void setComment(String comment) { this.comment = comment; }

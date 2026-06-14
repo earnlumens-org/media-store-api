@@ -20,24 +20,24 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * User content ratings (1&ndash;5 stars + optional review) for a <em>target</em>
+ * User content votes (like / dislike + optional review) for a <em>target</em>
  * &mdash; an entry or a whole collection (e.g. a music album) &mdash; built
- * around one goal: <b>kill fraud</b>.
+ * around one goal: <b>kill fraud</b>. The public score is the percentage of
+ * likes, Roblox-style.
  *
  * <h3>Anti-fraud guarantees</h3>
  * <ol>
- *   <li><b>One rating per user per target</b> — enforced by a unique index plus
- *       upsert-on-edit. A single account can never stuff the ballot.</li>
+ *   <li><b>One vote per user per target</b> — enforced by a unique index plus
+ *       upsert-on-edit. A single account can never stuff the ballot, and an
+ *       anonymous (unauthenticated) caller is rejected at the controller.</li>
  *   <li><b>Proof-gated eligibility</b> — a paid target can only be rated by a
  *       user with a verified purchase. For an entry that means an ACTIVE
  *       entitlement on the entry or on a collection containing it; for a
  *       collection, an ACTIVE collection entitlement. Free targets accept
- *       authenticated {@code FREE_VIEW} ratings.</li>
- *   <li><b>Immutable, segregated proof</b> — every rating stores its
+ *       authenticated {@code FREE_VIEW} votes.</li>
+ *   <li><b>Immutable, segregated proof</b> — every vote stores its
  *       {@link RatingProofType}; the aggregate keeps verified-purchase totals
  *       separate, so a public&harr;paid flip cannot inflate the buyer score.</li>
- *   <li><b>Bayesian ranking score</b> — low-N targets are pulled toward a
- *       neutral prior so {@code 5.0 (1)} can't outrank {@code 4.6 (300)}.</li>
  * </ol>
  *
  * <h3>Anti-spam</h3> Daily per-user creation cap (across all targets); edits don't count.
@@ -49,16 +49,10 @@ public class RatingService {
 
     private static final Logger logger = LoggerFactory.getLogger(RatingService.class);
 
-    private static final int MIN_STARS = 1;
-    private static final int MAX_STARS = 5;
     private static final int MAX_COMMENT = 1000;
 
-    /** Max new ratings a user can create per rolling 24h (edits excluded). */
+    /** Max new votes a user can create per rolling 24h (edits excluded). */
     private static final int DAILY_RATING_LIMIT = 20;
-
-    /** Bayesian prior: neutral mean and its weight (virtual votes). */
-    private static final double BAYES_PRIOR_MEAN = 3.5;
-    private static final double BAYES_PRIOR_WEIGHT = 8.0;
 
     /** Hard cap on page size for public review listing. */
     private static final int MAX_PAGE_SIZE = 50;
@@ -84,32 +78,27 @@ public class RatingService {
     // ── Commands ───────────────────────────────────────────────
 
     /**
-     * Create or update the caller's rating for a target (entry or collection).
+     * Create or update the caller's vote for a target (entry or collection).
      *
      * @throws IllegalArgumentException invalid input / non-ratable target
-     *         ({@code INVALID_STARS}, {@code TARGET_NOT_FOUND},
-     *         {@code TARGET_NOT_RATABLE}, {@code CANNOT_RATE_OWN_CONTENT})
+     *         ({@code TARGET_NOT_FOUND}, {@code TARGET_NOT_RATABLE},
+     *         {@code CANNOT_RATE_OWN_CONTENT})
      * @throws IllegalStateException    fraud / rate-limit
      *         ({@code PURCHASE_REQUIRED}, {@code DAILY_RATING_LIMIT_REACHED})
      */
     public Rating submitRating(String tenantId, String userId, String username,
                                TargetType targetType, String targetId,
-                               int stars, String comment) {
+                               boolean liked, String comment) {
 
-        // 1. Validate score
-        if (stars < MIN_STARS || stars > MAX_STARS) {
-            throw new IllegalArgumentException("INVALID_STARS");
-        }
-
-        // 2. Target must exist and be in a ratable (published) state
+        // 1. Target must exist and be in a ratable (published) state
         TargetInfo target = resolveTarget(tenantId, targetType, targetId);
 
-        // 3. No self-rating
+        // 2. No self-rating
         if (userId.equals(target.creatorUserId())) {
             throw new IllegalArgumentException("CANNOT_RATE_OWN_CONTENT");
         }
 
-        // 4. Fraud gate — resolve proof. Throws PURCHASE_REQUIRED for paid
+        // 3. Fraud gate — resolve proof. Throws PURCHASE_REQUIRED for paid
         //    content the caller never bought.
         ProofResolution proof = resolveProof(tenantId, userId, targetType, targetId, target);
 
@@ -124,7 +113,7 @@ public class RatingService {
         if (existing != null) {
             // Edit — never re-charges the rate limit, never downgrades proof.
             rating = existing;
-            rating.setStars(stars);
+            rating.setLiked(liked);
             rating.setComment(cleanComment);
             rating.setProofType(RatingProofType.strongest(existing.getProofType(), proof.type()));
             if (proof.type() == RatingProofType.PURCHASE) {
@@ -132,7 +121,7 @@ public class RatingService {
             }
             rating.setUpdatedAt(now);
         } else {
-            // New rating — enforce anti-spam daily cap.
+            // New vote — enforce anti-spam daily cap.
             long recent = ratingRepository.countByTenantIdAndUserIdAndCreatedAtAfter(
                     tenantId, userId, now.minusDays(1));
             if (recent >= DAILY_RATING_LIMIT) {
@@ -145,7 +134,7 @@ public class RatingService {
             rating.setUserId(userId);
             rating.setUsername(username);
             rating.setCreatorUserId(target.creatorUserId());
-            rating.setStars(stars);
+            rating.setLiked(liked);
             rating.setComment(cleanComment);
             rating.setProofType(proof.type());
             rating.setProofRef(proof.ref());
@@ -156,12 +145,12 @@ public class RatingService {
         Rating saved = ratingRepository.save(rating);
         recomputeAggregate(tenantId, targetType, targetId);
 
-        logger.info("Rating saved: target={}:{}, user={}, stars={}, proof={}, new={}",
-                targetType, targetId, userId, stars, saved.getProofType(), existing == null);
+        logger.info("Vote saved: target={}:{}, user={}, liked={}, proof={}, new={}",
+                targetType, targetId, userId, liked, saved.getProofType(), existing == null);
         return saved;
     }
 
-    /** Remove the caller's rating for a target (idempotent). */
+    /** Remove the caller's vote for a target (idempotent). */
     public void deleteRating(String tenantId, String userId, TargetType targetType, String targetId) {
         long deleted = ratingRepository.deleteByTenantIdAndUserIdAndTargetTypeAndTargetId(
                 tenantId, userId, targetType, targetId);
@@ -202,7 +191,7 @@ public class RatingService {
                 r.getId(),
                 r.getUserId(),
                 r.getUsername(),
-                r.getStars(),
+                r.isLiked(),
                 r.getComment(),
                 r.getProofType() == null ? null : r.getProofType().name(),
                 verified,
@@ -213,21 +202,24 @@ public class RatingService {
 
     private RatingAggregateResponse toAggregateResponse(String targetType, String targetId, RatingAggregate agg) {
         if (agg == null || agg.getCount() == 0) {
-            return new RatingAggregateResponse(targetType, targetId, 0, 0.0, 0, 0.0, 0.0,
-                    List.of(0L, 0L, 0L, 0L, 0L));
+            return new RatingAggregateResponse(targetType, targetId,
+                    0, 0, 0, 0.0,
+                    0, 0, 0, 0.0);
         }
-        double average = round2((double) agg.getSum() / agg.getCount());
-        double verifiedAverage = agg.getVerifiedCount() == 0
-                ? 0.0 : round2((double) agg.getVerifiedSum() / agg.getVerifiedCount());
+        double likePercent = percent(agg.getLikes(), agg.getCount());
+        double verifiedLikePercent = agg.getVerifiedCount() == 0
+                ? 0.0 : percent(agg.getVerifiedLikes(), agg.getVerifiedCount());
         return new RatingAggregateResponse(
                 targetType,
                 targetId,
                 agg.getCount(),
-                average,
+                agg.getLikes(),
+                agg.getDislikes(),
+                likePercent,
                 agg.getVerifiedCount(),
-                verifiedAverage,
-                round2(agg.getBayesianScore()),
-                List.of(agg.getStar1(), agg.getStar2(), agg.getStar3(), agg.getStar4(), agg.getStar5())
+                agg.getVerifiedLikes(),
+                agg.getVerifiedDislikes(),
+                verifiedLikePercent
         );
     }
 
@@ -312,21 +304,14 @@ public class RatingService {
     // ── Aggregate recomputation (derived from source — never drifts) ──
 
     private void recomputeAggregate(String tenantId, TargetType targetType, String targetId) {
-        long[] hist = new long[6];   // hist[1..5]
-        long count = 0, sum = 0, verifiedCount = 0, verifiedSum = 0;
-
-        for (int s = MIN_STARS; s <= MAX_STARS; s++) {
-            long cs = ratingRepository.countByTenantIdAndTargetTypeAndTargetIdAndStars(
-                    tenantId, targetType, targetId, s);
-            hist[s] = cs;
-            count += cs;
-            sum += (long) s * cs;
-
-            long vcs = ratingRepository.countByTenantIdAndTargetTypeAndTargetIdAndProofTypeAndStars(
-                    tenantId, targetType, targetId, RatingProofType.PURCHASE, s);
-            verifiedCount += vcs;
-            verifiedSum += (long) s * vcs;
-        }
+        long likes = ratingRepository.countByTenantIdAndTargetTypeAndTargetIdAndLiked(
+                tenantId, targetType, targetId, true);
+        long dislikes = ratingRepository.countByTenantIdAndTargetTypeAndTargetIdAndLiked(
+                tenantId, targetType, targetId, false);
+        long verifiedLikes = ratingRepository.countByTenantIdAndTargetTypeAndTargetIdAndProofTypeAndLiked(
+                tenantId, targetType, targetId, RatingProofType.PURCHASE, true);
+        long verifiedDislikes = ratingRepository.countByTenantIdAndTargetTypeAndTargetIdAndProofTypeAndLiked(
+                tenantId, targetType, targetId, RatingProofType.PURCHASE, false);
 
         RatingAggregate agg = aggregateRepository
                 .findByTenantIdAndTargetTypeAndTargetId(tenantId, targetType, targetId)
@@ -338,24 +323,21 @@ public class RatingService {
                     return a;
                 });
 
-        agg.setCount(count);
-        agg.setSum(sum);
-        agg.setStar1(hist[1]);
-        agg.setStar2(hist[2]);
-        agg.setStar3(hist[3]);
-        agg.setStar4(hist[4]);
-        agg.setStar5(hist[5]);
-        agg.setVerifiedCount(verifiedCount);
-        agg.setVerifiedSum(verifiedSum);
-        agg.setBayesianScore(bayesian(count, sum));
+        agg.setCount(likes + dislikes);
+        agg.setLikes(likes);
+        agg.setDislikes(dislikes);
+        agg.setVerifiedCount(verifiedLikes + verifiedDislikes);
+        agg.setVerifiedLikes(verifiedLikes);
+        agg.setVerifiedDislikes(verifiedDislikes);
         agg.setUpdatedAt(LocalDateTime.now());
 
         aggregateRepository.save(agg);
     }
 
-    private double bayesian(long count, long sum) {
-        if (count == 0) return 0.0;
-        return (BAYES_PRIOR_WEIGHT * BAYES_PRIOR_MEAN + sum) / (BAYES_PRIOR_WEIGHT + count);
+    /** Percentage of {@code part} out of {@code total}, rounded to 2 decimals (0 when total is 0). */
+    private double percent(long part, long total) {
+        if (total == 0) return 0.0;
+        return Math.round((double) part / total * 10000.0) / 100.0;
     }
 
     // ── Anti-XSS sanitization ──────────────────────────────────
@@ -382,9 +364,5 @@ public class RatingService {
             s = s.substring(0, MAX_COMMENT);
         }
         return s;
-    }
-
-    private double round2(double v) {
-        return Math.round(v * 100.0) / 100.0;
     }
 }

@@ -27,9 +27,9 @@ public interface RatingMongoRepository extends MongoRepository<RatingEntity, Str
 
     // ── Aggregate recomputation (always derived from source — no drift) ──
 
-    long countByTenantIdAndTargetTypeAndTargetIdAndStars(
-            String tenantId, String targetType, String targetId, int stars);
+    long countByTenantIdAndTargetTypeAndTargetIdAndLiked(
+            String tenantId, String targetType, String targetId, boolean liked);
 
-    long countByTenantIdAndTargetTypeAndTargetIdAndProofTypeAndStars(
-            String tenantId, String targetType, String targetId, String proofType, int stars);
+    long countByTenantIdAndTargetTypeAndTargetIdAndProofTypeAndLiked(
+            String tenantId, String targetType, String targetId, String proofType, boolean liked);
 }

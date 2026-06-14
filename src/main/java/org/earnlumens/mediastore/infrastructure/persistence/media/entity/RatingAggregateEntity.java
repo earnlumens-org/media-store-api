@@ -8,7 +8,7 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import java.time.LocalDateTime;
 
 /**
- * Denormalized rating aggregate, one document per (tenant, entry).
+ * Denormalized like/dislike aggregate, one document per (tenant, target).
  * Recomputed from the {@code ratings} collection on every write so it can
  * never drift from the source of truth.
  *
@@ -36,30 +36,23 @@ public class RatingAggregateEntity {
     @NotBlank
     private String targetId;
 
-    /** Total number of ratings (all proof types). */
+    /** Total number of votes (all proof types) — {@code likes + dislikes}. */
     private long count;
 
-    /** Sum of all stars (all proof types) — used to derive the average. */
-    private long sum;
+    /** Number of likes (thumbs up), all proof types. */
+    private long likes;
 
-    /** Star histogram: number of 1★, 2★, 3★, 4★, 5★ ratings. */
-    private long star1;
-    private long star2;
-    private long star3;
-    private long star4;
-    private long star5;
+    /** Number of dislikes (thumbs down), all proof types. */
+    private long dislikes;
 
-    /** Number of ratings backed by a verified purchase. */
+    /** Number of votes backed by a verified purchase. */
     private long verifiedCount;
 
-    /** Sum of stars from verified-purchase ratings only. */
-    private long verifiedSum;
+    /** Number of likes from verified-purchase votes only. */
+    private long verifiedLikes;
 
-    /**
-     * Bayesian-weighted score (0&ndash;5) for ranking. Pulls low-N entries
-     * toward a neutral prior so {@code 5.0 (1)} cannot outrank {@code 4.6 (300)}.
-     */
-    private double bayesianScore;
+    /** Number of dislikes from verified-purchase votes only. */
+    private long verifiedDislikes;
 
     private LocalDateTime updatedAt;
 
@@ -80,32 +73,20 @@ public class RatingAggregateEntity {
     public long getCount() { return count; }
     public void setCount(long count) { this.count = count; }
 
-    public long getSum() { return sum; }
-    public void setSum(long sum) { this.sum = sum; }
+    public long getLikes() { return likes; }
+    public void setLikes(long likes) { this.likes = likes; }
 
-    public long getStar1() { return star1; }
-    public void setStar1(long star1) { this.star1 = star1; }
-
-    public long getStar2() { return star2; }
-    public void setStar2(long star2) { this.star2 = star2; }
-
-    public long getStar3() { return star3; }
-    public void setStar3(long star3) { this.star3 = star3; }
-
-    public long getStar4() { return star4; }
-    public void setStar4(long star4) { this.star4 = star4; }
-
-    public long getStar5() { return star5; }
-    public void setStar5(long star5) { this.star5 = star5; }
+    public long getDislikes() { return dislikes; }
+    public void setDislikes(long dislikes) { this.dislikes = dislikes; }
 
     public long getVerifiedCount() { return verifiedCount; }
     public void setVerifiedCount(long verifiedCount) { this.verifiedCount = verifiedCount; }
 
-    public long getVerifiedSum() { return verifiedSum; }
-    public void setVerifiedSum(long verifiedSum) { this.verifiedSum = verifiedSum; }
+    public long getVerifiedLikes() { return verifiedLikes; }
+    public void setVerifiedLikes(long verifiedLikes) { this.verifiedLikes = verifiedLikes; }
 
-    public double getBayesianScore() { return bayesianScore; }
-    public void setBayesianScore(double bayesianScore) { this.bayesianScore = bayesianScore; }
+    public long getVerifiedDislikes() { return verifiedDislikes; }
+    public void setVerifiedDislikes(long verifiedDislikes) { this.verifiedDislikes = verifiedDislikes; }
 
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }

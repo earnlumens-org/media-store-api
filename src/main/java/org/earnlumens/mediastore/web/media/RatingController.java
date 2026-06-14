@@ -39,7 +39,7 @@ public class RatingController {
         this.ratingService = ratingService;
     }
 
-    /** Body: { "stars": 1..5, "comment": "optional plain text" }. */
+    /** Body: { "liked": true|false, "comment": "optional plain text" }. */
     @PostMapping("/{targetType}/{targetId}")
     public ResponseEntity<?> submit(
             @PathVariable("targetType") String targetTypeRaw,
@@ -55,15 +55,15 @@ public class RatingController {
         if (targetType == null) {
             return ResponseEntity.badRequest().body(Map.of("error", "INVALID_TARGET_TYPE"));
         }
-        if (body == null || body.stars() == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "INVALID_STARS"));
+        if (body == null || body.liked() == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "INVALID_VOTE"));
         }
         String tenantId = tenantResolver.resolve(request);
         String username = extractUsername();
 
         try {
             Rating rating = ratingService.submitRating(
-                    tenantId, userId, username, targetType, targetId, body.stars(), body.comment());
+                    tenantId, userId, username, targetType, targetId, body.liked(), body.comment());
             return ResponseEntity.ok(Map.of(
                     "rating", ratingService.toRatingResponse(rating),
                     "aggregate", ratingService.getAggregateResponse(tenantId, targetType, targetId)
@@ -147,5 +147,5 @@ public class RatingController {
         return attr != null ? attr.toString() : null;
     }
 
-    public record SubmitRatingRequest(Integer stars, String comment) {}
+    public record SubmitRatingRequest(Boolean liked, String comment) {}
 }
