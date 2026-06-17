@@ -289,6 +289,8 @@ public class EntryUploadService {
 
         // Denormalize author info for fast reads (no user join at query time)
         // userId is the OAuth provider ID (e.g. Google ID), not MongoDB _id
+        // NOTE: this is a snapshot — kept fresh on profile change by
+        // AuthService.generateTempUUID() (EntryRepository.updateAuthorInfoByUserId).
         userRepository.findByOauthUserId(userId).ifPresent(user -> {
             entry.setAuthorUsername(user.getUsername());
             entry.setAuthorAvatarUrl(user.getProfileImageUrl());

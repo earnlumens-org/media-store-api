@@ -1,6 +1,7 @@
 package org.earnlumens.mediastore.application.auth;
 
 import org.earnlumens.mediastore.application.user.UserService;
+import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.user.model.User;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
@@ -26,10 +27,13 @@ public class AuthService {
 
     private final UserService userService;
     private final EntryRepository entryRepository;
+    private final CollectionRepository collectionRepository;
 
-    public AuthService(UserService userService, EntryRepository entryRepository) {
+    public AuthService(UserService userService, EntryRepository entryRepository,
+                       CollectionRepository collectionRepository) {
         this.userService = userService;
         this.entryRepository = entryRepository;
+        this.collectionRepository = collectionRepository;
     }
 
     public String generateTempUUID(Authentication authentication) {
@@ -74,12 +78,34 @@ public class AuthService {
             user.setTempUUIDCreatedAt(Instant.now());
             userService.save(user);
 
-            // Sync denormalized author info on all entries when username or avatar changes
+            // Sync denormalized author info on all entries and collections when
+            // username or avatar changes (collections are conceptually bound to
+            // entries, so they share the same denormalized author card).
+            //
+            // ⚠️ MAINTAINER WARNING — denormalized author identity (username + avatar)
+            // is the snapshot pattern used across the store so author cards render
+            // without an extra User lookup. The User document is the source of truth;
+            // every place that stores a COPY of the author's username/avatar must be
+            // re-synced HERE on login, or it will go stale after a user renames /
+            // changes their X profile photo.
+            // Current denormalization sites (keep this list + the calls below in sync):
+            //   - EntryEntity.authorUsername / authorUsernameLower / authorAvatarUrl
+            //       → EntryUploadService.createEntry()  (write)
+            //       → EntryRepository.updateAuthorInfoByUserId()  (backfill, below)
+            //   - CollectionEntity.authorUsername / authorUsernameLower / authorAvatarUrl
+            //       → CollectionService.createCollection()  (write)
+            //       → CollectionRepository.updateAuthorInfoByUserId()  (backfill, below)
+            // FUTURE FEATURES (comments/feedbacks, reviews, any user-generated card
+            // that embeds the author's name/avatar): if you denormalize the author
+            // there too, add a matching updateAuthorInfoByUserId() + a call below.
+            // Prefer reading the live User instead of denormalizing when an extra
+            // lookup is acceptable — that avoids this whole class of staleness.
             if (usernameChanged || avatarChanged) {
                 String tenantId = TenantContext.require();
-                long updated = entryRepository.updateAuthorInfoByUserId(tenantId, oauthUserId, username, profileImageUrl);
-                log.info("User {} changed profile info (username={}, avatar={}). Updated {} entries in tenant={}.",
-                        oauthUserId, usernameChanged, avatarChanged, updated, tenantId);
+                long updatedEntries = entryRepository.updateAuthorInfoByUserId(tenantId, oauthUserId, username, profileImageUrl);
+                long updatedCollections = collectionRepository.updateAuthorInfoByUserId(tenantId, oauthUserId, username, profileImageUrl);
+                log.info("User {} changed profile info (username={}, avatar={}). Updated {} entries and {} collections in tenant={}.",
+                        oauthUserId, usernameChanged, avatarChanged, updatedEntries, updatedCollections, tenantId);
             }
         } else {
             User newUser = new User();

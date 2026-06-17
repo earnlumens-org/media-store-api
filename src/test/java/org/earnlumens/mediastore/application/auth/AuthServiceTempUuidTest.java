@@ -1,6 +1,7 @@
 package org.earnlumens.mediastore.application.auth;
 
 import org.earnlumens.mediastore.application.user.UserService;
+import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.user.model.User;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
@@ -22,13 +23,15 @@ class AuthServiceTempUuidTest {
 
     private UserService userService;
     private EntryRepository entryRepository;
+    private CollectionRepository collectionRepository;
     private AuthService authService;
 
     @BeforeEach
     void setUp() {
         userService = mock(UserService.class);
         entryRepository = mock(EntryRepository.class);
-        authService = new AuthService(userService, entryRepository);
+        collectionRepository = mock(CollectionRepository.class);
+        authService = new AuthService(userService, entryRepository, collectionRepository);
         TenantContext.set("earnlumens");
     }
 

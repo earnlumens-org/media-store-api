@@ -32,7 +32,6 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.regex.Pattern;
 import java.util.ArrayList;
@@ -119,6 +118,8 @@ public class CollectionService {
         }
 
         // Denormalize author info for fast reads
+        // NOTE: this is a snapshot — kept fresh on profile change by
+        // AuthService.generateTempUUID() (CollectionRepository.updateAuthorInfoByUserId).
         userRepository.findByOauthUserId(userId).ifPresent(user -> {
             collection.setAuthorUsername(user.getUsername());
             collection.setAuthorAvatarUrl(user.getProfileImageUrl());
@@ -557,21 +558,6 @@ public class CollectionService {
                 })
                 .toList();
 
-        // Resolve live author identity so the avatar/username always reflect the
-        // owner's current profile, falling back to the denormalized snapshot when
-        // the user record can't be loaded.
-        String authorUsername = collection.getAuthorUsername();
-        String authorAvatarUrl = collection.getAuthorAvatarUrl();
-        var owner = userRepository.findByOauthUserId(collection.getUserId());
-        if (owner.isPresent()) {
-            if (owner.get().getUsername() != null) {
-                authorUsername = owner.get().getUsername();
-            }
-            if (owner.get().getProfileImageUrl() != null) {
-                authorAvatarUrl = owner.get().getProfileImageUrl();
-            }
-        }
-
         return Optional.of(new CollectionDetailResponse(
                 collection.getId(),
                 collection.getTitle(),
@@ -580,8 +566,8 @@ public class CollectionService {
                 collection.getCoverR2Key(),
                 collection.getStatus() != null ? collection.getStatus().name() : null,
                 collection.getVisibility() != null ? collection.getVisibility().name() : null,
-                authorUsername,
-                authorAvatarUrl,
+                collection.getAuthorUsername(),
+                collection.getAuthorAvatarUrl(),
                 collection.getAuthorBadge(),
                 collection.getPublishedAt() != null ? collection.getPublishedAt().format(ISO_FORMATTER) : null,
                 collection.isPaid(),

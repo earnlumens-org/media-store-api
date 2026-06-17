@@ -30,6 +30,14 @@ public interface CollectionRepository {
     List<Collection> findByTenantIdAndStatusAndItemsEntryId(
             String tenantId, CollectionStatus status, String entryId);
 
+    /**
+     * Bulk-updates authorUsername, authorUsernameLower and authorAvatarUrl on all
+     * collections belonging to a user within a tenant. Called when a user's profile
+     * info changes (e.g. username change on X/Twitter), mirroring the equivalent
+     * backfill on entries so denormalized author cards stay fresh.
+     */
+    long updateAuthorInfoByUserId(String tenantId, String userId, String newUsername, String newAvatarUrl);
+
     Collection save(Collection collection);
 
     void deleteByTenantIdAndId(String tenantId, String id);
