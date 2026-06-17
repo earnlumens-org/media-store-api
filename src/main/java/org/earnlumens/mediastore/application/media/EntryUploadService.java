@@ -866,6 +866,20 @@ public class EntryUploadService {
             return false;
         }
 
+        // ── Ensure the post-approval media pipeline ran before going live ──
+        // Content the AI sent to MANUAL_QUEUE and a human moderator approved
+        // (admin-api writes status directly to Mongo) bypasses the AI
+        // auto-approval path in ModerationJobService.handleApproval, so its
+        // thumbnail variants and — for VIDEO — HLS transcoding were never
+        // enqueued. Trigger them here so a manually-approved entry gets the
+        // same processing as an auto-approved one. Idempotent: both steps skip
+        // when a job already exists. Runs BEFORE the transcoding-in-progress
+        // guard so a freshly-created HLS job blocks the publish until it
+        // finishes, mirroring the auto-approval flow.
+        if (newStatus == EntryStatus.PUBLISHED) {
+            moderationJobService.ensurePostApprovalMediaPipeline(tenantId, entry);
+        }
+
         // ── Block submit-for-review and publish while transcoding ──
         // Archiving / unarchiving / re-edit transitions remain permitted so the
         // creator is never locked out of their own draft mid-encode.

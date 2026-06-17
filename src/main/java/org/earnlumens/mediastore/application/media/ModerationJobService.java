@@ -393,20 +393,49 @@ public class ModerationJobService {
                     // timestamp powers the "scanned on {date}" download disclaimer.
                     stampAssetScanned(job.getTenantId(), entry.getId());
 
-                    if (entry.getType() == org.earnlumens.mediastore.domain.media.model.EntryType.VIDEO) {
-                        createTranscodingJobForEntry(job.getTenantId(), entry);
-                    }
-
-                    // Thumbnail processing runs for EVERY approved entry (any type),
-                    // for thumbnail and (when present) preview images. Best-effort:
-                    // a failure never blocks the entry — the original is served as-is.
-                    try {
-                        thumbnailJobService.enqueueForEntry(job.getTenantId(), entry);
-                    } catch (Exception e) {
-                        logger.warn("moderation: failed to enqueue thumbnail jobs for entry={} — {}",
-                                entry.getId(), e.getMessage());
-                    }
+                    // Run the shared post-approval media pipeline: deferred
+                    // transcoding (VIDEO) + thumbnail/preview variant generation.
+                    ensurePostApprovalMediaPipeline(job.getTenantId(), entry);
                 });
+    }
+
+    /**
+     * Runs the post-approval media pipeline for an entry:
+     * <ul>
+     *   <li>for VIDEO, creates the deferred TranscodingJob (HLS), and</li>
+     *   <li>for any type, enqueues thumbnail + (when present) preview variant jobs.</li>
+     * </ul>
+     *
+     * <p>Both steps are idempotent — {@code createTranscodingJobForEntry} skips
+     * when a job already exists and {@code enqueueForEntry} skips when an active
+     * job exists — so this is safe to invoke from both the AI auto-approval path
+     * ({@link #handleApproval}) and the manual publish path
+     * ({@code EntryUploadService.updateEntryStatus → PUBLISHED}). The latter is
+     * essential because content that the AI sent to MANUAL_QUEUE and a human
+     * moderator approved never passes through {@code handleApproval}, so without
+     * this its thumbnails/HLS would never be generated.
+     *
+     * <p>Best-effort: a failure in either step never blocks the entry — the
+     * original image is served as-is and transcoding is retried by the watchdog.
+     */
+    public void ensurePostApprovalMediaPipeline(String tenantId, Entry entry) {
+        if (entry.getType() == EntryType.VIDEO) {
+            try {
+                createTranscodingJobForEntry(tenantId, entry);
+            } catch (Exception e) {
+                logger.warn("post-approval pipeline: failed to create transcoding job for entry={} — {}",
+                        entry.getId(), e.getMessage());
+            }
+        }
+
+        // Thumbnail processing runs for EVERY approved entry (any type),
+        // for thumbnail and (when present) preview images.
+        try {
+            thumbnailJobService.enqueueForEntry(tenantId, entry);
+        } catch (Exception e) {
+            logger.warn("post-approval pipeline: failed to enqueue thumbnail jobs for entry={} — {}",
+                    entry.getId(), e.getMessage());
+        }
     }
 
     private void handleCollectionApproval(ModerationJob job) {
