@@ -1102,7 +1102,6 @@ This section tracks the delta from the current codebase to the collection commer
 - [ ] Create endpoint: "purchasable collections containing entry X" (§9.9) — needed for COLLECTION_ONLY preview page
 - [ ] Update collection detail endpoint — hydrate entries with per-entry locked/unlocked status (§9.8)
 - [ ] Reject individual purchase orders for `COLLECTION_ONLY` entries (§9.11, step 1)
-- [ ] Update `EntryMockController` to include new fields (pricingMode) and realistic collection pricing
 - [ ] Add download endpoint/button for all accessible content (video, audio, image, resource-as-PDF)
 - [ ] Update Terms & Conditions page with purchase terms (§13)
 - [ ] Implement status-aware access check — creator-initiated statuses (DRAFT, UNLISTED, ARCHIVED) do not revoke purchased access (§8.2, §8.3, §9.4)
