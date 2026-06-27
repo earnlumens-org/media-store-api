@@ -1,0 +1,138 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  annotations:
+    run.googleapis.com/build-enable-automatic-updates: 'false'
+    run.googleapis.com/build-id: 982095ee-5600-4f96-8967-88243b2ad8e6
+    run.googleapis.com/build-image-uri: europe-west1-docker.pkg.dev/earnlumens/cloud-run-source-deploy/media-store-api
+    run.googleapis.com/build-name: projects/180864838424/locations/europe-west1/builds/982095ee-5600-4f96-8967-88243b2ad8e6
+    run.googleapis.com/build-source-location: gs://run-sources-earnlumens-europe-west1/services/media-store-api/1776191834.23736-3ecb1a7f2f9d45adb2c9ba27094ed0fc.zip#1776191838589564
+    run.googleapis.com/ingress: all
+    run.googleapis.com/ingress-status: all
+    run.googleapis.com/invoker-iam-disabled: 'true'
+    run.googleapis.com/urls: '["https://media-store-api-180864838424.europe-west1.run.app","https://media-store-api-owuexaao5a-ew.a.run.app"]'
+  labels:
+    cloud.googleapis.com/location: europe-west1
+    commit-sha: eff9999c554512bba5a59280366e5fbfa66cc346
+    gcb-build-id: c50fc265-7076-4f37-8e3f-bd115b944116
+    gcb-trigger-id: a48405b7-4f89-4a3d-b573-740accb3fd94
+    gcb-trigger-region: global
+    managed-by: gcp-cloud-build-deploy-cloud-run
+  name: media-store-api
+  namespace: '180864838424'
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/maxScale: '3'
+        run.googleapis.com/client-name: gcloud
+        run.googleapis.com/client-version: 573.0.0
+        run.googleapis.com/startup-cpu-boost: 'true'
+      labels:
+        client.knative.dev/nonce: ginnylpqgi
+        commit-sha: eff9999c554512bba5a59280366e5fbfa66cc346
+        gcb-build-id: c50fc265-7076-4f37-8e3f-bd115b944116
+        gcb-trigger-id: a48405b7-4f89-4a3d-b573-740accb3fd94
+        gcb-trigger-region: global
+        managed-by: gcp-cloud-build-deploy-cloud-run
+        run.googleapis.com/startupProbeType: Default
+    spec:
+      containerConcurrency: 80
+      containers:
+      - env:
+        - name: SPRING_PROFILES_ACTIVE
+          value: <REDACTED>
+        - name: SPRING_MONGODB_URI
+          value: <REDACTED>
+        - name: SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_X_CLIENT_ID
+          value: <REDACTED>
+        - name: SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_X_CLIENT_SECRET
+          value: <REDACTED>
+        - name: MEDIASTORE_SEC_HCAPTCHA
+          value: <REDACTED>
+        - name: MEDIASTORE_APP_JWTSECRET
+          value: <REDACTED>
+        - name: MEDIASTORE_FRONTEND_URI
+          value: <REDACTED>
+        - name: MEDIASTORE_SEC_COOKIESECURE
+          value: <REDACTED>
+        - name: MEDIASTORE_R2_BUCKET
+          value: <REDACTED>
+        - name: MEDIASTORE_R2_ACCESSKEYID
+          value: <REDACTED>
+        - name: MEDIASTORE_R2_SECRETACCESSKEY
+          value: <REDACTED>
+        - name: MEDIASTORE_R2_ENDPOINT
+          value: <REDACTED>
+        - name: MEDIASTORE_INTERNAL_CLEANUPSECRET
+          value: <REDACTED>
+        - name: PLATFORM_WALLET
+          value: <REDACTED>
+        - name: PLATFORM_FEE_PERCENT
+          value: <REDACTED>
+        - name: CLOUD_RUN_PROJECT_ID
+          value: <REDACTED>
+        - name: CLOUD_RUN_REGION
+          value: <REDACTED>
+        - name: CLOUD_RUN_JOB_NAME
+          value: <REDACTED>
+        - name: CALLBACK_BASE_URL
+          value: <REDACTED>
+        - name: MEDIASTORE_MODERATION_CLOUD_RUN_JOB_NAME
+          value: <REDACTED>
+        - name: MEDIASTORE_ACRCLOUD_HOST
+          value: <REDACTED>
+        - name: MEDIASTORE_ACRCLOUD_ACCESSKEY
+          value: <REDACTED>
+        - name: MEDIASTORE_ACRCLOUD_ACCESSSECRET
+          value: <REDACTED>
+        - name: MEDIASTORE_GEMINI_APIKEY
+          value: <REDACTED>
+        - name: TENANT_ROOT_DOMAIN
+          value: <REDACTED>
+        - name: MODERATION_SECRET
+          valueFrom:
+            secretKeyRef:
+              key: latest
+              name: moderation-secret
+        - name: TRANSCODING_SECRET
+          valueFrom:
+            secretKeyRef:
+              key: latest
+              name: transcoding-secret
+        - name: MEDIASTORE_INTERNAL_TRANSCODINGSECRET
+          valueFrom:
+            secretKeyRef:
+              key: latest
+              name: transcoding-secret
+        - name: MEDIASTORE_INTERNAL_MODERATIONSECRET
+          valueFrom:
+            secretKeyRef:
+              key: latest
+              name: moderation-secret
+        - name: THUMBNAIL_SECRET
+          value: <REDACTED>
+        - name: THUMBNAIL_CLOUD_RUN_JOB_NAME
+          value: <REDACTED>
+        - name: TENANT_CACHE_SECRET
+          value: <REDACTED>
+        image: europe-west1-docker.pkg.dev/earnlumens/cloud-run-source-deploy/media-store-api/media-store-api:eff9999c554512bba5a59280366e5fbfa66cc346
+        name: placeholder-1
+        ports:
+        - containerPort: 8080
+          name: http1
+        resources:
+          limits:
+            cpu: 1000m
+            memory: 512Mi
+        startupProbe:
+          failureThreshold: 1
+          periodSeconds: 240
+          tcpSocket:
+            port: 8080
+          timeoutSeconds: 240
+      serviceAccountName: 180864838424-compute@developer.gserviceaccount.com
+      timeoutSeconds: 300
+  traffic:
+  - latestRevision: true
+    percent: 100
