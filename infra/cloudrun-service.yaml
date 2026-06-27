@@ -24,12 +24,12 @@ spec:
   template:
     metadata:
       annotations:
-        autoscaling.knative.dev/maxScale: '3'
+        autoscaling.knative.dev/maxScale: '15'
         run.googleapis.com/client-name: gcloud
-        run.googleapis.com/client-version: 573.0.0
+        run.googleapis.com/client-version: 560.0.0
         run.googleapis.com/startup-cpu-boost: 'true'
       labels:
-        client.knative.dev/nonce: ginnylpqgi
+        client.knative.dev/nonce: mvvajkjusf
         commit-sha: eff9999c554512bba5a59280366e5fbfa66cc346
         gcb-build-id: c50fc265-7076-4f37-8e3f-bd115b944116
         gcb-trigger-id: a48405b7-4f89-4a3d-b573-740accb3fd94
