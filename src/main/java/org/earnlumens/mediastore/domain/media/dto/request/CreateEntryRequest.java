@@ -54,6 +54,18 @@ public record CreateEntryRequest(
         String contentLanguage,
 
         /**
+         * Whether resellers may earn a commission distributing this entry.
+         * Defaults to true for paid content when null/absent.
+         */
+        Boolean resellerEnabled,
+
+        /**
+         * Reseller commission as a percent of the total price. Must be between
+         * 5 and 20 when reseller is enabled. Defaults to 10 when null/absent.
+         */
+        BigDecimal resellerCommissionPercent,
+
+        /**
          * Optional list of {@code spaceIds} (admin-api owned) where this
          * entry will be published. Validated by
          * {@code SpaceValidationService} — each id must resolve to an

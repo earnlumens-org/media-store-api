@@ -145,7 +145,7 @@ class EntryUploadServiceTest {
         });
 
         CreateEntryRequest request = new CreateEntryRequest(
-                "My Video", "A description", null, "VIDEO", true, new BigDecimal("10.5"), null, null, SELLER_WALLET, null, null);
+                "My Video", "A description", null, "VIDEO", true, new BigDecimal("10.5"), null, null, SELLER_WALLET, null, null, null, null);
 
         CreateEntryResponse response = service.createEntry(TENANT, USER_ID, request);
 
@@ -172,7 +172,7 @@ class EntryUploadServiceTest {
         });
 
         CreateEntryRequest request = new CreateEntryRequest(
-                "Track", null, null, "AUDIO", false, null, null, null, null, null, null);
+                "Track", null, null, "AUDIO", false, null, null, null, null, null, null, null, null);
 
         service.createEntry(TENANT, USER_ID, request);
 
@@ -182,7 +182,7 @@ class EntryUploadServiceTest {
     @Test
     void createEntry_invalidType_throwsException() {
         CreateEntryRequest request = new CreateEntryRequest(
-                "Bad", null, null, "INVALID_TYPE", false, null, null, null, null, null, null);
+                "Bad", null, null, "INVALID_TYPE", false, null, null, null, null, null, null, null, null);
 
         assertThrows(IllegalArgumentException.class,
                 () -> service.createEntry(TENANT, USER_ID, request));
@@ -445,7 +445,7 @@ class EntryUploadServiceTest {
                 .thenReturn(20L);
 
         CreateEntryRequest request = new CreateEntryRequest(
-                "Spam Entry", null, null, "VIDEO", false, null, null, null, null, null, null);
+                "Spam Entry", null, null, "VIDEO", false, null, null, null, null, null, null, null, null);
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> service.createEntry(TENANT, USER_ID, request));
@@ -462,7 +462,7 @@ class EntryUploadServiceTest {
         });
 
         CreateEntryRequest request = new CreateEntryRequest(
-                "OK Entry", null, null, "AUDIO", false, null, null, null, null, null, null);
+                "OK Entry", null, null, "AUDIO", false, null, null, null, null, null, null, null, null);
 
         CreateEntryResponse response = service.createEntry(TENANT, USER_ID, request);
         assertNotNull(response);

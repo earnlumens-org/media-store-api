@@ -39,5 +39,9 @@ public record PublicEntryResponse(
          */
         String thumbnailVariantsPrefix,
         /** R2 prefix for preview-image variants. Same convention as {@link #thumbnailVariantsPrefix}. */
-        String previewVariantsPrefix
+        String previewVariantsPrefix,
+        /** Whether resellers may earn a commission distributing this (paid) entry. */
+        boolean resellerEnabled,
+        /** Current reseller commission as a percent of the total price (5–20). Live value. */
+        BigDecimal resellerCommissionPercent
 ) {}

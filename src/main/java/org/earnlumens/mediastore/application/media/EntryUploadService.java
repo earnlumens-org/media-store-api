@@ -68,6 +68,9 @@ public class EntryUploadService {
 
     private static final Logger logger = LoggerFactory.getLogger(EntryUploadService.class);
     private static final BigDecimal ONE_HUNDRED = new BigDecimal("100.00");
+    private static final BigDecimal RESELLER_MIN_PERCENT = new BigDecimal("5");
+    private static final BigDecimal RESELLER_MAX_PERCENT = new BigDecimal("20");
+    private static final BigDecimal RESELLER_DEFAULT_PERCENT = new BigDecimal("10");
     private static final Pattern STELLAR_PUBLIC_KEY = Pattern.compile("^G[A-Z2-7]{55}$");
 
     /**
@@ -287,6 +290,14 @@ public class EntryUploadService {
                     entry.getPaymentSplits().size());
         }
 
+        // Reseller settings only apply to paid content. Free content can never
+        // be resold for a commission, so the feature is force-disabled there.
+        if (isPaid) {
+            applyResellerSettings(entry, request.resellerEnabled(), request.resellerCommissionPercent());
+        } else {
+            entry.setResellerEnabled(false);
+        }
+
         // Denormalize author info for fast reads (no user join at query time)
         // userId is the OAuth provider ID (e.g. Google ID), not MongoDB _id
         // NOTE: this is a snapshot — kept fresh on profile change by
@@ -326,6 +337,32 @@ public class EntryUploadService {
         List<PaymentSplit> splits = new ArrayList<>();
         splits.add(new PaymentSplit(sellerWallet, SplitRole.SELLER, ONE_HUNDRED));
         return splits;
+    }
+
+    /**
+     * Applies reseller settings to an entry, defaulting to enabled at
+     * {@value #RESELLER_DEFAULT_PERCENT}% and validating that an enabled
+     * commission stays within [{@value #RESELLER_MIN_PERCENT},
+     * {@value #RESELLER_MAX_PERCENT}]. When disabled, the last known percent is
+     * preserved so re-enabling restores the creator's chosen value.
+     *
+     * @param enabled null → default (enabled); otherwise the explicit choice
+     * @param percent null → keep current / default; otherwise the new percent
+     */
+    private void applyResellerSettings(Entry entry, Boolean enabled, BigDecimal percent) {
+        boolean resellerEnabled = enabled == null || Boolean.TRUE.equals(enabled);
+        entry.setResellerEnabled(resellerEnabled);
+        if (resellerEnabled) {
+            BigDecimal pct = percent != null ? percent
+                    : (entry.getResellerCommissionPercent() != null
+                        ? entry.getResellerCommissionPercent() : RESELLER_DEFAULT_PERCENT);
+            if (pct.compareTo(RESELLER_MIN_PERCENT) < 0 || pct.compareTo(RESELLER_MAX_PERCENT) > 0) {
+                throw new IllegalArgumentException("RESELLER_COMMISSION_OUT_OF_RANGE");
+            }
+            entry.setResellerCommissionPercent(pct);
+        } else if (entry.getResellerCommissionPercent() == null) {
+            entry.setResellerCommissionPercent(RESELLER_DEFAULT_PERCENT);
+        }
     }
 
     /**
@@ -803,6 +840,19 @@ public class EntryUploadService {
                 entry.setPriceUsd(null);
                 entry.setPriceCurrency(null);
             }
+        }
+
+        // ── Reseller settings ── only meaningful for paid content. A null
+        // resellerEnabled means "keep current state"; a null percent means
+        // "keep current percent". Free content force-disables the feature.
+        if (entry.isPaid()) {
+            if (request.resellerEnabled() != null || request.resellerCommissionPercent() != null) {
+                Boolean enabled = request.resellerEnabled() != null
+                        ? request.resellerEnabled() : entry.isResellerEnabled();
+                applyResellerSettings(entry, enabled, request.resellerCommissionPercent());
+            }
+        } else {
+            entry.setResellerEnabled(false);
         }
 
         // contentLanguage is intentionally NOT user-editable here.
@@ -1350,7 +1400,9 @@ public class EntryUploadService {
                 entry.getSellerWallet(),
                 entry.getModerationFeedback(),
                 entry.getThumbnailVariantsPrefix(),
-                entry.getPreviewVariantsPrefix()
+                entry.getPreviewVariantsPrefix(),
+                entry.isResellerEnabled(),
+                entry.getResellerCommissionPercent()
         );
     }
 

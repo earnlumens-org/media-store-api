@@ -100,6 +100,12 @@ public class EntryEntity {
     /** Stellar public key (G...) of the seller. Required for paid content. */
     private String sellerWallet;
 
+    /** Whether resellers may earn a commission distributing this entry. Default true. */
+    private boolean resellerEnabled = true;
+
+    /** Reseller commission as a percent of the total price (5–20). Read live at purchase time. */
+    private BigDecimal resellerCommissionPercent = new BigDecimal("10");
+
     /**
      * Payment distribution splits (non-platform only). Embedded sub-documents.
      * Currently: SELLER (90%). The PLATFORM split is applied dynamically

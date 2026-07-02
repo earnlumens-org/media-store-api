@@ -16,6 +16,8 @@ public class Order {
     private String sellerId;
     /** Franchise ("beta") this sale was made through, or null for a direct tenant sale. */
     private String franchiseId;
+    /** OAuth user-id of the reseller this sale is attributed to, or null. Audit trail for anti-abuse. */
+    private String resellerId;
     private BigDecimal amountXlm;
     /** Original USD amount (only set for USD-priced entries) */
     private BigDecimal originalAmountUsd;
@@ -62,6 +64,8 @@ public class Order {
     public void setSellerId(String sellerId) { this.sellerId = sellerId; }
     public String getFranchiseId() { return franchiseId; }
     public void setFranchiseId(String franchiseId) { this.franchiseId = franchiseId; }
+    public String getResellerId() { return resellerId; }
+    public void setResellerId(String resellerId) { this.resellerId = resellerId; }
     public BigDecimal getAmountXlm() { return amountXlm; }
     public void setAmountXlm(BigDecimal amountXlm) { this.amountXlm = amountXlm; }
     public BigDecimal getOriginalAmountUsd() { return originalAmountUsd; }

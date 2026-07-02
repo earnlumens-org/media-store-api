@@ -33,5 +33,9 @@ public record OwnerEntryResponse(
         /** R2 prefix for thumbnail variants. */
         String thumbnailVariantsPrefix,
         /** R2 prefix for preview-image variants. */
-        String previewVariantsPrefix
+        String previewVariantsPrefix,
+        /** Whether resellers may earn a commission distributing this entry. */
+        boolean resellerEnabled,
+        /** Reseller commission as a percent of the total price (5–20). */
+        BigDecimal resellerCommissionPercent
 ) {}

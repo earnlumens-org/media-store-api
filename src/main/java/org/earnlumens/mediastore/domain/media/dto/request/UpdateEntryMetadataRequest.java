@@ -16,6 +16,10 @@ public record UpdateEntryMetadataRequest(
         String priceCurrency,
         String sellerWallet,
         String resourceContent,
+        /** Whether resellers may earn a commission distributing this entry. */
+        Boolean resellerEnabled,
+        /** Reseller commission as a percent of the total price (5–20). */
+        BigDecimal resellerCommissionPercent,
         /**
          * Replacement list of spaceIds. {@code null} = leave unchanged;
          * empty list = clear all spaces; non-empty = replace with the

@@ -51,7 +51,7 @@ class PaymentServicePrepareFranchiseTest {
         service = new PaymentService(
                 entryRepository, null, orderRepository, null,
                 mock(StellarTransactionService.class), null, null, null, null,
-                franchiseReadRepository);
+                franchiseReadRepository, null);
 
         Entry entry = new Entry();
         entry.setUserId(SELLER);
@@ -79,7 +79,7 @@ class PaymentServicePrepareFranchiseTest {
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
                 () -> service.prepare(TENANT, BUYER,
-                        new PreparePaymentRequest(ENTRY_ID, null, SLUG, BUYER_WALLET)));
+                        new PreparePaymentRequest(ENTRY_ID, null, SLUG, null, BUYER_WALLET)));
 
         assertEquals("FRANCHISE_SELF_PURCHASE", ex.getMessage());
     }
@@ -94,7 +94,7 @@ class PaymentServicePrepareFranchiseTest {
         // than FRANCHISE_SELF_PURCHASE proves the guard let the buyer through.
         Exception ex = assertThrows(Exception.class,
                 () -> service.prepare(TENANT, BUYER,
-                        new PreparePaymentRequest(ENTRY_ID, null, SLUG, BUYER_WALLET)));
+                        new PreparePaymentRequest(ENTRY_ID, null, SLUG, null, BUYER_WALLET)));
 
         org.junit.jupiter.api.Assertions.assertNotEquals("FRANCHISE_SELF_PURCHASE", ex.getMessage());
     }

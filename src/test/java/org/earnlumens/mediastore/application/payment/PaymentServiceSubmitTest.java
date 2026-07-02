@@ -60,7 +60,7 @@ class PaymentServiceSubmitTest {
         stellarTxService = mock(StellarTransactionService.class);
         service = new PaymentService(
                 null, null, orderRepository, entitlementRepository,
-                stellarTxService, new StellarConfig(), null, null, null, null);
+                stellarTxService, new StellarConfig(), null, null, null, null, null);
         parsedTx = buildDummyTransaction();
     }
 

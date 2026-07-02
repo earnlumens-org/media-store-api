@@ -16,6 +16,8 @@ public record PreparePaymentRequest(
         String collectionId,
         /** Franchise slug — set when the purchase is made through a franchise storefront (/f/&lt;slug&gt;), else null */
         String franchiseSlug,
+        /** Reseller link code — set when the buyer arrived through a reseller link (?r=&lt;code&gt;), else null. Opaque and validated server-side. */
+        String resellerCode,
         @NotBlank @Size(min = 56, max = 56)
         @Pattern(regexp = "^G[A-Z2-7]{55}$", message = "Invalid Stellar public key")
         String buyerWallet

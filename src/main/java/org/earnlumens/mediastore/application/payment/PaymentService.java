@@ -88,6 +88,7 @@ public class PaymentService {
     private final XlmUsdPriceService xlmUsdPriceService;
     private final TenantConfigService tenantConfigService;
     private final FranchiseReadRepository franchiseReadRepository;
+    private final org.earnlumens.mediastore.infrastructure.reseller.ResellerLinkRepository resellerLinkRepository;
 
     public PaymentService(EntryRepository entryRepository,
                           CollectionRepository collectionRepository,
@@ -98,7 +99,8 @@ public class PaymentService {
                           PlatformConfig platformConfig,
                           XlmUsdPriceService xlmUsdPriceService,
                           TenantConfigService tenantConfigService,
-                          FranchiseReadRepository franchiseReadRepository) {
+                          FranchiseReadRepository franchiseReadRepository,
+                          org.earnlumens.mediastore.infrastructure.reseller.ResellerLinkRepository resellerLinkRepository) {
         this.entryRepository = entryRepository;
         this.collectionRepository = collectionRepository;
         this.orderRepository = orderRepository;
@@ -109,6 +111,7 @@ public class PaymentService {
         this.xlmUsdPriceService = xlmUsdPriceService;
         this.tenantConfigService = tenantConfigService;
         this.franchiseReadRepository = franchiseReadRepository;
+        this.resellerLinkRepository = resellerLinkRepository;
     }
 
     /**
@@ -138,6 +141,9 @@ public class PaymentService {
         BigDecimal xlmUsdRate = null;
         String priceCurrency;
         List<PaymentSplit> targetSplits;
+        // The purchased entry, kept in scope so reseller attribution can read its
+        // live commission after the franchise block. Null for collection buys.
+        Entry purchasedEntry = null;
 
         if (isCollectionPurchase) {
             // ── Collection purchase ──
@@ -194,6 +200,7 @@ public class PaymentService {
             // ── Entry purchase (existing logic) ──
             Entry entry = entryRepository.findByTenantIdAndId(tenantId, entryId)
                     .orElseThrow(() -> new IllegalArgumentException("Entry not found"));
+            purchasedEntry = entry;
 
             if (!entry.isPaid()) {
                 throw new IllegalArgumentException("Entry is not paid content");
@@ -265,8 +272,16 @@ public class PaymentService {
             }
         }
 
-        // Build the full payment splits (platform + optional tenant + seller/collaborator + franchise)
-        List<PaymentSplit> splits = buildFullSplits(tenantId, targetSplits, franchise);
+        // Resolve the reseller attribution, if this purchase came through a
+        // reseller link (?r=<code>). Attribution is dropped silently (the sale
+        // still proceeds at the normal price) when the code is blank, invalid,
+        // points at a different entry, the creator disabled resells, or the
+        // buyer would be paying themselves (same user or same wallet).
+        ResellerAttribution reseller = resolveReseller(
+                tenantId, userId, buyerWallet, purchasedEntry, request.resellerCode());
+
+        // Build the full payment splits (platform + optional tenant + seller/collaborator + franchise + reseller)
+        List<PaymentSplit> splits = buildFullSplits(tenantId, targetSplits, franchise, reseller);
 
         // Defence in depth: every split destination was validated as an active
         // Stellar account when it was registered, but accounts can be merged or
@@ -299,6 +314,7 @@ public class PaymentService {
         order.setUserId(userId);
         order.setSellerId(sellerId);
         order.setFranchiseId(franchise != null ? franchise.getId() : null);
+        order.setResellerId(reseller != null ? reseller.resellerUserId() : null);
         order.setAmountXlm(totalXlm);
         order.setOriginalAmountUsd(originalAmountUsd);
         order.setXlmUsdRate(xlmUsdRate);
@@ -986,9 +1002,21 @@ public class PaymentService {
      * tenant's portion is divided between the tenant and its franchise. A
      * franchise therefore only earns when the tenant has a non-zero fee to
      * share.
+     *
+     * <p>When the sale is made through a {@code reseller} link, a RESELLER split
+     * is carved <b>out of the seller's own share</b> equal to the reseller
+     * commission percent of the total price. The creator voluntarily gives away
+     * this cut; the final price and every other split (platform, tenant,
+     * franchise) are unchanged.
      */
     private List<PaymentSplit> buildFullSplits(String tenantId, List<PaymentSplit> entrySplits,
                                                FranchiseReadModel franchise) {
+        return buildFullSplits(tenantId, entrySplits, franchise, null);
+    }
+
+    private List<PaymentSplit> buildFullSplits(String tenantId, List<PaymentSplit> entrySplits,
+                                               FranchiseReadModel franchise,
+                                               ResellerAttribution reseller) {
         BigDecimal platformPercent = platformConfig.getFeePercent();
         String platformWallet = platformConfig.getWallet();
         BigDecimal tenantPercent = BigDecimal.ZERO;
@@ -1061,17 +1089,48 @@ public class PaymentService {
             fullSplits.add(new PaymentSplit(franchiseWallet, SplitRole.FRANCHISE, franchisePercent));
         }
 
-        // Rescale the entry splits (SELLER/COLLABORATOR) into the non-reserved
-        // portion. The first N-1 splits are rounded to 2 decimals (HALF_UP);
-        // the LAST split receives the exact remainder so the percents always
-        // sum to exactly 100.00 — independent rounding could otherwise drift
-        // by ±0.01 per split and silently change the total charged on-chain.
+        // Carve the reseller commission out of the SELLER's own share (the
+        // non-reserved pool). The reserved total (platform + tenant) is
+        // untouched, so the final price stays constant — the creator simply
+        // shares part of their own portion with the reseller. A reseller
+        // commission that would not fit inside the seller pool is skipped so
+        // the seller always keeps a positive share.
+        BigDecimal resellerPercent = BigDecimal.ZERO;
+        String resellerWallet = null;
+        if (reseller != null
+                && reseller.commissionPercent() != null
+                && reseller.commissionPercent().compareTo(BigDecimal.ZERO) > 0
+                && reseller.resellerWallet() != null
+                && !reseller.resellerWallet().isBlank()) {
+            BigDecimal candidate = reseller.commissionPercent().setScale(2, RoundingMode.HALF_UP);
+            if (candidate.compareTo(nonReservedTotal) >= 0) {
+                logger.warn("Reseller commission {}% does not fit in the seller pool {}% for tenant={} "
+                                + "— RESELLER split omitted, sale proceeds without attribution",
+                        candidate, nonReservedTotal, tenantId);
+            } else {
+                resellerPercent = candidate;
+                resellerWallet = reseller.resellerWallet();
+            }
+        }
+        if (resellerWallet != null && resellerPercent.compareTo(BigDecimal.ZERO) > 0) {
+            fullSplits.add(new PaymentSplit(resellerWallet, SplitRole.RESELLER, resellerPercent));
+        }
+
+        // The pool the entry's own splits (SELLER/COLLABORATOR) are rescaled
+        // into: the non-reserved total minus any reseller commission.
+        BigDecimal sellerPoolTotal = nonReservedTotal.subtract(resellerPercent);
+
+        // Rescale the entry splits (SELLER/COLLABORATOR) into the seller pool.
+        // The first N-1 splits are rounded to 2 decimals (HALF_UP); the LAST
+        // split receives the exact remainder so the percents always sum to
+        // exactly 100.00 — independent rounding could otherwise drift by ±0.01
+        // per split and silently change the total charged on-chain.
         BigDecimal assigned = BigDecimal.ZERO;
         for (int i = 0; i < entrySplits.size(); i++) {
             PaymentSplit split = entrySplits.get(i);
             BigDecimal normalizedPercent;
             if (i == entrySplits.size() - 1) {
-                normalizedPercent = nonReservedTotal.subtract(assigned);
+                normalizedPercent = sellerPoolTotal.subtract(assigned);
                 if (normalizedPercent.compareTo(BigDecimal.ZERO) <= 0) {
                     throw new IllegalStateException(
                             "Split normalization produced a non-positive remainder for the last split"
@@ -1079,7 +1138,7 @@ public class PaymentService {
                 }
             } else {
                 normalizedPercent = split.getPercent()
-                        .multiply(nonReservedTotal)
+                        .multiply(sellerPoolTotal)
                         .divide(entryTotal, 2, RoundingMode.HALF_UP);
                 assigned = assigned.add(normalizedPercent);
             }
@@ -1087,6 +1146,70 @@ public class PaymentService {
         }
 
         return fullSplits;
+    }
+
+    /**
+     * A resolved reseller attribution for a purchase: the reseller's user-id
+     * (for the order audit trail), their payout wallet (a split destination),
+     * and the live commission percent read from the entry.
+     */
+    record ResellerAttribution(String resellerUserId, String resellerWallet,
+                               BigDecimal commissionPercent) {}
+
+    /**
+     * Resolves the reseller attribution for an entry purchase, or {@code null}
+     * when there is none. Attribution is dropped <b>silently</b> (the sale
+     * proceeds at the normal price, with no reseller split) in every ambiguous
+     * or abusive case, so a bad link can never block a legitimate purchase:
+     * <ul>
+     *   <li>no code, or this is not an entry purchase;</li>
+     *   <li>the code does not resolve to a link under this tenant;</li>
+     *   <li>the link points at a different entry than the one being bought;</li>
+     *   <li>the creator has disabled resells (or the entry is now free);</li>
+     *   <li>the buyer is the reseller — same user-id OR same wallet — which
+     *       would be a self-referral / hidden self-cashback.</li>
+     * </ul>
+     */
+    private ResellerAttribution resolveReseller(String tenantId, String buyerUserId, String buyerWallet,
+                                                Entry entry, String resellerCode) {
+        if (resellerCode == null || resellerCode.isBlank() || entry == null) {
+            return null;
+        }
+        if (!entry.isPaid() || !entry.isResellerEnabled()) {
+            return null;
+        }
+        var linkOpt = resellerLinkRepository.findByTenantIdAndCode(tenantId, resellerCode.trim());
+        if (linkOpt.isEmpty()) {
+            return null;
+        }
+        var link = linkOpt.get();
+        // The code must belong to exactly the entry being purchased.
+        if (!entry.getId().equals(link.getEntryId())) {
+            logger.warn("Reseller code entry mismatch: tenant={}, code=***, linkEntry={}, buyEntry={}",
+                    tenantId, link.getEntryId(), entry.getId());
+            return null;
+        }
+        // Anti-abuse: a reseller cannot earn a commission on their own purchase,
+        // whether identified by user-id or by reusing the reseller payout wallet.
+        boolean selfByUser = buyerUserId != null && buyerUserId.equals(link.getResellerUserId());
+        boolean selfByWallet = buyerWallet != null && buyerWallet.equals(link.getResellerWallet());
+        if (selfByUser || selfByWallet) {
+            logger.warn("Reseller self-referral blocked: tenant={}, entry={}, byUser={}, byWallet={}",
+                    tenantId, entry.getId(), selfByUser, selfByWallet);
+            return null;
+        }
+        // The reseller wallet was verified active at link creation, but accounts
+        // can be merged/removed afterwards. A dead RESELLER destination must
+        // drop the attribution here — NOT reach the pre-sign split validation,
+        // which would block the buyer's legitimate purchase with
+        // SPLIT_WALLET_NOT_ACTIVE over a third party's stale wallet.
+        if (!stellarTxService.isAccountActiveCached(link.getResellerWallet())) {
+            logger.warn("Reseller wallet no longer active — attribution dropped: tenant={}, entry={}, linkId={}",
+                    tenantId, entry.getId(), link.getId());
+            return null;
+        }
+        return new ResellerAttribution(
+                link.getResellerUserId(), link.getResellerWallet(), entry.getResellerCommissionPercent());
     }
 
     private PreparePaymentResponse toResponse(Order order) {

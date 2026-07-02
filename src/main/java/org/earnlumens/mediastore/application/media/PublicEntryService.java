@@ -230,7 +230,9 @@ public class PublicEntryService {
                 assetInfo,
                 hlsReady,
                 entry.getThumbnailVariantsPrefix(),
-                entry.getPreviewVariantsPrefix()
+                entry.getPreviewVariantsPrefix(),
+                entry.isResellerEnabled(),
+                entry.getResellerCommissionPercent()
         );
     }
 

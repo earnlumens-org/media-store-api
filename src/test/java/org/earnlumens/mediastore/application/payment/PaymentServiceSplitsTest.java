@@ -47,6 +47,7 @@ class PaymentServiceSplitsTest {
                 platformConfig,
                 null,
                 tenantConfigService,
+                null,
                 null);
     }
 
@@ -225,6 +226,79 @@ class PaymentServiceSplitsTest {
         assertEquals(2, result.size());
         assertEquals(SplitRole.PLATFORM, result.get(0).getRole());
         assertEquals(SplitRole.SELLER, result.get(1).getRole());
+        assertTrue(sumTo100(result));
+    }
+
+    private List<PaymentSplit> invoke(String tenantId, List<PaymentSplit> entrySplits,
+                                      FranchiseReadModel franchise,
+                                      PaymentService.ResellerAttribution reseller) {
+        return ReflectionTestUtils.invokeMethod(
+                service, "buildFullSplits", tenantId, entrySplits, franchise, reseller);
+    }
+
+    private PaymentService.ResellerAttribution reseller(String pct, String wallet) {
+        return new PaymentService.ResellerAttribution("reseller-user", wallet,
+                pct != null ? new BigDecimal(pct) : null);
+    }
+
+    @Test
+    void resellerSale_carvesCommissionOutOfSellerShare() {
+        // Platform 10%, no tenant fee -> seller pool 90%. Reseller commission is
+        // 10% of the total price, carved from the seller's own pool.
+        when(tenantConfigService.findActiveBySubdomain("alice"))
+                .thenReturn(Optional.of(tenant("alice", "10.00", "0.00", TENANT_WALLET)));
+
+        List<PaymentSplit> result = invoke("alice", sellerOnly(), null, reseller("10", "GRESELLER1"));
+
+        assertEquals(3, result.size());
+        assertEquals(SplitRole.PLATFORM, result.get(0).getRole());
+        assertEquals(new BigDecimal("10.00"), result.get(0).getPercent());
+        assertEquals(SplitRole.RESELLER, result.get(1).getRole());
+        assertEquals(new BigDecimal("10.00"), result.get(1).getPercent());
+        assertEquals("GRESELLER1", result.get(1).getWallet());
+        assertEquals(SplitRole.SELLER, result.get(2).getRole());
+        // Seller keeps 90% pool minus the 10% reseller cut = 80%.
+        assertEquals(new BigDecimal("80.00"), result.get(2).getPercent());
+        assertTrue(sumTo100(result));
+    }
+
+    @Test
+    void resellerAndFranchiseSale_bothCarvesAreIndependent() {
+        // Tenant fee 10%, franchise 40% of it -> 4% franchise, 6% tenant.
+        // Reseller 5% is carved from the seller pool (100 - 10 - 10 = 80).
+        when(tenantConfigService.findActiveBySubdomain("alice"))
+                .thenReturn(Optional.of(tenant("alice", "10.00", "10.00", TENANT_WALLET)));
+
+        List<PaymentSplit> result = invoke("alice", sellerOnly(),
+                franchise("40.00", "GFRANCHISE9"), reseller("5", "GRESELLER1"));
+
+        assertEquals(5, result.size());
+        assertEquals(SplitRole.PLATFORM, result.get(0).getRole());
+        assertEquals(SplitRole.TENANT, result.get(1).getRole());
+        assertEquals(new BigDecimal("6.00"), result.get(1).getPercent());
+        assertEquals(SplitRole.FRANCHISE, result.get(2).getRole());
+        assertEquals(new BigDecimal("4.00"), result.get(2).getPercent());
+        assertEquals(SplitRole.RESELLER, result.get(3).getRole());
+        assertEquals(new BigDecimal("5.00"), result.get(3).getPercent());
+        assertEquals(SplitRole.SELLER, result.get(4).getRole());
+        // Seller pool 80% minus 5% reseller = 75%.
+        assertEquals(new BigDecimal("75.00"), result.get(4).getPercent());
+        assertTrue(sumTo100(result));
+    }
+
+    @Test
+    void resellerCommissionThatDoesNotFit_isSkipped() {
+        // Seller pool is 90%; a 95% reseller commission cannot fit, so it is
+        // dropped and the sale proceeds as a normal two-way split.
+        when(tenantConfigService.findActiveBySubdomain("alice"))
+                .thenReturn(Optional.of(tenant("alice", "10.00", "0.00", TENANT_WALLET)));
+
+        List<PaymentSplit> result = invoke("alice", sellerOnly(), null, reseller("95", "GRESELLER1"));
+
+        assertEquals(2, result.size());
+        assertEquals(SplitRole.PLATFORM, result.get(0).getRole());
+        assertEquals(SplitRole.SELLER, result.get(1).getRole());
+        assertEquals(new BigDecimal("90.00"), result.get(1).getPercent());
         assertTrue(sumTo100(result));
     }
 

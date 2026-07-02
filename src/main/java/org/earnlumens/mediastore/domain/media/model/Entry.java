@@ -32,6 +32,19 @@ public class Entry {
     /** Stellar public key of the seller at the time of publishing. Required for paid content. */
     private String sellerWallet;
     /**
+     * Whether resellers may earn a commission by distributing this entry via a
+     * reseller link. Enabled by default for paid content. When false, existing
+     * reseller links still open the content but attribute no sale/commission.
+     */
+    private boolean resellerEnabled = true;
+    /**
+     * Reseller commission as a percent of the total published price (5–20).
+     * Dynamic: read at purchase time, not frozen onto the link, so changing it
+     * updates the commission every existing link pays on the next sale. Carved
+     * out of the SELLER's own share; the final price is unchanged.
+     */
+    private BigDecimal resellerCommissionPercent = new BigDecimal("10");
+    /**
      * Payment distribution splits for this entry (non-platform only).
      * Currently: SELLER (90%). The PLATFORM split is applied dynamically
      * at payment time from environment config (PLATFORM_WALLET, PLATFORM_FEE_PERCENT).
@@ -132,6 +145,12 @@ public class Entry {
 
     public String getSellerWallet() { return sellerWallet; }
     public void setSellerWallet(String sellerWallet) { this.sellerWallet = sellerWallet; }
+
+    public boolean isResellerEnabled() { return resellerEnabled; }
+    public void setResellerEnabled(boolean resellerEnabled) { this.resellerEnabled = resellerEnabled; }
+
+    public BigDecimal getResellerCommissionPercent() { return resellerCommissionPercent; }
+    public void setResellerCommissionPercent(BigDecimal resellerCommissionPercent) { this.resellerCommissionPercent = resellerCommissionPercent; }
 
     public List<PaymentSplit> getPaymentSplits() { return paymentSplits; }
     public void setPaymentSplits(List<PaymentSplit> paymentSplits) { this.paymentSplits = paymentSplits; }
