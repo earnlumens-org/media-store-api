@@ -47,8 +47,13 @@ import java.util.regex.Pattern;
  *       that the tenant is ACTIVE, has franchises enabled and not paused, and
  *       that the caller is not banned. Edits also re-check the ban so a user
  *       banned after creating loses the ability to operate the franchise.</li>
- *   <li><b>Immutability</b> — slug, commission, payout wallet, owner and status
- *       are fixed at creation; the owner can only edit branding afterwards.</li>
+ *   <li><b>Immutability</b> — slug, commission, owner and status are fixed at
+ *       creation; the owner can edit branding and (with full re-validation)
+ *       the payout wallet afterwards. Wallet changes are safe because orders
+ *       snapshot their splits at prepare time.</li>
+ *   <li><b>Abuse control</b> — a user may run several themed franchises, but
+ *       creation is capped at {@link #MAX_FRANCHISES_PER_USER} per tenant
+ *       (counting disabled ones, so churning does not reset the quota).</li>
  * </ul>
  */
 @Service
@@ -67,6 +72,13 @@ public class FranchiseManagementService {
 
     /** Stellar public key syntactic check (G + 55 base32 chars). */
     private static final Pattern STELLAR_KEY = Pattern.compile("^G[A-Z2-7]{55}$");
+
+    /**
+     * Maximum franchises a single user may own under one tenant. Generous
+     * enough for themed storefronts, small enough to keep slug-squatting and
+     * spam in check. Disabled franchises count towards the quota on purpose.
+     */
+    public static final int MAX_FRANCHISES_PER_USER = 5;
 
     /** Accent colour: #RRGGBB or #RRGGBBAA. */
     private static final Pattern HEX_COLOR = Pattern.compile("^#([0-9a-fA-F]{6}|[0-9a-fA-F]{8})$");
@@ -129,7 +141,8 @@ public class FranchiseManagementService {
         BigDecimal commission = t.getDefaultFranchiseCommissionPercent();
         commission = (commission == null ? ZERO : commission.setScale(2, RoundingMode.HALF_UP));
 
-        return new FranchiseConfigView(enabled, paused, banned, commission, available);
+        return new FranchiseConfigView(enabled, paused, banned, commission, available,
+            MAX_FRANCHISES_PER_USER);
     }
 
     // ========================= franchisee flow =========================
@@ -143,8 +156,14 @@ public class FranchiseManagementService {
                                                String callerUsername, String callerDisplayName,
                                                String slugRaw, String payoutWalletRaw,
                                                String titleRaw, String descriptionRaw,
-                                               String accentColorRaw) {
+                                               String accentColorRaw, boolean acceptTerms) {
         requireCaller(callerOauthUserId);
+
+        // The terms (including the frozen commission) must be explicitly
+        // accepted — the client checkbox alone is not a contract.
+        if (!acceptTerms) {
+            throw new FranchiseException(FranchiseErrorCode.TERMS_NOT_ACCEPTED, 400);
+        }
 
         TenantReadModel t = tenantRepository.findBySubdomain(tenantId)
             .orElseThrow(() -> new FranchiseException(FranchiseErrorCode.NOT_FOUND, 404));
@@ -160,6 +179,13 @@ public class FranchiseManagementService {
         }
         if (banRepository.existsByTenantIdAndUserId(tenantId, callerOauthUserId)) {
             throw new FranchiseException(FranchiseErrorCode.USER_BANNED, 403);
+        }
+
+        // Per-user cap. Counts every owned franchise (disabled included) so
+        // abandoning or getting disabled does not free up quota.
+        if (repository.countByTenantIdAndOwnerOauthUserId(tenantId, callerOauthUserId)
+                >= MAX_FRANCHISES_PER_USER) {
+            throw new FranchiseException(FranchiseErrorCode.FRANCHISE_LIMIT, 409);
         }
 
         // Slug.
@@ -179,10 +205,9 @@ public class FranchiseManagementService {
         if (!STELLAR_KEY.matcher(wallet).matches()) {
             throw new FranchiseException(FranchiseErrorCode.WALLET_FORMAT, 400);
         }
-        // The wallet is immutable after creation and becomes a payment-split
-        // destination, so it must already exist on the Stellar network —
-        // otherwise every sale through this franchise would later fail with
-        // op_no_destination.
+        // The wallet becomes a payment-split destination, so it must already
+        // exist on the Stellar network — otherwise every sale through this
+        // franchise would later fail with op_no_destination.
         if (!stellarTransactionService.isAccountActive(wallet)) {
             throw new FranchiseException(FranchiseErrorCode.WALLET_NOT_ACTIVATED, 400);
         }
@@ -252,6 +277,20 @@ public class FranchiseManagementService {
                 throw new FranchiseException(FranchiseErrorCode.ACCENT_COLOR_FORMAT, 400);
             }
             f.setAccentColor(accent);
+        }
+        if (req.payoutWallet() != null) {
+            // The wallet can be replaced (e.g. the old account was merged and
+            // no longer exists — which would otherwise block every sale), but
+            // never cleared, and only with a funded account. Past orders are
+            // unaffected: splits are snapshotted at prepare time.
+            String wallet = req.payoutWallet().trim();
+            if (!STELLAR_KEY.matcher(wallet).matches()) {
+                throw new FranchiseException(FranchiseErrorCode.WALLET_FORMAT, 400);
+            }
+            if (!stellarTransactionService.isAccountActive(wallet)) {
+                throw new FranchiseException(FranchiseErrorCode.WALLET_NOT_ACTIVATED, 400);
+            }
+            f.setPayoutWallet(wallet);
         }
         return repository.save(f);
     }

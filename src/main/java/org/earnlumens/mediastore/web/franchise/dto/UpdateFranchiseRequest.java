@@ -3,10 +3,11 @@ package org.earnlumens.mediastore.web.franchise.dto;
 import jakarta.validation.constraints.Size;
 
 /**
- * Franchise owner edits their own in-app branding. Patch semantics: {@code null}
- * leaves the value untouched, empty string clears it (reverting to inherited
- * franchisor branding). The owner can NEVER change commission, slug, payout
- * wallet, status or franchisor through this path.
+ * Franchise owner edits their own in-app branding and payout wallet. Patch
+ * semantics: {@code null} leaves the value untouched, empty string clears it
+ * (reverting to inherited franchisor branding). The payout wallet may be
+ * replaced (never cleared) and is fully re-validated. The owner can NEVER
+ * change commission, slug, status or franchisor through this path.
  */
 public class UpdateFranchiseRequest {
 
@@ -25,6 +26,10 @@ public class UpdateFranchiseRequest {
     @Size(max = 9)
     private String accentColor;
 
+    /** Replacement Stellar payout wallet (G…). Null = untouched. */
+    @Size(max = 56)
+    private String payoutWallet;
+
     public String getTitle() { return title; }
     public void setTitle(String title) { this.title = title; }
 
@@ -39,4 +44,7 @@ public class UpdateFranchiseRequest {
 
     public String getAccentColor() { return accentColor; }
     public void setAccentColor(String accentColor) { this.accentColor = accentColor; }
+
+    public String getPayoutWallet() { return payoutWallet; }
+    public void setPayoutWallet(String payoutWallet) { this.payoutWallet = payoutWallet; }
 }

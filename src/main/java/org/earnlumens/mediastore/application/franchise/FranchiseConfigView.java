@@ -13,5 +13,6 @@ public record FranchiseConfigView(
     boolean franchisesPaused,
     boolean banned,
     BigDecimal defaultCommissionPercent,
-    boolean available
+    boolean available,
+    int maxFranchisesPerUser
 ) {}

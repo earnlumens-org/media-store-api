@@ -12,6 +12,8 @@ public enum FranchiseErrorCode {
     FRANCHISES_NOT_ENABLED,     // The franchisor tenant has not opted into franchises.
     FRANCHISES_PAUSED,          // New franchise creation is currently paused.
     USER_BANNED,                // Caller is banned from franchises under this tenant.
+    TERMS_NOT_ACCEPTED,         // Caller did not explicitly accept the franchise terms.
+    FRANCHISE_LIMIT,            // Caller already owns the maximum number of franchises under this tenant.
     SLUG_REQUIRED,
     SLUG_FORMAT,
     SLUG_TAKEN,

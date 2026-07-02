@@ -81,7 +81,8 @@ public class FranchiseManagementController {
         return ManagedFranchiseResponse.of(service.createFranchise(
             tenantId, caller, username, displayName,
             req.getSlug(), req.getPayoutWallet(),
-            req.getTitle(), req.getDescription(), req.getAccentColor()));
+            req.getTitle(), req.getDescription(), req.getAccentColor(),
+            req.isAcceptTerms()));
     }
 
     /** Edit the caller's own franchise branding. */
@@ -92,7 +93,7 @@ public class FranchiseManagementController {
         String caller = requireCaller();
         FranchiseBrandingUpdate update = new FranchiseBrandingUpdate(
             req.getTitle(), req.getDescription(), req.getLogoR2Key(),
-            req.getCoverR2Key(), req.getAccentColor());
+            req.getCoverR2Key(), req.getAccentColor(), req.getPayoutWallet());
         return ManagedFranchiseResponse.of(
             service.updateOwnFranchise(tenantId, caller, franchiseId, update));
     }

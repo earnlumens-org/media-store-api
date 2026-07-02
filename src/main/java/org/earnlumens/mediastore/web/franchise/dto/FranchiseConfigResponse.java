@@ -14,7 +14,8 @@ public record FranchiseConfigResponse(
     boolean franchisesPaused,
     boolean banned,
     BigDecimal defaultCommissionPercent,
-    boolean available
+    boolean available,
+    int maxFranchisesPerUser
 ) {
     public static FranchiseConfigResponse of(FranchiseConfigView v) {
         return new FranchiseConfigResponse(
@@ -22,7 +23,8 @@ public record FranchiseConfigResponse(
             v.franchisesPaused(),
             v.banned(),
             v.defaultCommissionPercent(),
-            v.available()
+            v.available(),
+            v.maxFranchisesPerUser()
         );
     }
 }

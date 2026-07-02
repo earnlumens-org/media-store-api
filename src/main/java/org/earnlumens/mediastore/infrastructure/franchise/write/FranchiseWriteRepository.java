@@ -21,6 +21,8 @@ public interface FranchiseWriteRepository extends MongoRepository<FranchiseWrite
 
     List<FranchiseWriteModel> findByTenantIdAndOwnerOauthUserId(String tenantId, String ownerOauthUserId);
 
+    long countByTenantIdAndOwnerOauthUserId(String tenantId, String ownerOauthUserId);
+
     Optional<FranchiseWriteModel> findByTenantIdAndIdAndOwnerOauthUserId(
         String tenantId, String id, String ownerOauthUserId);
 }
