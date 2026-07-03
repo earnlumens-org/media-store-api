@@ -73,7 +73,11 @@ class TenantIsolationArchTest {
             "OrderRepository#findByStatusAndCompletedAtAfter",
             // Batch lookup keyed by orderId (globally unique); used by the payment
             // reconciliation watchdog to detect COMPLETED orders without entitlement
-            "EntitlementRepository#findOrderIdsWithEntitlements"
+            "EntitlementRepository#findOrderIdsWithEntitlements",
+            // The U3 Stellar Ambassador badge is deliberately GLOBAL: granted only from
+            // the main tenant but effective on every tenant, so the active-badge check
+            // must NOT be scoped by tenantId (see BadgeType.U3 javadoc)
+            "UserBadgeRepository#hasActiveGlobalBadge"
     );
 
     // ── Methods that carry tenantId inside the entity (e.g. save) ──
