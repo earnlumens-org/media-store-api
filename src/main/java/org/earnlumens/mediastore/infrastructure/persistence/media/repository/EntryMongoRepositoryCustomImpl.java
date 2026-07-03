@@ -591,10 +591,14 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
                                                                     org.earnlumens.mediastore.domain.media.model.LanguageFilter languageFilter) {
         List<AggregationOperation> ops = new ArrayList<>();
 
-        // 1. Match PUBLISHED entries with the given authorBadge
+        // Hierarchical badge match: a feed for badge X also surfaces content
+        // from higher-tier authors (u1 feed includes u2/u3, u2 includes u3).
+        List<String> badgeKeys = badgeKeysAtOrAbove(badgeKey);
+
+        // 1. Match PUBLISHED entries with the given authorBadge tier or higher
         ops.add(Aggregation.match(Criteria.where("tenantId").is(tenantId)
                 .and("status").is("PUBLISHED")
-                .and("authorBadge").is(badgeKey)));
+                .and("authorBadge").in(badgeKeys)));
 
         // 2. Normalize entry docs
         ops.add(context -> Document.parse("""
@@ -606,12 +610,12 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
             }}
             """));
 
-        // 3. $unionWith PUBLISHED + PUBLIC collections with matching authorBadge
+        // 3. $unionWith PUBLISHED + PUBLIC collections with matching authorBadge tier
         Document collMatch = new Document("$match",
                 new Document("tenantId", tenantId)
                         .append("status", "PUBLISHED")
                         .append("visibility", "PUBLIC")
-                        .append("authorBadge", badgeKey));
+                        .append("authorBadge", new Document("$in", badgeKeys)));
         Document collAddFields = Document.parse("""
             { "$addFields": {
                 "kind": "collection",
@@ -637,6 +641,19 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
         addPricingFilter(ops, pricing);
 
         return ops;
+    }
+
+    /**
+     * Badge keys at or above the requested tier on the ladder
+     * u1 (Blue) &lt; u2 (Gold) &lt; u3 (Ambassador). Unknown keys fall back
+     * to an exact match so a bogus parameter cannot widen the filter.
+     */
+    private static List<String> badgeKeysAtOrAbove(String badgeKey) {
+        return switch (badgeKey) {
+            case "u1" -> List.of("u1", "u2", "u3");
+            case "u2" -> List.of("u2", "u3");
+            default -> List.of(badgeKey);
+        };
     }
 
     @Override

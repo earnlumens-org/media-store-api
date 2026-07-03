@@ -23,4 +23,7 @@ public interface UserBadgeMongoRepository extends MongoRepository<UserBadgeAssig
 
     boolean existsByTenantIdAndUserIdAndBadgeTypeAndStatus(
             String tenantId, String userId, String badgeType, String status);
+
+    /** Tenant-agnostic existence check — used for the global U3 (Ambassador) badge. */
+    boolean existsByUserIdAndBadgeTypeAndStatus(String userId, String badgeType, String status);
 }

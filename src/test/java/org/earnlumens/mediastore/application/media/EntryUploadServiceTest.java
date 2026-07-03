@@ -80,7 +80,7 @@ class EntryUploadServiceTest {
         moderationJobService = mock(ModerationJobService.class);
         userBadgeService = mock(UserBadgeService.class);
         spaceValidationService = mock(org.earnlumens.mediastore.application.space.SpaceValidationService.class);
-        when(spaceValidationService.validateForPublish(any(), any())).thenReturn(java.util.List.of());
+        when(spaceValidationService.validateForPublish(any(), any(), any())).thenReturn(java.util.List.of());
         platformConfig = new PlatformConfig();
         platformConfig.setWallet(PLATFORM_WALLET);
         platformConfig.setFeePercent(new BigDecimal("10.00"));

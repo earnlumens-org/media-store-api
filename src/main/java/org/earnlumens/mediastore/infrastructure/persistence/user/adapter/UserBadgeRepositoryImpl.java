@@ -87,6 +87,12 @@ public class UserBadgeRepositoryImpl implements UserBadgeRepository {
     }
 
     @Override
+    public boolean hasActiveGlobalBadge(String userId, BadgeType badgeType) {
+        return mongoRepository
+                .existsByUserIdAndBadgeTypeAndStatus(userId, badgeType.name(), BadgeAssignmentStatus.ACTIVE.name());
+    }
+
+    @Override
     public long expireAssignments(String tenantId, LocalDateTime before) {
         Query query = new Query(Criteria.where("tenantId").is(tenantId)
                 .and("status").is(BadgeAssignmentStatus.ACTIVE.name())

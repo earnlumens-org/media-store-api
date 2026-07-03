@@ -278,7 +278,7 @@ public class EntryUploadService {
         entry.setPriceUsd(request.priceUsd());
         entry.setPriceCurrency(currency);
         entry.setContentLanguage(request.contentLanguage());
-        entry.setSpaceIds(spaceValidationService.validateForPublish(tenantId, request.spaceIds()));
+        entry.setSpaceIds(spaceValidationService.validateForPublish(tenantId, userId, request.spaceIds()));
 
         // Set seller wallet and generate payment splits for paid content.
         // Only non-platform splits are stored in the entry. The platform split
@@ -865,7 +865,7 @@ public class EntryUploadService {
 
         if (request.spaceIds() != null) {
             // null = leave unchanged; empty list = clear; non-empty = replace.
-            entry.setSpaceIds(spaceValidationService.validateForPublish(tenantId, request.spaceIds()));
+            entry.setSpaceIds(spaceValidationService.validateForPublish(tenantId, userId, request.spaceIds()));
         }
 
         // ── Auto-moderation: any edit on a non-DRAFT entry triggers re-review ──

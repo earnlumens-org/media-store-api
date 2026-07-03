@@ -1,6 +1,8 @@
 package org.earnlumens.mediastore.application.space;
 
+import org.earnlumens.mediastore.application.user.UserBadgeService;
 import org.earnlumens.mediastore.domain.space.Space;
+import org.earnlumens.mediastore.domain.space.SpacePublishRule;
 import org.earnlumens.mediastore.domain.space.SpaceStatus;
 import org.earnlumens.mediastore.domain.space.repository.SpaceRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,14 +20,18 @@ import static org.mockito.Mockito.when;
 class SpaceValidationServiceTest {
 
     private static final String TENANT = "earnlumens";
+    private static final String USER = "oauth-user-1";
 
     private SpaceRepository spaceRepository;
+    private UserBadgeService userBadgeService;
     private SpaceValidationService service;
 
     @BeforeEach
     void setUp() {
         spaceRepository = mock(SpaceRepository.class);
-        service = new SpaceValidationService(spaceRepository);
+        userBadgeService = mock(UserBadgeService.class);
+        when(userBadgeService.getActiveBadgeKey(any(), any())).thenReturn(Optional.empty());
+        service = new SpaceValidationService(spaceRepository, userBadgeService);
     }
 
     private static Space space(String id, SpaceStatus status, boolean allowPublishing) {
@@ -39,12 +45,12 @@ class SpaceValidationServiceTest {
 
     @Test
     void nullList_returnsEmpty() {
-        assertEquals(List.of(), service.validateForPublish(TENANT, null));
+        assertEquals(List.of(), service.validateForPublish(TENANT, USER, null));
     }
 
     @Test
     void emptyList_returnsEmpty() {
-        assertEquals(List.of(), service.validateForPublish(TENANT, List.of()));
+        assertEquals(List.of(), service.validateForPublish(TENANT, USER, List.of()));
     }
 
     @Test
@@ -52,14 +58,14 @@ class SpaceValidationServiceTest {
         when(spaceRepository.findByTenantIdAndIdIn(eq(TENANT), any()))
                 .thenReturn(List.of(space("a", SpaceStatus.ACTIVE, true)));
 
-        List<String> result = service.validateForPublish(TENANT, java.util.Arrays.asList("a", "", null, "a"));
+        List<String> result = service.validateForPublish(TENANT, USER, java.util.Arrays.asList("a", "", null, "a"));
         assertEquals(List.of("a"), result);
     }
 
     @Test
     void overTheCap_throws() {
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> service.validateForPublish(TENANT, List.of("a", "b", "c", "d", "e", "f")));
+                () -> service.validateForPublish(TENANT, USER, List.of("a", "b", "c", "d", "e", "f")));
         assertEquals("TOO_MANY_SPACES", ex.getMessage());
     }
 
@@ -69,7 +75,7 @@ class SpaceValidationServiceTest {
                 .thenReturn(List.of(space("a", SpaceStatus.ACTIVE, true)));
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> service.validateForPublish(TENANT, List.of("a", "ghost")));
+                () -> service.validateForPublish(TENANT, USER, List.of("a", "ghost")));
         assertEquals("SPACE_NOT_FOUND", ex.getMessage());
     }
 
@@ -79,7 +85,7 @@ class SpaceValidationServiceTest {
                 .thenReturn(List.of(space("a", SpaceStatus.ARCHIVED, true)));
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> service.validateForPublish(TENANT, List.of("a")));
+                () -> service.validateForPublish(TENANT, USER, List.of("a")));
         assertEquals("SPACE_ARCHIVED", ex.getMessage());
     }
 
@@ -89,7 +95,7 @@ class SpaceValidationServiceTest {
                 .thenReturn(List.of(space("a", SpaceStatus.ACTIVE, false)));
 
         IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
-                () -> service.validateForPublish(TENANT, List.of("a")));
+                () -> service.validateForPublish(TENANT, USER, List.of("a")));
         assertEquals("SPACE_PUBLISHING_DISABLED", ex.getMessage());
     }
 
@@ -101,7 +107,7 @@ class SpaceValidationServiceTest {
                 space("c", SpaceStatus.ACTIVE, true)
         ));
 
-        List<String> result = service.validateForPublish(TENANT, List.of("c", "a", "b"));
+        List<String> result = service.validateForPublish(TENANT, USER, List.of("c", "a", "b"));
         assertEquals(List.of("c", "a", "b"), result);
     }
 
@@ -112,7 +118,73 @@ class SpaceValidationServiceTest {
         when(spaceRepository.findByTenantIdAndIdIn(eq("tenant-x"), any()))
                 .thenReturn(List.of(space("a", SpaceStatus.ACTIVE, true)));
 
-        List<String> result = service.validateForPublish("tenant-x", List.of("a"));
+        List<String> result = service.validateForPublish("tenant-x", USER, List.of("a"));
         assertEquals(List.of("a"), result);
+    }
+
+    // ── whoCanPublish enforcement (hierarchical) ────────────────────────
+
+    private static Space ruledSpace(String id, SpacePublishRule rule) {
+        Space s = space(id, SpaceStatus.ACTIVE, true);
+        s.setWhoCanPublish(rule);
+        return s;
+    }
+
+    private void badge(String key) {
+        when(userBadgeService.getActiveBadgeKey(eq(TENANT), eq(USER)))
+                .thenReturn(Optional.ofNullable(key));
+    }
+
+    @Test
+    void verifiedBlueRule_rejectsUnbadgedUser() {
+        when(spaceRepository.findByTenantIdAndIdIn(eq(TENANT), any()))
+                .thenReturn(List.of(ruledSpace("a", SpacePublishRule.VERIFIED_BLUE)));
+        badge(null);
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.validateForPublish(TENANT, USER, List.of("a")));
+        assertEquals("SPACE_REQUIRES_VERIFIED_BLUE", ex.getMessage());
+    }
+
+    @Test
+    void verifiedBlueRule_acceptsAnyBadgeTier() {
+        when(spaceRepository.findByTenantIdAndIdIn(eq(TENANT), any()))
+                .thenReturn(List.of(ruledSpace("a", SpacePublishRule.VERIFIED_BLUE)));
+
+        for (String key : List.of("u1", "u2", "u3")) {
+            badge(key);
+            assertEquals(List.of("a"), service.validateForPublish(TENANT, USER, List.of("a")));
+        }
+    }
+
+    @Test
+    void verifiedGoldRule_rejectsBlueUser() {
+        when(spaceRepository.findByTenantIdAndIdIn(eq(TENANT), any()))
+                .thenReturn(List.of(ruledSpace("a", SpacePublishRule.VERIFIED_GOLD)));
+        badge("u1");
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.validateForPublish(TENANT, USER, List.of("a")));
+        assertEquals("SPACE_REQUIRES_VERIFIED_GOLD", ex.getMessage());
+    }
+
+    @Test
+    void verifiedGoldRule_acceptsGoldAndAmbassador() {
+        when(spaceRepository.findByTenantIdAndIdIn(eq(TENANT), any()))
+                .thenReturn(List.of(ruledSpace("a", SpacePublishRule.VERIFIED_GOLD)));
+
+        for (String key : List.of("u2", "u3")) {
+            badge(key);
+            assertEquals(List.of("a"), service.validateForPublish(TENANT, USER, List.of("a")));
+        }
+    }
+
+    @Test
+    void allRule_acceptsUnbadgedUser() {
+        when(spaceRepository.findByTenantIdAndIdIn(eq(TENANT), any()))
+                .thenReturn(List.of(ruledSpace("a", SpacePublishRule.ALL)));
+        badge(null);
+
+        assertEquals(List.of("a"), service.validateForPublish(TENANT, USER, List.of("a")));
     }
 }

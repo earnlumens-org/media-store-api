@@ -65,9 +65,18 @@ public class UserBadgeService {
     }
 
     /**
-     * Get the highest-priority active badge for a user (U2 > U1).
+     * Get the highest-priority active badge for a user (U3 > U2 > U1).
+     *
+     * <p>U3 (Ambassador) is global: it is stored under the main tenant but
+     * applies everywhere, so it is checked tenant-agnostically before the
+     * tenant-scoped assignments.</p>
      */
     public Optional<String> getActiveBadgeKey(String tenantId, String userId) {
+        // Global Ambassador badge wins over any tenant-scoped badge.
+        if (badgeRepository.hasActiveGlobalBadge(userId, BadgeType.U3)) {
+            return Optional.of(toBadgeKey(BadgeType.U3));
+        }
+
         List<UserBadgeAssignment> active = badgeRepository.findActiveByUser(tenantId, userId);
         if (active.isEmpty()) {
             return Optional.empty();

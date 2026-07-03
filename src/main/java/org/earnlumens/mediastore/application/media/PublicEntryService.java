@@ -268,7 +268,8 @@ public class PublicEntryService {
 
     /**
      * Returns a paginated community feed: entries + collections from badge-verified users.
-     * Only content with authorBadge="u1" appears.
+     * Hierarchical: content with authorBadge u1, u2 or u3 appears (higher tiers
+     * are always included in lower-tier feeds).
      */
     public PublicFeedPageResponse getCommunityFeed(String tenantId, String type, String pricing,
                                                     String sort,

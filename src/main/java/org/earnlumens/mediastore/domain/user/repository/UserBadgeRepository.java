@@ -28,6 +28,13 @@ public interface UserBadgeRepository {
     /** Check if a user has a specific active badge in a tenant. */
     boolean hasActiveBadge(String tenantId, String userId, BadgeType badgeType);
 
+    /**
+     * Check if a user has an active badge of the given type on ANY tenant.
+     * Used for the global Ambassador badge (U3), which is tenant-agnostic
+     * by design — see {@link BadgeType#U3}.
+     */
+    boolean hasActiveGlobalBadge(String userId, BadgeType badgeType);
+
     /** Bulk update status for expired assignments. Returns the count of updated documents. */
     long expireAssignments(String tenantId, LocalDateTime before);
 }
