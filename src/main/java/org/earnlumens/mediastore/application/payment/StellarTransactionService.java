@@ -3,6 +3,7 @@ package org.earnlumens.mediastore.application.payment;
 import org.earnlumens.mediastore.domain.media.model.Order;
 import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
 import org.earnlumens.mediastore.infrastructure.config.StellarConfig;
+import org.earnlumens.mediastore.infrastructure.stellar.HorizonServerPool;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -53,19 +54,19 @@ public class StellarTransactionService {
     private static final long MAX_BASE_FEE = 10_000L;  // 0.001 XLM per op
 
     private final StellarConfig stellarConfig;
-    private final Server server;
+    private final HorizonServerPool horizonPool;
     private final Network network;
 
     @Autowired
-    public StellarTransactionService(StellarConfig stellarConfig) {
-        this(stellarConfig, new Server(stellarConfig.getHorizonUrl()));
+    public StellarTransactionService(StellarConfig stellarConfig, HorizonServerPool horizonPool) {
+        this.stellarConfig = stellarConfig;
+        this.horizonPool = horizonPool;
+        this.network = new Network(stellarConfig.getNetworkPassphrase());
     }
 
-    /** Package-private constructor for unit testing with a mock Server. */
+    /** Package-private constructor for unit testing with a mock Server (single-node pool). */
     StellarTransactionService(StellarConfig stellarConfig, Server server) {
-        this.stellarConfig = stellarConfig;
-        this.server = server;
-        this.network = new Network(stellarConfig.getNetworkPassphrase());
+        this(stellarConfig, new HorizonServerPool(List.of(stellarConfig.getHorizonUrl()), url -> server));
     }
 
     /**
@@ -85,7 +86,7 @@ public class StellarTransactionService {
             // depending on the network/SDK version.
             TransactionBuilderAccount sourceAccount;
             try {
-                sourceAccount = server.loadAccount(buyerWallet);
+                sourceAccount = horizonPool.executeRead("loadAccount", s -> s.loadAccount(buyerWallet));
             } catch (AccountNotFoundException | BadRequestException e) {
                 logger.warn("Buyer wallet not found on Stellar network: {} ({})", buyerWallet, e.getClass().getSimpleName());
                 throw new IllegalArgumentException("WALLET_NOT_ACTIVATED");
@@ -159,11 +160,21 @@ public class StellarTransactionService {
      * ledger inclusion.
      *
      * Clamped between MIN_BASE_FEE (100 stroops) and MAX_BASE_FEE (10 000 stroops).
-     * Falls back to MIN_BASE_FEE if the fee_stats call fails.
+     * Falls back to the last known fee (stale-if-error), then MIN_BASE_FEE.
+     *
+     * <p>Cached per instance for {@value #FEE_STATS_CACHE_TTL_MS} ms: the fee
+     * already carries a 10% buffer and a hard cap, and the network charges the
+     * clearing price regardless of the bid, so a briefly stale fee is harmless.
+     * Removes one Horizon call per payment prepare on the hot path.
      */
     private long resolveBaseFee() {
+        long now = System.currentTimeMillis();
+        long cached = cachedBaseFee;
+        if (cached > 0 && cachedBaseFeeExpiresAtMs > now) {
+            return cached;
+        }
         try {
-            FeeStatsResponse stats = server.feeStats().execute();
+            FeeStatsResponse stats = horizonPool.executeRead("feeStats", s -> s.feeStats().execute());
             Long lastFee = stats.getLastLedgerBaseFee();
             Long p90 = (stats.getFeeCharged() != null) ? stats.getFeeCharged().getP90() : null;
             long base = Math.max(
@@ -174,12 +185,23 @@ public class StellarTransactionService {
             long fee = Math.min(Math.max(buffered, AbstractTransaction.MIN_BASE_FEE), MAX_BASE_FEE);
             logger.debug("Resolved base fee: lastLedgerBaseFee={}, feeChargedP90={}, +10%={}, clamped={}",
                     lastFee, p90, buffered, fee);
+            cachedBaseFee = fee;
+            cachedBaseFeeExpiresAtMs = now + FEE_STATS_CACHE_TTL_MS;
             return fee;
         } catch (Exception e) {
+            if (cached > 0) {
+                logger.warn("Failed to fetch fee_stats, reusing last known base fee {}", cached, e);
+                return cached;
+            }
             logger.warn("Failed to fetch fee_stats, falling back to MIN_BASE_FEE", e);
             return AbstractTransaction.MIN_BASE_FEE;
         }
     }
+
+    /** TTL for the cached fee_stats result (per instance). */
+    private static final long FEE_STATS_CACHE_TTL_MS = 30_000L;
+    private volatile long cachedBaseFee = -1L;
+    private volatile long cachedBaseFeeExpiresAtMs = 0L;
 
     /**
      * Checks whether a Stellar account exists (is funded/activated) on the
@@ -196,7 +218,7 @@ public class StellarTransactionService {
      */
     public boolean isAccountActive(String publicKey) {
         try {
-            server.loadAccount(publicKey);
+            horizonPool.executeRead("loadAccount", s -> s.loadAccount(publicKey));
             return true;
         } catch (AccountNotFoundException | BadRequestException e) {
             logger.info("Stellar account not active: {} ({})", publicKey, e.getClass().getSimpleName());
@@ -339,8 +361,14 @@ public class StellarTransactionService {
      */
     public SubmissionOutcome submitTransaction(Transaction transaction) {
         String expectedHash = HexFormat.of().formatHex(transaction.hash());
+        // ONE node, ONE attempt — never fail a submit over to another node:
+        // if the first attempt actually landed, a re-submit surfaces tx_bad_seq
+        // and would misclassify a successful payment as REJECTED. Ambiguous
+        // outcomes are resolved by verifyTransactionOnChain (reads, which DO
+        // rotate) and the reconciliation watchdog.
+        Server submitServer = horizonPool.submitServer();
         try {
-            TransactionResponse response = server.submitTransaction(transaction);
+            TransactionResponse response = submitServer.submitTransaction(transaction);
 
             if (Boolean.TRUE.equals(response.getSuccessful())) {
                 logger.info("Stellar tx submitted successfully: hash={}", response.getHash());
@@ -356,6 +384,8 @@ public class StellarTransactionService {
         } catch (Exception e) {
             // Timeout / 504 / network error: the tx MAY still have made it on-chain.
             // The caller must resolve via verifyTransactionOnChain before failing the order.
+            // Rotate future submits away from this node during its cooldown.
+            horizonPool.reportSubmitFailure(submitServer, e);
             logger.warn("Stellar tx submission outcome unknown (will verify on-chain): hash={}", expectedHash, e);
             return SubmissionOutcome.UNKNOWN;
         }
@@ -371,7 +401,7 @@ public class StellarTransactionService {
      */
     public boolean verifyTransactionOnChain(String txHash, Order order) {
         try {
-            TransactionResponse tx = server.transactions().transaction(txHash);
+            TransactionResponse tx = horizonPool.executeRead("getTransaction", s -> s.transactions().transaction(txHash));
             if (tx == null) {
                 return false;
             }

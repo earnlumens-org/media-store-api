@@ -41,23 +41,16 @@ public class SdexXlmPriceSource {
 
     private final HttpClient httpClient;
     private final ObjectMapper objectMapper;
-    private final String horizonUrl;
+    private final org.earnlumens.mediastore.infrastructure.stellar.HorizonServerPool horizonPool;
 
     @Autowired
     public SdexXlmPriceSource(
             @Qualifier("pricingHttpClient") HttpClient httpClient,
-            org.earnlumens.mediastore.infrastructure.config.StellarConfig stellarConfig) {
+            org.earnlumens.mediastore.infrastructure.stellar.HorizonServerPool horizonPool) {
         this.httpClient = httpClient;
         this.objectMapper = new ObjectMapper();
-        // Use the configured Horizon URL (testnet or mainnet) from StellarConfig
-        this.horizonUrl = stellarConfig.getHorizonUrl();
-    }
-
-    /** Package-private constructor for testing. */
-    SdexXlmPriceSource(HttpClient httpClient, String horizonUrl) {
-        this.httpClient = httpClient;
-        this.objectMapper = new ObjectMapper();
-        this.horizonUrl = horizonUrl;
+        // Rotate the order_book query across the Horizon pool (testnet or mainnet)
+        this.horizonPool = horizonPool;
     }
 
     public String name() {
@@ -75,7 +68,8 @@ public class SdexXlmPriceSource {
      * @return the mid-market price, or empty if unavailable / no liquidity
      */
     public Optional<BigDecimal> fetchPrice() {
-        String url = horizonUrl + "/order_book"
+        String baseUrl = horizonPool.nextReadUrl();
+        String url = baseUrl + "/order_book"
                 + "?selling_asset_type=native"
                 + "&buying_asset_type=credit_alphanum4"
                 + "&buying_asset_code=USDC"
@@ -91,7 +85,11 @@ public class SdexXlmPriceSource {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
-                logger.warn("[{}] {} — HTTP {} from Horizon orderbook", name(), Instant.now(), response.statusCode());
+                logger.warn("[{}] {} — HTTP {} from Horizon orderbook ({})", name(), Instant.now(), response.statusCode(), baseUrl);
+                // Rate-limited or failing node: rotate away during its cooldown.
+                if (response.statusCode() == 429 || response.statusCode() >= 500) {
+                    horizonPool.markUrlDown(baseUrl, "order_book HTTP " + response.statusCode());
+                }
                 return Optional.empty();
             }
 
@@ -120,6 +118,8 @@ public class SdexXlmPriceSource {
 
         } catch (Exception e) {
             logger.error("[{}] {} — failed to fetch SDEX price: {}", name(), Instant.now(), e.getMessage());
+            // Transport-level failure: rotate away from this node during its cooldown.
+            horizonPool.markUrlDown(baseUrl, "order_book " + e.getClass().getSimpleName());
             return Optional.empty();
         }
     }
