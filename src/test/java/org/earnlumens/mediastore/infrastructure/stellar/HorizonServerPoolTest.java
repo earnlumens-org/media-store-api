@@ -19,9 +19,9 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.mock;
 
 /**
- * Unit tests for {@link HorizonServerPool}: read rotation, failover on
- * transport failures, propagation of definitive answers, cooldown behaviour,
- * submit-node selection and raw-URL rotation.
+ * Unit tests for {@link HorizonServerPool}: prioritized cascade (ordered
+ * failover) for reads, propagation of definitive answers, cooldown behaviour,
+ * submit-node selection and raw-URL cascade.
  */
 class HorizonServerPoolTest {
 
@@ -58,19 +58,17 @@ class HorizonServerPoolTest {
         assertEquals(3, fixture(THREE_URLS).pool().size());
     }
 
-    // ── read rotation ────────────────────────────────────────────
+    // ── read cascade ─────────────────────────────────────────────
 
     @Test
-    void executeRead_rotatesRoundRobinAcrossHealthyNodes() {
+    void executeRead_sticksToPrimaryNodeWhileHealthy() {
         PoolFixture f = fixture(THREE_URLS);
         List<String> seen = new ArrayList<>();
         for (int i = 0; i < 6; i++) {
             f.pool().executeRead("op", s -> seen.add(f.urlOf(s)));
         }
-        // Each node hit exactly twice over 6 calls
-        for (String url : THREE_URLS) {
-            assertEquals(2, seen.stream().filter(url::equals).count(), url);
-        }
+        // Every read hits the first configured node — coherent ledger view
+        assertEquals(6, seen.stream().filter("https://h1.example"::equals).count());
     }
 
     @Test
@@ -85,14 +83,13 @@ class HorizonServerPoolTest {
             return "ok";
         });
         assertEquals("ok", result);
-        assertEquals(2, attempted.size());
-        assertNotEquals(attempted.get(0), attempted.get(1));
+        // Cascade order: primary first, then the second configured node
+        assertEquals(List.of("https://h1.example", "https://h2.example"), attempted);
 
-        // The failed node is now cooling down: subsequent reads never touch it
-        String failed = attempted.get(0);
+        // The failed node is now cooling down: subsequent reads land on h2
         for (int i = 0; i < 6; i++) {
             f.pool().executeRead("op", s -> {
-                assertNotEquals(failed, f.urlOf(s));
+                assertEquals("https://h2.example", f.urlOf(s));
                 return null;
             });
         }
@@ -178,14 +175,15 @@ class HorizonServerPoolTest {
         assertEquals("https://h1.example", f.urlOf(f.pool().submitServer()));
     }
 
-    // ── raw-URL rotation (SDEX orderbook) ────────────────────────
+    // ── raw-URL cascade (SDEX orderbook) ────────────────────
 
     @Test
-    void nextReadUrl_rotatesAndSkipsDownNodes() {
+    void nextReadUrl_prefersPrimary_andSkipsDownNodes() {
         PoolFixture f = fixture(THREE_URLS);
-        f.pool().markUrlDown("https://h2.example", "test");
+        assertEquals("https://h1.example", f.pool().nextReadUrl());
+        f.pool().markUrlDown("https://h1.example", "test");
         for (int i = 0; i < 6; i++) {
-            assertNotEquals("https://h2.example", f.pool().nextReadUrl());
+            assertEquals("https://h2.example", f.pool().nextReadUrl());
         }
     }
 
