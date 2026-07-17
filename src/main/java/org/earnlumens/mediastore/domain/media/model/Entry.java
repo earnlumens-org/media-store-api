@@ -79,6 +79,45 @@ public class Entry {
     /** R2 key prefix where HLS segments live (e.g. "private/media/{id}/hls"). */
     private String hlsR2Prefix;
     private long viewCount;
+
+    // ── Original First (automatic content attribution) ──────────────────
+    /**
+     * Content fingerprint of the FULL asset: SHA-256 over the exact file size
+     * plus three 64 KiB samples (head / middle / tail) read server-side from
+     * R2 at finalize time. Detects exact re-uploads of the same bytes; a
+     * re-encode produces a different fingerprint (documented limitation).
+     * Null for entries without a FULL asset (e.g. text-only resources).
+     */
+    private String contentFingerprint;
+    /**
+     * True when this entry's FULL asset duplicates another user's earlier
+     * upload (same {@link #contentFingerprint}). The entry publishes normally
+     * but carries a visible Remix badge and pays the original's royalty.
+     */
+    private boolean remix;
+    /** Canonical original entry (fingerprint-group root). Null when not a remix. */
+    private String originalEntryId;
+    /** OAuth user id of the canonical original's author (denormalized). */
+    private String originalUserId;
+    /** Username of the canonical original's author at detection time (denormalized). */
+    private String originalAuthorUsername;
+    /** When remix status was (re)assigned — upload detection or a granted claim. */
+    private LocalDateTime remixDetectedAt;
+    /**
+     * Royalty the ORIGINAL creator earns on every sale of a remix of THIS
+     * entry, as a percent of the total price (5–50, default 20 — can never be
+     * zero). Read live from the ORIGINAL entry at purchase time and carved out
+     * of the remixer's seller share, exactly like the reseller commission.
+     */
+    private BigDecimal remixRoyaltyPercent = new BigDecimal("20");
+    /**
+     * Algorithmic-visibility demotion flag. Set on a user's remix entries when
+     * their published catalog is predominantly pure remixes (≥70% with ≥5
+     * items). Demoted items rank after everything else in the default Explore
+     * ordering but remain fully accessible (never banned or hidden).
+     */
+    private boolean visibilityDemoted;
+
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private LocalDateTime publishedAt;
@@ -189,6 +228,30 @@ public class Entry {
 
     public long getViewCount() { return viewCount; }
     public void setViewCount(long viewCount) { this.viewCount = viewCount; }
+
+    public String getContentFingerprint() { return contentFingerprint; }
+    public void setContentFingerprint(String contentFingerprint) { this.contentFingerprint = contentFingerprint; }
+
+    public boolean isRemix() { return remix; }
+    public void setRemix(boolean remix) { this.remix = remix; }
+
+    public String getOriginalEntryId() { return originalEntryId; }
+    public void setOriginalEntryId(String originalEntryId) { this.originalEntryId = originalEntryId; }
+
+    public String getOriginalUserId() { return originalUserId; }
+    public void setOriginalUserId(String originalUserId) { this.originalUserId = originalUserId; }
+
+    public String getOriginalAuthorUsername() { return originalAuthorUsername; }
+    public void setOriginalAuthorUsername(String originalAuthorUsername) { this.originalAuthorUsername = originalAuthorUsername; }
+
+    public LocalDateTime getRemixDetectedAt() { return remixDetectedAt; }
+    public void setRemixDetectedAt(LocalDateTime remixDetectedAt) { this.remixDetectedAt = remixDetectedAt; }
+
+    public BigDecimal getRemixRoyaltyPercent() { return remixRoyaltyPercent; }
+    public void setRemixRoyaltyPercent(BigDecimal remixRoyaltyPercent) { this.remixRoyaltyPercent = remixRoyaltyPercent; }
+
+    public boolean isVisibilityDemoted() { return visibilityDemoted; }
+    public void setVisibilityDemoted(boolean visibilityDemoted) { this.visibilityDemoted = visibilityDemoted; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

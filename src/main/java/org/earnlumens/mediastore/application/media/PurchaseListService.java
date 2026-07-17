@@ -303,7 +303,8 @@ public class PurchaseListService {
                 isPaid,  // unlocked: true for paid items (user bought it)
                 doc.getString("thumbnailVariantsPrefix"),
                 doc.getString("previewVariantsPrefix"),
-                doc.getString("coverVariantsPrefix")
+                doc.getString("coverVariantsPrefix"),
+                doc.getBoolean("remix", false)
         );
     }
 }

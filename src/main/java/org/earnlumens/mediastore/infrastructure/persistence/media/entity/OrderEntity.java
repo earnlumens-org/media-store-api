@@ -47,6 +47,8 @@ public class OrderEntity {
 
     /** OAuth user-id of the reseller this sale is attributed to, or null. */
     private String resellerId;
+    /** OAuth user id of the ORIGINAL creator paid a remix royalty on this order. Null when none. */
+    private String originalCreatorId;
 
     private BigDecimal amountXlm;
 
@@ -104,6 +106,9 @@ public class OrderEntity {
 
     public String getResellerId() { return resellerId; }
     public void setResellerId(String resellerId) { this.resellerId = resellerId; }
+
+    public String getOriginalCreatorId() { return originalCreatorId; }
+    public void setOriginalCreatorId(String originalCreatorId) { this.originalCreatorId = originalCreatorId; }
 
     public BigDecimal getAmountXlm() { return amountXlm; }
     public void setAmountXlm(BigDecimal amountXlm) { this.amountXlm = amountXlm; }

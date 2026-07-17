@@ -80,6 +80,30 @@ public class R2StorageService {
     }
 
     /**
+     * Reads a byte range of an object ({@code start}..{@code endInclusive},
+     * both zero-based). Used by the Original First fingerprint service to
+     * sample head/middle/tail chunks without downloading the whole file.
+     * Returns empty when the key does not exist.
+     */
+    public Optional<byte[]> getObjectRange(String r2Key, long start, long endInclusive) {
+        try {
+            var bytes = s3Client.getObjectAsBytes(software.amazon.awssdk.services.s3.model.GetObjectRequest.builder()
+                    .bucket(bucket)
+                    .key(r2Key)
+                    .range("bytes=" + start + "-" + endInclusive)
+                    .build());
+            return Optional.of(bytes.asByteArray());
+        } catch (NoSuchKeyException e) {
+            return Optional.empty();
+        } catch (S3Exception e) {
+            if (e.statusCode() == 404) {
+                return Optional.empty();
+            }
+            throw e;
+        }
+    }
+
+    /**
      * Completes a multipart upload using the parts R2 itself reports via
      * ListParts. This deliberately ignores client-supplied ETags so the
      * browser never needs CORS access to the ETag response header.

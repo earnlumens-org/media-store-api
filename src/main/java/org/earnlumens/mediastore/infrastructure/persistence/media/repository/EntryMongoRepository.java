@@ -51,4 +51,15 @@ public interface EntryMongoRepository extends MongoRepository<EntryEntity, Strin
     long countByTenantIdAndUserIdAndCreatedAtAfter(String tenantId, String userId, LocalDateTime after);
 
     long countByTenantIdAndUserIdAndStatus(String tenantId, String userId, String status);
+
+    // ── Original First ────────────────────────────────────────────
+
+    /** Fingerprint-group lookup, backed by idx_tenant_fingerprint (sparse). */
+    List<EntryEntity> findByTenantIdAndContentFingerprint(String tenantId, String contentFingerprint);
+
+    /** Remix-ratio denominator: user's entries excluding the given statuses. */
+    long countByTenantIdAndUserIdAndStatusNotIn(String tenantId, String userId, List<String> statuses);
+
+    /** Remix-ratio numerator: user's remix entries excluding the given statuses. */
+    long countByTenantIdAndUserIdAndRemixTrueAndStatusNotIn(String tenantId, String userId, List<String> statuses);
 }

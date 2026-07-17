@@ -232,7 +232,11 @@ public class PublicEntryService {
                 entry.getThumbnailVariantsPrefix(),
                 entry.getPreviewVariantsPrefix(),
                 entry.isResellerEnabled(),
-                entry.getResellerCommissionPercent()
+                entry.getResellerCommissionPercent(),
+                entry.isRemix(),
+                entry.isRemix() ? entry.getOriginalEntryId() : null,
+                entry.isRemix() ? entry.getOriginalAuthorUsername() : null,
+                entry.getRemixRoyaltyPercent()
         );
     }
 
@@ -472,7 +476,8 @@ public class PublicEntryService {
                 unlocked,
                 doc.getString("thumbnailVariantsPrefix"),
                 doc.getString("previewVariantsPrefix"),
-                doc.getString("coverVariantsPrefix")
+                doc.getString("coverVariantsPrefix"),
+                doc.getBoolean("remix", false)
         );
     }
 }

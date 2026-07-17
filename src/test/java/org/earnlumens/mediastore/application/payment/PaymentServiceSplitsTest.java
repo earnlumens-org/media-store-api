@@ -232,12 +232,24 @@ class PaymentServiceSplitsTest {
     private List<PaymentSplit> invoke(String tenantId, List<PaymentSplit> entrySplits,
                                       FranchiseReadModel franchise,
                                       PaymentService.ResellerAttribution reseller) {
+        return invoke(tenantId, entrySplits, franchise, reseller, null);
+    }
+
+    private List<PaymentSplit> invoke(String tenantId, List<PaymentSplit> entrySplits,
+                                      FranchiseReadModel franchise,
+                                      PaymentService.ResellerAttribution reseller,
+                                      PaymentService.OriginalAttribution original) {
         return ReflectionTestUtils.invokeMethod(
-                service, "buildFullSplits", tenantId, entrySplits, franchise, reseller);
+                service, "buildFullSplits", tenantId, entrySplits, franchise, reseller, original);
     }
 
     private PaymentService.ResellerAttribution reseller(String pct, String wallet) {
         return new PaymentService.ResellerAttribution("reseller-user", wallet,
+                pct != null ? new BigDecimal(pct) : null);
+    }
+
+    private PaymentService.OriginalAttribution original(String pct, String wallet) {
+        return new PaymentService.OriginalAttribution("original-user", wallet,
                 pct != null ? new BigDecimal(pct) : null);
     }
 
@@ -294,6 +306,63 @@ class PaymentServiceSplitsTest {
                 .thenReturn(Optional.of(tenant("alice", "10.00", "0.00", TENANT_WALLET)));
 
         List<PaymentSplit> result = invoke("alice", sellerOnly(), null, reseller("95", "GRESELLER1"));
+
+        assertEquals(2, result.size());
+        assertEquals(SplitRole.PLATFORM, result.get(0).getRole());
+        assertEquals(SplitRole.SELLER, result.get(1).getRole());
+        assertEquals(new BigDecimal("90.00"), result.get(1).getPercent());
+        assertTrue(sumTo100(result));
+    }
+
+    @Test
+    void remixSale_carvesOriginalRoyaltyOutOfSellerShare() {
+        // Platform 10%, no tenant fee -> seller pool 90%. Original royalty 20%
+        // of the total price is carved from the remixer's pool.
+        when(tenantConfigService.findActiveBySubdomain("alice"))
+                .thenReturn(Optional.of(tenant("alice", "10.00", "0.00", TENANT_WALLET)));
+
+        List<PaymentSplit> result = invoke("alice", sellerOnly(), null, null, original("20", "GORIGINAL1"));
+
+        assertEquals(3, result.size());
+        assertEquals(SplitRole.PLATFORM, result.get(0).getRole());
+        assertEquals(SplitRole.ORIGINAL, result.get(1).getRole());
+        assertEquals(new BigDecimal("20.00"), result.get(1).getPercent());
+        assertEquals("GORIGINAL1", result.get(1).getWallet());
+        assertEquals(SplitRole.SELLER, result.get(2).getRole());
+        // Remixer keeps 90% pool minus the 20% original royalty = 70%.
+        assertEquals(new BigDecimal("70.00"), result.get(2).getPercent());
+        assertTrue(sumTo100(result));
+    }
+
+    @Test
+    void remixSale_originalRoyaltyHasPriorityOverReseller() {
+        // Seller pool 90%. Original 20% is carved first; reseller 10% is then
+        // checked against the remaining 70% and still fits.
+        when(tenantConfigService.findActiveBySubdomain("alice"))
+                .thenReturn(Optional.of(tenant("alice", "10.00", "0.00", TENANT_WALLET)));
+
+        List<PaymentSplit> result = invoke("alice", sellerOnly(), null,
+                reseller("10", "GRESELLER1"), original("20", "GORIGINAL1"));
+
+        assertEquals(4, result.size());
+        assertEquals(SplitRole.PLATFORM, result.get(0).getRole());
+        assertEquals(SplitRole.ORIGINAL, result.get(1).getRole());
+        assertEquals(new BigDecimal("20.00"), result.get(1).getPercent());
+        assertEquals(SplitRole.RESELLER, result.get(2).getRole());
+        assertEquals(new BigDecimal("10.00"), result.get(2).getPercent());
+        assertEquals(SplitRole.SELLER, result.get(3).getRole());
+        assertEquals(new BigDecimal("60.00"), result.get(3).getPercent());
+        assertTrue(sumTo100(result));
+    }
+
+    @Test
+    void remixSale_royaltyThatDoesNotFit_isSkipped() {
+        // Seller pool is 90%; a 95% royalty cannot fit, so it is dropped and
+        // the sale proceeds as a normal two-way split.
+        when(tenantConfigService.findActiveBySubdomain("alice"))
+                .thenReturn(Optional.of(tenant("alice", "10.00", "0.00", TENANT_WALLET)));
+
+        List<PaymentSplit> result = invoke("alice", sellerOnly(), null, null, original("95", "GORIGINAL1"));
 
         assertEquals(2, result.size());
         assertEquals(SplitRole.PLATFORM, result.get(0).getRole());

@@ -18,6 +18,8 @@ public class Order {
     private String franchiseId;
     /** OAuth user-id of the reseller this sale is attributed to, or null. Audit trail for anti-abuse. */
     private String resellerId;
+    /** OAuth user id of the ORIGINAL creator paid a remix royalty on this order. Null when none. */
+    private String originalCreatorId;
     private BigDecimal amountXlm;
     /** Original USD amount (only set for USD-priced entries) */
     private BigDecimal originalAmountUsd;
@@ -66,6 +68,9 @@ public class Order {
     public void setFranchiseId(String franchiseId) { this.franchiseId = franchiseId; }
     public String getResellerId() { return resellerId; }
     public void setResellerId(String resellerId) { this.resellerId = resellerId; }
+
+    public String getOriginalCreatorId() { return originalCreatorId; }
+    public void setOriginalCreatorId(String originalCreatorId) { this.originalCreatorId = originalCreatorId; }
     public BigDecimal getAmountXlm() { return amountXlm; }
     public void setAmountXlm(BigDecimal amountXlm) { this.amountXlm = amountXlm; }
     public BigDecimal getOriginalAmountUsd() { return originalAmountUsd; }

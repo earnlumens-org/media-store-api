@@ -30,6 +30,10 @@ import java.util.List;
 // description:1) that cannot be expressed as a @CompoundIndex. Both are created
 // explicitly by SearchTextIndexMigration (auto-index-creation is disabled).
 @CompoundIndex(name = "idx_tenant_status_titlelower", def = "{'tenantId': 1, 'status': 1, 'titleLower': 1}")
+// Original First: duplicate detection looks up entries by content fingerprint.
+// Created explicitly (sparse) by OriginalFirstIndexMigration (auto-index-creation
+// is disabled).
+@CompoundIndex(name = "idx_tenant_fingerprint", def = "{'tenantId': 1, 'contentFingerprint': 1}")
 public class EntryEntity {
 
     @Id
@@ -145,6 +149,24 @@ public class EntryEntity {
     private String hlsR2Prefix;
 
     private long viewCount;
+
+    // ── Original First (automatic content attribution) ──────────────────
+    /** SHA-256 fingerprint of the FULL asset (size + head/mid/tail samples). Null if no FULL asset. */
+    private String contentFingerprint;
+    /** True when this entry duplicates another user's earlier upload. */
+    private boolean remix;
+    /** Canonical original entry id (fingerprint-group root). Null when not a remix. */
+    private String originalEntryId;
+    /** OAuth user id of the canonical original's author (denormalized). */
+    private String originalUserId;
+    /** Username of the canonical original's author (denormalized). */
+    private String originalAuthorUsername;
+    /** When remix status was (re)assigned. */
+    private LocalDateTime remixDetectedAt;
+    /** Royalty percent (of total price) paid to this entry's creator when a remix of it sells. 5–50, default 20. */
+    private BigDecimal remixRoyaltyPercent = new BigDecimal("20");
+    /** Algorithmic-visibility demotion flag for remix-heavy accounts. */
+    private boolean visibilityDemoted;
 
     @CreatedDate
     private LocalDateTime createdAt;
@@ -262,6 +284,36 @@ public class EntryEntity {
 
     public long getViewCount() { return viewCount; }
     public void setViewCount(long viewCount) { this.viewCount = viewCount; }
+
+    public boolean isResellerEnabled() { return resellerEnabled; }
+    public void setResellerEnabled(boolean resellerEnabled) { this.resellerEnabled = resellerEnabled; }
+
+    public BigDecimal getResellerCommissionPercent() { return resellerCommissionPercent; }
+    public void setResellerCommissionPercent(BigDecimal resellerCommissionPercent) { this.resellerCommissionPercent = resellerCommissionPercent; }
+
+    public String getContentFingerprint() { return contentFingerprint; }
+    public void setContentFingerprint(String contentFingerprint) { this.contentFingerprint = contentFingerprint; }
+
+    public boolean isRemix() { return remix; }
+    public void setRemix(boolean remix) { this.remix = remix; }
+
+    public String getOriginalEntryId() { return originalEntryId; }
+    public void setOriginalEntryId(String originalEntryId) { this.originalEntryId = originalEntryId; }
+
+    public String getOriginalUserId() { return originalUserId; }
+    public void setOriginalUserId(String originalUserId) { this.originalUserId = originalUserId; }
+
+    public String getOriginalAuthorUsername() { return originalAuthorUsername; }
+    public void setOriginalAuthorUsername(String originalAuthorUsername) { this.originalAuthorUsername = originalAuthorUsername; }
+
+    public LocalDateTime getRemixDetectedAt() { return remixDetectedAt; }
+    public void setRemixDetectedAt(LocalDateTime remixDetectedAt) { this.remixDetectedAt = remixDetectedAt; }
+
+    public BigDecimal getRemixRoyaltyPercent() { return remixRoyaltyPercent; }
+    public void setRemixRoyaltyPercent(BigDecimal remixRoyaltyPercent) { this.remixRoyaltyPercent = remixRoyaltyPercent; }
+
+    public boolean isVisibilityDemoted() { return visibilityDemoted; }
+    public void setVisibilityDemoted(boolean visibilityDemoted) { this.visibilityDemoted = visibilityDemoted; }
 
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }

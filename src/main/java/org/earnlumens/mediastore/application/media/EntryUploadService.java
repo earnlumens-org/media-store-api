@@ -71,6 +71,11 @@ public class EntryUploadService {
     private static final BigDecimal RESELLER_MIN_PERCENT = new BigDecimal("5");
     private static final BigDecimal RESELLER_MAX_PERCENT = new BigDecimal("20");
     private static final BigDecimal RESELLER_DEFAULT_PERCENT = new BigDecimal("10");
+
+    /** Original First royalty bounds — the original's cut of every remix sale. Never zero. */
+    private static final BigDecimal REMIX_ROYALTY_MIN_PERCENT = new BigDecimal("5");
+    private static final BigDecimal REMIX_ROYALTY_MAX_PERCENT = new BigDecimal("50");
+    private static final BigDecimal REMIX_ROYALTY_DEFAULT_PERCENT = new BigDecimal("20");
     private static final Pattern STELLAR_PUBLIC_KEY = Pattern.compile("^G[A-Z2-7]{55}$");
 
     /**
@@ -170,6 +175,8 @@ public class EntryUploadService {
     private final UserBadgeService userBadgeService;
     private final SpaceValidationService spaceValidationService;
     private final org.earnlumens.mediastore.application.payment.StellarTransactionService stellarTransactionService;
+    private final ContentFingerprintService contentFingerprintService;
+    private final OriginalAttributionService originalAttributionService;
     private final int dailyEntryLimit;
     private final int maxConcurrentReview;
 
@@ -188,6 +195,8 @@ public class EntryUploadService {
             UserBadgeService userBadgeService,
             SpaceValidationService spaceValidationService,
             org.earnlumens.mediastore.application.payment.StellarTransactionService stellarTransactionService,
+            ContentFingerprintService contentFingerprintService,
+            OriginalAttributionService originalAttributionService,
             @Value("${mediastore.abuse.daily-entry-limit:20}") int dailyEntryLimit,
             @Value("${mediastore.abuse.max-concurrent-review:10}") int maxConcurrentReview
     ) {
@@ -205,6 +214,8 @@ public class EntryUploadService {
         this.userBadgeService = userBadgeService;
         this.spaceValidationService = spaceValidationService;
         this.stellarTransactionService = stellarTransactionService;
+        this.contentFingerprintService = contentFingerprintService;
+        this.originalAttributionService = originalAttributionService;
         this.dailyEntryLimit = dailyEntryLimit;
         this.maxConcurrentReview = maxConcurrentReview;
     }
@@ -298,6 +309,11 @@ public class EntryUploadService {
             entry.setResellerEnabled(false);
         }
 
+        // Original First royalty: what the ORIGINAL creator earns when a remix
+        // of this entry sells. Applies to all entries (a free entry can still
+        // be the original of a paid remix). Never zero by design.
+        applyRemixRoyaltySettings(entry, request.remixRoyaltyPercent());
+
         // Denormalize author info for fast reads (no user join at query time)
         // userId is the OAuth provider ID (e.g. Google ID), not MongoDB _id
         // NOTE: this is a snapshot — kept fresh on profile change by
@@ -363,6 +379,29 @@ public class EntryUploadService {
         } else if (entry.getResellerCommissionPercent() == null) {
             entry.setResellerCommissionPercent(RESELLER_DEFAULT_PERCENT);
         }
+    }
+
+    /**
+     * Applies the Original First royalty percent — the share of every remix
+     * sale that flows back to this entry's creator. Bounded to
+     * [{@value #REMIX_ROYALTY_MIN_PERCENT}, {@value #REMIX_ROYALTY_MAX_PERCENT}]
+     * (it can never be zero — the original always gets paid); defaults to
+     * {@value #REMIX_ROYALTY_DEFAULT_PERCENT} when the creator does not choose.
+     *
+     * @param percent null → keep current / default; otherwise the new percent
+     */
+    private void applyRemixRoyaltySettings(Entry entry, BigDecimal percent) {
+        if (percent == null) {
+            if (entry.getRemixRoyaltyPercent() == null) {
+                entry.setRemixRoyaltyPercent(REMIX_ROYALTY_DEFAULT_PERCENT);
+            }
+            return;
+        }
+        if (percent.compareTo(REMIX_ROYALTY_MIN_PERCENT) < 0
+                || percent.compareTo(REMIX_ROYALTY_MAX_PERCENT) > 0) {
+            throw new IllegalArgumentException("REMIX_ROYALTY_OUT_OF_RANGE");
+        }
+        entry.setRemixRoyaltyPercent(percent);
     }
 
     /**
@@ -639,6 +678,19 @@ public class EntryUploadService {
             logger.info("finalizeUpload: set durationSec={} on entry {}", request.durationSec(), request.entryId());
         }
 
+        // ── Original First: fingerprint the FULL asset + duplicate detection ──
+        // Server-side and authoritative (bytes sampled from R2, not client-supplied).
+        // Best-effort: a fingerprint/detection failure never fails the upload.
+        if (kind == MediaKind.FULL) {
+            contentFingerprintService.compute(r2Key, actualSizeBytes).ifPresent(fingerprint -> {
+                entry.setContentFingerprint(fingerprint);
+                boolean isRemix = originalAttributionService.applyRemixDetection(tenantId, entry);
+                entryRepository.save(entry);
+                logger.info("finalizeUpload: fingerprint set on entry {} (remix={})",
+                        request.entryId(), isRemix);
+            });
+        }
+
         logger.info("finalizeUpload: assetId={}, entryId={}, kind={}, r2Key={}, widthPx={}, heightPx={}, durationSec={}",
                 saved.getId(), request.entryId(), kind, r2Key,
                 request.widthPx(), request.heightPx(), request.durationSec());
@@ -862,6 +914,9 @@ public class EntryUploadService {
         if (request.resourceContent() != null) {
             entry.setResourceContent(request.resourceContent());
         }
+
+        // Original First royalty (5–50, never zero). null = keep current.
+        applyRemixRoyaltySettings(entry, request.remixRoyaltyPercent());
 
         if (request.spaceIds() != null) {
             // null = leave unchanged; empty list = clear; non-empty = replace.
@@ -1402,7 +1457,9 @@ public class EntryUploadService {
                 entry.getThumbnailVariantsPrefix(),
                 entry.getPreviewVariantsPrefix(),
                 entry.isResellerEnabled(),
-                entry.getResellerCommissionPercent()
+                entry.getResellerCommissionPercent(),
+                entry.isRemix(),
+                entry.getRemixRoyaltyPercent()
         );
     }
 

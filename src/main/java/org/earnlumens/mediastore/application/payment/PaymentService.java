@@ -280,8 +280,15 @@ public class PaymentService {
         ResellerAttribution reseller = resolveReseller(
                 tenantId, userId, buyerWallet, purchasedEntry, request.resellerCode());
 
-        // Build the full payment splits (platform + optional tenant + seller/collaborator + franchise + reseller)
-        List<PaymentSplit> splits = buildFullSplits(tenantId, targetSplits, franchise, reseller);
+        // Resolve the Original First royalty, if the purchased entry is a remix.
+        // Automatic and transparent: the royalty percent is read live from the
+        // ORIGINAL entry and carved out of the remixer's seller share. Dropped
+        // silently when the original's wallet is missing or no longer active,
+        // so a stale original can never block a legitimate purchase.
+        OriginalAttribution original = resolveOriginal(tenantId, purchasedEntry);
+
+        // Build the full payment splits (platform + optional tenant + seller/collaborator + franchise + original + reseller)
+        List<PaymentSplit> splits = buildFullSplits(tenantId, targetSplits, franchise, reseller, original);
 
         // Defence in depth: every split destination was validated as an active
         // Stellar account when it was registered, but accounts can be merged or
@@ -315,6 +322,7 @@ public class PaymentService {
         order.setSellerId(sellerId);
         order.setFranchiseId(franchise != null ? franchise.getId() : null);
         order.setResellerId(reseller != null ? reseller.resellerUserId() : null);
+        order.setOriginalCreatorId(original != null ? original.originalUserId() : null);
         order.setAmountXlm(totalXlm);
         order.setOriginalAmountUsd(originalAmountUsd);
         order.setXlmUsdRate(xlmUsdRate);
@@ -1011,12 +1019,13 @@ public class PaymentService {
      */
     private List<PaymentSplit> buildFullSplits(String tenantId, List<PaymentSplit> entrySplits,
                                                FranchiseReadModel franchise) {
-        return buildFullSplits(tenantId, entrySplits, franchise, null);
+        return buildFullSplits(tenantId, entrySplits, franchise, null, null);
     }
 
     private List<PaymentSplit> buildFullSplits(String tenantId, List<PaymentSplit> entrySplits,
                                                FranchiseReadModel franchise,
-                                               ResellerAttribution reseller) {
+                                               ResellerAttribution reseller,
+                                               OriginalAttribution original) {
         BigDecimal platformPercent = platformConfig.getFeePercent();
         String platformWallet = platformConfig.getWallet();
         BigDecimal tenantPercent = BigDecimal.ZERO;
@@ -1089,12 +1098,39 @@ public class PaymentService {
             fullSplits.add(new PaymentSplit(franchiseWallet, SplitRole.FRANCHISE, franchisePercent));
         }
 
+        // Carve the Original First royalty out of the SELLER's own share (the
+        // non-reserved pool) FIRST — the original creator has priority over the
+        // reseller by design. The reserved total (platform + tenant) is
+        // untouched, so the final price stays constant. A royalty that would
+        // not fit inside the seller pool is skipped so the remixer always
+        // keeps a positive share.
+        BigDecimal originalPercent = BigDecimal.ZERO;
+        String originalWallet = null;
+        if (original != null
+                && original.royaltyPercent() != null
+                && original.royaltyPercent().compareTo(BigDecimal.ZERO) > 0
+                && original.originalWallet() != null
+                && !original.originalWallet().isBlank()) {
+            BigDecimal candidate = original.royaltyPercent().setScale(2, RoundingMode.HALF_UP);
+            if (candidate.compareTo(nonReservedTotal) >= 0) {
+                logger.warn("Original royalty {}% does not fit in the seller pool {}% for tenant={} "
+                                + "— ORIGINAL split omitted, sale proceeds without royalty",
+                        candidate, nonReservedTotal, tenantId);
+            } else {
+                originalPercent = candidate;
+                originalWallet = original.originalWallet();
+            }
+        }
+        if (originalWallet != null && originalPercent.compareTo(BigDecimal.ZERO) > 0) {
+            fullSplits.add(new PaymentSplit(originalWallet, SplitRole.ORIGINAL, originalPercent));
+        }
+
         // Carve the reseller commission out of the SELLER's own share (the
         // non-reserved pool). The reserved total (platform + tenant) is
         // untouched, so the final price stays constant — the creator simply
         // shares part of their own portion with the reseller. A reseller
-        // commission that would not fit inside the seller pool is skipped so
-        // the seller always keeps a positive share.
+        // commission that would not fit inside the remaining seller pool is
+        // skipped so the seller always keeps a positive share.
         BigDecimal resellerPercent = BigDecimal.ZERO;
         String resellerWallet = null;
         if (reseller != null
@@ -1103,10 +1139,10 @@ public class PaymentService {
                 && reseller.resellerWallet() != null
                 && !reseller.resellerWallet().isBlank()) {
             BigDecimal candidate = reseller.commissionPercent().setScale(2, RoundingMode.HALF_UP);
-            if (candidate.compareTo(nonReservedTotal) >= 0) {
+            if (candidate.compareTo(nonReservedTotal.subtract(originalPercent)) >= 0) {
                 logger.warn("Reseller commission {}% does not fit in the seller pool {}% for tenant={} "
                                 + "— RESELLER split omitted, sale proceeds without attribution",
-                        candidate, nonReservedTotal, tenantId);
+                        candidate, nonReservedTotal.subtract(originalPercent), tenantId);
             } else {
                 resellerPercent = candidate;
                 resellerWallet = reseller.resellerWallet();
@@ -1117,8 +1153,9 @@ public class PaymentService {
         }
 
         // The pool the entry's own splits (SELLER/COLLABORATOR) are rescaled
-        // into: the non-reserved total minus any reseller commission.
-        BigDecimal sellerPoolTotal = nonReservedTotal.subtract(resellerPercent);
+        // into: the non-reserved total minus any original royalty and reseller
+        // commission.
+        BigDecimal sellerPoolTotal = nonReservedTotal.subtract(originalPercent).subtract(resellerPercent);
 
         // Rescale the entry splits (SELLER/COLLABORATOR) into the seller pool.
         // The first N-1 splits are rounded to 2 decimals (HALF_UP); the LAST
@@ -1155,6 +1192,62 @@ public class PaymentService {
      */
     record ResellerAttribution(String resellerUserId, String resellerWallet,
                                BigDecimal commissionPercent) {}
+
+    /**
+     * A resolved Original First royalty for a remix purchase: the original
+     * creator's user-id (for the order audit trail), their payout wallet (a
+     * split destination), and the live royalty percent read from the ORIGINAL
+     * entry.
+     */
+    record OriginalAttribution(String originalUserId, String originalWallet,
+                               BigDecimal royaltyPercent) {}
+
+    /**
+     * Resolves the Original First royalty for an entry purchase, or
+     * {@code null} when there is none. The royalty is dropped <b>silently</b>
+     * (the sale proceeds, the remixer keeps the full seller share) in every
+     * unresolvable case, so stale attribution data can never block a
+     * legitimate purchase:
+     * <ul>
+     *   <li>not an entry purchase, or the entry is not a remix;</li>
+     *   <li>the original entry no longer exists (or its attribution moved);</li>
+     *   <li>the original creator has no payout wallet on the original entry
+     *       (e.g. free content with no wallet connected);</li>
+     *   <li>the original's wallet is no longer active on Stellar.</li>
+     * </ul>
+     * The royalty percent is read LIVE from the original entry
+     * ({@code remixRoyaltyPercent}, 5–50, default 20 — never zero), exactly
+     * like the reseller commission.
+     */
+    private OriginalAttribution resolveOriginal(String tenantId, Entry entry) {
+        if (entry == null || !entry.isRemix() || entry.getOriginalEntryId() == null) {
+            return null;
+        }
+        var originalOpt = entryRepository.findByTenantIdAndId(tenantId, entry.getOriginalEntryId());
+        if (originalOpt.isEmpty()) {
+            logger.warn("Original entry not found — royalty dropped: tenant={}, remix={}, original={}",
+                    tenantId, entry.getId(), entry.getOriginalEntryId());
+            return null;
+        }
+        Entry originalEntry = originalOpt.get();
+        String wallet = originalEntry.getSellerWallet();
+        if (wallet == null || wallet.isBlank()) {
+            logger.info("Original entry has no seller wallet — royalty dropped: tenant={}, remix={}, original={}",
+                    tenantId, entry.getId(), originalEntry.getId());
+            return null;
+        }
+        // A dead ORIGINAL destination must drop the royalty here — NOT reach
+        // the pre-sign split validation, which would block the buyer's
+        // legitimate purchase over a third party's stale wallet.
+        if (!stellarTxService.isAccountActiveCached(wallet)) {
+            logger.warn("Original wallet no longer active — royalty dropped: tenant={}, remix={}, original={}",
+                    tenantId, entry.getId(), originalEntry.getId());
+            return null;
+        }
+        BigDecimal royalty = originalEntry.getRemixRoyaltyPercent() != null
+                ? originalEntry.getRemixRoyaltyPercent() : new BigDecimal("20");
+        return new OriginalAttribution(originalEntry.getUserId(), wallet, royalty);
+    }
 
     /**
      * Resolves the reseller attribution for an entry purchase, or {@code null}

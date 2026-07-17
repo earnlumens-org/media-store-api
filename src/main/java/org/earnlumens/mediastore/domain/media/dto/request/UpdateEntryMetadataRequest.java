@@ -20,6 +20,8 @@ public record UpdateEntryMetadataRequest(
         Boolean resellerEnabled,
         /** Reseller commission as a percent of the total price (5–20). */
         BigDecimal resellerCommissionPercent,
+        /** Original First royalty on remix sales (5–50, never zero). Null = keep current. */
+        BigDecimal remixRoyaltyPercent,
         /**
          * Replacement list of spaceIds. {@code null} = leave unchanged;
          * empty list = clear all spaces; non-empty = replace with the

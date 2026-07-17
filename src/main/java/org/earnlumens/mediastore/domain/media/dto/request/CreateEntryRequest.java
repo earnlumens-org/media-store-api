@@ -66,6 +66,13 @@ public record CreateEntryRequest(
         BigDecimal resellerCommissionPercent,
 
         /**
+         * Original First royalty — the percent of every remix sale paid back to
+         * this entry's creator. Must be between 5 and 50 (never zero). Defaults
+         * to 20 when null/absent.
+         */
+        BigDecimal remixRoyaltyPercent,
+
+        /**
          * Optional list of {@code spaceIds} (admin-api owned) where this
          * entry will be published. Validated by
          * {@code SpaceValidationService} — each id must resolve to an

@@ -37,5 +37,9 @@ public record OwnerEntryResponse(
         /** Whether resellers may earn a commission distributing this entry. */
         boolean resellerEnabled,
         /** Reseller commission as a percent of the total price (5–20). */
-        BigDecimal resellerCommissionPercent
+        BigDecimal resellerCommissionPercent,
+        /** Original First: true when this entry was detected as a duplicate of another user's upload. */
+        boolean remix,
+        /** Original First royalty on remix sales (5–50). */
+        BigDecimal remixRoyaltyPercent
 ) {}

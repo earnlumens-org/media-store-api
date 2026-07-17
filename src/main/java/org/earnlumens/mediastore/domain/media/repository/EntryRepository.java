@@ -141,4 +141,34 @@ public interface EntryRepository {
      * tenant that match {@code query}, ranked by popularity.
      */
     List<String> searchSuggestions(String tenantId, String query, int limit);
+
+    // ── Original First (automatic content attribution) ────────────────
+
+    /** All entries in the tenant carrying the given content fingerprint. */
+    List<Entry> findByTenantIdAndContentFingerprint(String tenantId, String contentFingerprint);
+
+    /** Count of a user's entries excluding the given statuses (remix-ratio denominator). */
+    long countByTenantIdAndUserIdAndStatusNotIn(String tenantId, String userId, List<EntryStatus> excludedStatuses);
+
+    /** Count of a user's remix entries excluding the given statuses (remix-ratio numerator). */
+    long countRemixesByTenantIdAndUserIdAndStatusNotIn(String tenantId, String userId, List<EntryStatus> excludedStatuses);
+
+    /**
+     * Rebases every entry of a fingerprint group (except the new original) as a
+     * remix pointing at the new canonical root. Used when an ownership claim is
+     * granted and the credit is reassigned.
+     *
+     * @return number of entries rebased
+     */
+    long rebaseRemixGroup(String tenantId, String contentFingerprint,
+                          String newOriginalEntryId, String newOriginalUserId,
+                          String newOriginalAuthorUsername);
+
+    /**
+     * Sets/clears the algorithmic-visibility demotion flag on all of a user's
+     * remix entries within a tenant.
+     *
+     * @return number of entries updated
+     */
+    long updateVisibilityDemotedForUserRemixes(String tenantId, String userId, boolean demoted);
 }

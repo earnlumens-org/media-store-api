@@ -255,7 +255,7 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
                 "thumbnailR2Key": 1, "coverR2Key": 1, "durationSec": 1,
                 "thumbnailVariantsPrefix": 1, "previewVariantsPrefix": 1, "coverVariantsPrefix": 1,
                 "viewCount": 1, "isPaid": 1, "priceXlm": 1, "priceUsd": 1,
-                "priceCurrency": 1, "itemCount": 1, "sortDate": 1
+                "priceCurrency": 1, "itemCount": 1, "sortDate": 1, "remix": 1
             }}
             """;
 
@@ -485,8 +485,17 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
                                      int skip, int limit) {
         List<AggregationOperation> ops = buildExploreFeedPipeline(tenantId, type, pricing, languageFilter);
 
-        // Build sort document for use inside $facet
-        Document sortDoc = buildSortDocument(sort);
+        // Build sort document for use inside $facet.
+        // Original First: the default ("newest") ordering ranks visibility-demoted
+        // items (remix-heavy accounts) after everything else. Both union branches
+        // normalize visibilityDemoted to a boolean, so the compound sort is total.
+        Document sortDoc;
+        if (sort == null || "newest".equals(sort)) {
+            sortDoc = new Document("$sort",
+                    new Document("visibilityDemoted", 1).append("sortDate", -1));
+        } else {
+            sortDoc = buildSortDocument(sort);
+        }
 
         // $facet: data + count in a single aggregation pass
         ops.add(context -> new Document("$facet", new Document()
@@ -520,13 +529,16 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
         ops.add(Aggregation.match(Criteria.where("tenantId").is(tenantId)
                 .and("status").is("PUBLISHED")));
 
-        // 2. Normalize entry docs
+        // 2. Normalize entry docs. visibilityDemoted is normalized with $ifNull
+        // because in ascending BSON order MISSING sorts before false — without
+        // this, pre-migration docs would jump ahead of everything.
         ops.add(context -> Document.parse("""
             { "$addFields": {
                 "kind": "entry",
                 "sortDate": "$publishedAt",
                 "itemCount": { "$literal": 0 },
-                "coverR2Key": { "$literal": null }
+                "coverR2Key": { "$literal": null },
+                "visibilityDemoted": { "$ifNull": [ "$visibilityDemoted", false ] }
             }}
             """));
 
@@ -543,7 +555,8 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
                 "itemCount": { "$cond": { "if": { "$isArray": "$items" }, "then": { "$size": "$items" }, "else": 0 } },
                 "durationSec": { "$literal": null },
                 "viewCount": { "$literal": 0 },
-                "thumbnailR2Key": { "$literal": null }
+                "thumbnailR2Key": { "$literal": null },
+                "visibilityDemoted": { "$literal": false }
             }}
             """);
         ops.add(context -> new Document("$unionWith",
@@ -663,6 +676,37 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
                 .set("authorUsername", newUsername)
                 .set("authorUsernameLower", newUsername == null ? null : newUsername.toLowerCase(java.util.Locale.ROOT))
                 .set("authorAvatarUrl", newAvatarUrl);
+
+        UpdateResult result = mongoTemplate.updateMulti(query, update, EntryEntity.class);
+        return result.getModifiedCount();
+    }
+
+    // ── Original First ──────────────────────────────────────────────────────
+
+    @Override
+    public long rebaseRemixGroup(String tenantId, String contentFingerprint,
+                                 String newOriginalEntryId, String newOriginalUserId,
+                                 String newOriginalAuthorUsername) {
+        Query query = new Query(Criteria.where("tenantId").is(tenantId)
+                .and("contentFingerprint").is(contentFingerprint)
+                .and("_id").ne(new org.bson.types.ObjectId(newOriginalEntryId)));
+        Update update = new Update()
+                .set("remix", true)
+                .set("originalEntryId", newOriginalEntryId)
+                .set("originalUserId", newOriginalUserId)
+                .set("originalAuthorUsername", newOriginalAuthorUsername)
+                .set("remixDetectedAt", java.time.LocalDateTime.now());
+
+        UpdateResult result = mongoTemplate.updateMulti(query, update, EntryEntity.class);
+        return result.getModifiedCount();
+    }
+
+    @Override
+    public long updateVisibilityDemotedForUserRemixes(String tenantId, String userId, boolean demoted) {
+        Query query = new Query(Criteria.where("tenantId").is(tenantId)
+                .and("userId").is(userId)
+                .and("remix").is(true));
+        Update update = new Update().set("visibilityDemoted", demoted);
 
         UpdateResult result = mongoTemplate.updateMulti(query, update, EntryEntity.class);
         return result.getModifiedCount();

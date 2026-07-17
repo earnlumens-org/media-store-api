@@ -28,6 +28,24 @@ public interface EntryMongoRepositoryCustom {
     void incrementViewCount(String tenantId, String entryId);
 
     /**
+     * Original First: rebases every entry of a fingerprint group (except the new
+     * original) as a remix of the new canonical root. Single updateMulti.
+     *
+     * @return number of entries rebased
+     */
+    long rebaseRemixGroup(String tenantId, String contentFingerprint,
+                          String newOriginalEntryId, String newOriginalUserId,
+                          String newOriginalAuthorUsername);
+
+    /**
+     * Original First: sets/clears visibilityDemoted on all of a user's remix
+     * entries within a tenant. Single updateMulti.
+     *
+     * @return number of entries updated
+     */
+    long updateVisibilityDemotedForUserRemixes(String tenantId, String userId, boolean demoted);
+
+    /**
      * Aggregates owner stats: count by status + sum of viewCount.
      * Returns a map with keys: totalEntries, published, drafts, inReview, rejected, totalViews.
      */

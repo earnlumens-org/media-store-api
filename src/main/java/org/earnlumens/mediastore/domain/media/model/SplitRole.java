@@ -15,6 +15,10 @@ package org.earnlumens.mediastore.domain.media.model;
  *                when the buyer arrives through a reseller link. The creator
  *                voluntarily gives away this cut to reward real distribution;
  *                the final price and every other split are unchanged.
+ * ORIGINAL     — The Original First royalty paid to the original creator when
+ *                a remix (duplicate upload of their content) sells. Carved out
+ *                of the remixer's SELLER share; percent set by the original
+ *                creator on their entry (remixRoyaltyPercent, 5–50, never 0).
  */
 public enum SplitRole {
     PLATFORM,
@@ -22,5 +26,6 @@ public enum SplitRole {
     SELLER,
     COLLABORATOR,
     FRANCHISE,
-    RESELLER
+    RESELLER,
+    ORIGINAL
 }

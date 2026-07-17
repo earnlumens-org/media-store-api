@@ -43,5 +43,13 @@ public record PublicEntryResponse(
         /** Whether resellers may earn a commission distributing this (paid) entry. */
         boolean resellerEnabled,
         /** Current reseller commission as a percent of the total price (5–20). Live value. */
-        BigDecimal resellerCommissionPercent
+        BigDecimal resellerCommissionPercent,
+        /** Original First: true when this entry duplicates another user's earlier upload. */
+        boolean remix,
+        /** Canonical original entry id (only when {@link #remix} is true). */
+        String originalEntryId,
+        /** Username of the original creator (only when {@link #remix} is true). */
+        String originalAuthorUsername,
+        /** Royalty percent the original creator earns on remix sales of THIS entry (5–50). */
+        BigDecimal remixRoyaltyPercent
 ) {}

@@ -238,4 +238,39 @@ public class EntryRepositoryImpl implements EntryRepository {
     public java.util.List<String> searchSuggestions(String tenantId, String query, int limit) {
         return entryMongoRepository.searchSuggestions(tenantId, query, limit);
     }
+
+    // ── Original First ──────────────────────────────────────────────────────
+
+    @Override
+    public List<Entry> findByTenantIdAndContentFingerprint(String tenantId, String contentFingerprint) {
+        return entryMongoRepository.findByTenantIdAndContentFingerprint(tenantId, contentFingerprint)
+                .stream()
+                .map(entryMapper::toModel)
+                .toList();
+    }
+
+    @Override
+    public long countByTenantIdAndUserIdAndStatusNotIn(String tenantId, String userId, List<EntryStatus> excludedStatuses) {
+        return entryMongoRepository.countByTenantIdAndUserIdAndStatusNotIn(
+                tenantId, userId, excludedStatuses.stream().map(EntryStatus::name).toList());
+    }
+
+    @Override
+    public long countRemixesByTenantIdAndUserIdAndStatusNotIn(String tenantId, String userId, List<EntryStatus> excludedStatuses) {
+        return entryMongoRepository.countByTenantIdAndUserIdAndRemixTrueAndStatusNotIn(
+                tenantId, userId, excludedStatuses.stream().map(EntryStatus::name).toList());
+    }
+
+    @Override
+    public long rebaseRemixGroup(String tenantId, String contentFingerprint,
+                                 String newOriginalEntryId, String newOriginalUserId,
+                                 String newOriginalAuthorUsername) {
+        return entryMongoRepository.rebaseRemixGroup(tenantId, contentFingerprint,
+                newOriginalEntryId, newOriginalUserId, newOriginalAuthorUsername);
+    }
+
+    @Override
+    public long updateVisibilityDemotedForUserRemixes(String tenantId, String userId, boolean demoted) {
+        return entryMongoRepository.updateVisibilityDemotedForUserRemixes(tenantId, userId, demoted);
+    }
 }

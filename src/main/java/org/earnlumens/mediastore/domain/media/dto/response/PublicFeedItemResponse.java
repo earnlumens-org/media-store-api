@@ -37,5 +37,7 @@ public record PublicFeedItemResponse(
         /** R2 prefix for preview-image variants (entries). */
         String previewVariantsPrefix,
         /** R2 prefix for cover variants (collections). */
-        String coverVariantsPrefix
+        String coverVariantsPrefix,
+        /** Original First: true when this entry duplicates another user's earlier upload. Always false for collections. */
+        boolean remix
 ) {}
