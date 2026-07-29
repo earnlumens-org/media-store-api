@@ -129,7 +129,7 @@ class FavoriteControllerTest {
                 "creator", null, "u1", "2026-01-15T10:30:00",
                 "public/thumb/entry.jpg", null, 120,
                 null, null, true, false, "2026-01-15T10:30:00",
-                null, null
+                null, null, null, null, null
         );
         return new FavoritePageResponse(List.of(item), 0, 24, 1, 1);
     }

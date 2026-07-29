@@ -241,7 +241,10 @@ public class FavoriteService {
                 unlocked,
                 fav.getAddedAt() != null ? fav.getAddedAt().format(ISO_FORMATTER) : null,
                 entry.getThumbnailVariantsPrefix(),
-                null // coverVariantsPrefix — entries use thumbnail
+                null, // coverVariantsPrefix — entries use thumbnail
+                entry.getPriceXlm(),
+                entry.getPriceUsd(),
+                entry.getPriceCurrency() != null ? entry.getPriceCurrency().name() : null
         );
     }
 
@@ -266,7 +269,10 @@ public class FavoriteService {
                 unlocked,
                 fav.getAddedAt() != null ? fav.getAddedAt().format(ISO_FORMATTER) : null,
                 null, // thumbnailVariantsPrefix — collections use cover
-                collection.getCoverVariantsPrefix()
+                collection.getCoverVariantsPrefix(),
+                collection.getPriceXlm(),
+                collection.getPriceUsd(),
+                collection.getPriceCurrency() != null ? collection.getPriceCurrency().name() : null
         );
     }
 
