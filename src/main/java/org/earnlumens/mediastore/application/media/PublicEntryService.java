@@ -281,23 +281,23 @@ public class PublicEntryService {
                                                     int page, int size) {
         int skip = page * size;
         Document facetResult = entryRepository.findCommunityFeed(tenantId, "u1", type, pricing, sort, languageFilter, skip, size);
+        PublicFeedPageResponse response = toFeedPage(facetResult, page, size, false);
 
-        List<Document> docs = facetResult != null
-                ? facetResult.getList("data", Document.class, List.of())
-                : List.of();
-        List<Document> countList = facetResult != null
-                ? facetResult.getList("count", Document.class, List.of())
-                : List.of();
-        long total = countList.isEmpty() ? 0 : countList.get(0).get("total", Number.class).longValue();
-        int totalPages = size > 0 ? (int) Math.ceil((double) total / size) : 0;
-
-        List<PublicFeedItemResponse> content = new ArrayList<>();
-        Set<String> emptySet = Set.of();
-        for (Document doc : docs) {
-            content.add(mapDocToFeedItem(doc, emptySet, emptySet, false));
+        // Language fallback: an active language filter that matches nothing
+        // must never leave the user staring at an empty wall while content
+        // exists in other languages — re-run unfiltered and flag it so the
+        // UI can explain ("no content in your languages yet — showing all").
+        if (page == 0 && response.content().isEmpty()
+                && languageFilter != null && languageFilter.applies()) {
+            Document unfiltered = entryRepository.findCommunityFeed(
+                    tenantId, "u1", type, pricing, sort,
+                    org.earnlumens.mediastore.domain.media.model.LanguageFilter.NONE, skip, size);
+            PublicFeedPageResponse fallback = toFeedPage(unfiltered, page, size, true);
+            if (!fallback.content().isEmpty()) {
+                return fallback;
+            }
         }
-
-        return new PublicFeedPageResponse(content, page, size, total, totalPages);
+        return response;
     }
 
     /**
@@ -309,7 +309,24 @@ public class PublicEntryService {
                                                   int page, int size) {
         int skip = page * size;
         Document facetResult = entryRepository.findExploreFeed(tenantId, type, pricing, sort, languageFilter, skip, size);
+        PublicFeedPageResponse response = toFeedPage(facetResult, page, size, false);
 
+        // Language fallback — see getCommunityFeed for rationale.
+        if (page == 0 && response.content().isEmpty()
+                && languageFilter != null && languageFilter.applies()) {
+            Document unfiltered = entryRepository.findExploreFeed(
+                    tenantId, type, pricing, sort,
+                    org.earnlumens.mediastore.domain.media.model.LanguageFilter.NONE, skip, size);
+            PublicFeedPageResponse fallback = toFeedPage(unfiltered, page, size, true);
+            if (!fallback.content().isEmpty()) {
+                return fallback;
+            }
+        }
+        return response;
+    }
+
+    /** Map a $facet aggregation result (data + count) to a feed page response. */
+    private PublicFeedPageResponse toFeedPage(Document facetResult, int page, int size, boolean languageFallback) {
         List<Document> docs = facetResult != null
                 ? facetResult.getList("data", Document.class, List.of())
                 : List.of();
@@ -325,7 +342,7 @@ public class PublicEntryService {
             content.add(mapDocToFeedItem(doc, emptySet, emptySet, false));
         }
 
-        return new PublicFeedPageResponse(content, page, size, total, totalPages);
+        return new PublicFeedPageResponse(content, page, size, total, totalPages, languageFallback);
     }
 
     /**
