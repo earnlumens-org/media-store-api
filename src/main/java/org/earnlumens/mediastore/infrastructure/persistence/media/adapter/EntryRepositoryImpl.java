@@ -8,7 +8,13 @@ import org.earnlumens.mediastore.infrastructure.persistence.media.entity.EntryEn
 import org.earnlumens.mediastore.infrastructure.persistence.media.mapper.EntryMapper;
 import org.earnlumens.mediastore.infrastructure.persistence.media.repository.EntryMongoRepository;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
@@ -20,10 +26,13 @@ public class EntryRepositoryImpl implements EntryRepository {
 
     private final EntryMongoRepository entryMongoRepository;
     private final EntryMapper entryMapper;
+    private final MongoTemplate mongoTemplate;
 
-    public EntryRepositoryImpl(EntryMongoRepository entryMongoRepository, EntryMapper entryMapper) {
+    public EntryRepositoryImpl(EntryMongoRepository entryMongoRepository, EntryMapper entryMapper,
+                               MongoTemplate mongoTemplate) {
         this.entryMongoRepository = entryMongoRepository;
         this.entryMapper = entryMapper;
+        this.mongoTemplate = mongoTemplate;
     }
 
     @Override
@@ -40,9 +49,41 @@ public class EntryRepositoryImpl implements EntryRepository {
 
     @Override
     public Page<Entry> findByTenantIdAndSpaceIdAndStatus(String tenantId, String spaceId, EntryStatus status, Pageable pageable) {
-        return entryMongoRepository
-                .findByTenantIdAndSpaceIdsContainingAndStatusOrderByPublishedAtDesc(tenantId, spaceId, status.name(), pageable)
-                .map(entryMapper::toModel);
+        // Dynamic dotted-path sort: entries released by the publishing-block
+        // scheduler carry spacePublishedAt.<spaceId>; missing fields sort last
+        // in a descending sort, so legacy entries follow queue-published ones.
+        Criteria criteria = Criteria.where("tenantId").is(tenantId)
+                .and("spaceIds").is(spaceId)
+                .and("status").is(status.name());
+        Query query = Query.query(criteria)
+                .with(Sort.by(Sort.Order.desc("spacePublishedAt." + spaceId), Sort.Order.desc("publishedAt")))
+                .with(pageable);
+        List<Entry> content = mongoTemplate.find(query, EntryEntity.class).stream()
+                .map(entryMapper::toModel)
+                .toList();
+        long total = mongoTemplate.count(Query.query(criteria), EntryEntity.class);
+        return new PageImpl<>(content, pageable, total);
+    }
+
+    @Override
+    public boolean addSpacePublication(String tenantId, String entryId, String spaceId, LocalDateTime spacePublishedAt) {
+        // Idempotency: when the per-space timestamp already exists (scheduler
+        // crash-rerun), the entry counts as published — never re-stamped, so
+        // its feed position is stable.
+        Query already = Query.query(Criteria.where("tenantId").is(tenantId)
+                .and("_id").is(entryId)
+                .and("status").is(EntryStatus.PUBLISHED.name())
+                .and("spacePublishedAt." + spaceId).exists(true));
+        if (mongoTemplate.exists(already, EntryEntity.class)) {
+            return true;
+        }
+        Query query = Query.query(Criteria.where("tenantId").is(tenantId)
+                .and("_id").is(entryId)
+                .and("status").is(EntryStatus.PUBLISHED.name()));
+        Update update = new Update()
+                .addToSet("spaceIds", spaceId)
+                .set("spacePublishedAt." + spaceId, spacePublishedAt);
+        return mongoTemplate.updateFirst(query, update, EntryEntity.class).getModifiedCount() > 0;
     }
 
     @Override

@@ -1,6 +1,8 @@
 package org.earnlumens.mediastore.application.payment;
 
 import org.earnlumens.mediastore.domain.media.dto.request.PreparePaymentRequest;
+import org.earnlumens.mediastore.domain.media.dto.request.PrepareFastPassRequest;
+import org.earnlumens.mediastore.domain.media.dto.request.PreparePublishFeeRequest;
 import org.earnlumens.mediastore.domain.media.dto.request.PrepareTipRequest;
 import org.earnlumens.mediastore.domain.media.dto.request.SubmitPaymentRequest;
 import org.earnlumens.mediastore.domain.media.dto.response.PreparePaymentResponse;
@@ -89,6 +91,7 @@ public class PaymentService {
     private final TenantConfigService tenantConfigService;
     private final FranchiseReadRepository franchiseReadRepository;
     private final org.earnlumens.mediastore.infrastructure.reseller.ResellerLinkRepository resellerLinkRepository;
+    private final org.earnlumens.mediastore.application.publishing.PublishingQueueService publishingQueueService;
 
     public PaymentService(EntryRepository entryRepository,
                           CollectionRepository collectionRepository,
@@ -100,7 +103,8 @@ public class PaymentService {
                           XlmUsdPriceService xlmUsdPriceService,
                           TenantConfigService tenantConfigService,
                           FranchiseReadRepository franchiseReadRepository,
-                          org.earnlumens.mediastore.infrastructure.reseller.ResellerLinkRepository resellerLinkRepository) {
+                          org.earnlumens.mediastore.infrastructure.reseller.ResellerLinkRepository resellerLinkRepository,
+                          org.earnlumens.mediastore.application.publishing.PublishingQueueService publishingQueueService) {
         this.entryRepository = entryRepository;
         this.collectionRepository = collectionRepository;
         this.orderRepository = orderRepository;
@@ -112,6 +116,7 @@ public class PaymentService {
         this.tenantConfigService = tenantConfigService;
         this.franchiseReadRepository = franchiseReadRepository;
         this.resellerLinkRepository = resellerLinkRepository;
+        this.publishingQueueService = publishingQueueService;
     }
 
     /**
@@ -522,6 +527,168 @@ public class PaymentService {
                 buyerWallet, amountUsd.toPlainString(), totalXlm.toPlainString());
 
         return toResponse(saved);
+    }
+
+    /**
+     * Phase 1 for a Publish Priority Fee (requirement 6): validates the queue
+     * item is the caller's, still QUEUED in an OPEN block, and builds the
+     * unsigned tx for the exact XLM amount the user chose (> 0, cumulative).
+     * Split policy: main tenant → 100% platform; secondary tenants → platform
+     * fee percent + remainder to the tenant owner (same criterion as sales).
+     */
+    public PreparePaymentResponse preparePublishFee(String tenantId, String userId,
+                                                    PreparePublishFeeRequest request) {
+        var item = publishingQueueService.requireBoostableItem(tenantId, userId, request.queueItemId());
+
+        BigDecimal amountXlm = request.amountXlm();
+        if (amountXlm == null || amountXlm.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("FEE_AMOUNT_INVALID");
+        }
+        amountXlm = amountXlm.setScale(7, RoundingMode.DOWN);
+        if (amountXlm.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalArgumentException("FEE_AMOUNT_INVALID");
+        }
+
+        List<PaymentSplit> splits = buildPublishingSplits(tenantId);
+        validateSplitWalletsActive(splits, tenantId, "PUBLISH_FEE", request.queueItemId());
+
+        String memo = "PUBLISH FEE: " + formatXlmForMemo(amountXlm) + " XLM";
+        StellarTransactionService.BuildResult buildResult =
+                stellarTxService.buildTransaction(request.buyerWallet(), amountXlm, splits, memo);
+
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        Order order = new Order();
+        order.setTenantId(tenantId);
+        order.setUserId(userId);
+        order.setAmountXlm(amountXlm);
+        order.setPriceCurrency("XLM");
+        order.setBuyerWallet(request.buyerWallet());
+        order.setMemo(memo);
+        order.setUnsignedXdr(buildResult.unsignedXdr());
+        order.setIntegrityHash(buildResult.integrityHash());
+        order.setStellarTxHash(buildResult.txHash());
+        order.setStatus(OrderStatus.PENDING);
+        order.setExpiresAt(now.plusSeconds(stellarConfig.getTxTimeoutSeconds()));
+        order.setPaymentSplits(splits);
+        order.setTargetType(TargetType.PUBLISH_FEE);
+        order.setPublishQueueItemId(item.getId());
+        order.setPublishSpaceId(item.getSpaceId());
+        order.setPublishEntityType(item.getEntityType().name());
+        order.setPublishEntityId(item.getEntityId());
+
+        Order saved = orderRepository.save(order);
+        logger.info("Publish fee prepared: orderId={}, itemId={}, buyer={}, amount={} XLM",
+                saved.getId(), item.getId(), request.buyerWallet(), amountXlm.toPlainString());
+        return toResponse(saved);
+    }
+
+    /**
+     * Phase 1 for a FastPass (requirement 7): validates the entity/space and
+     * that the base slots are sold out, prices the pass from the space's USD
+     * config (default $2) converted at the locked XLM/USD rate, and builds
+     * the unsigned tx. The queue item is created only on confirmation.
+     */
+    public PreparePaymentResponse prepareFastPass(String tenantId, String userId,
+                                                  PrepareFastPassRequest request) {
+        org.earnlumens.mediastore.domain.publishing.model.PublishingEntityType entityType;
+        try {
+            entityType = org.earnlumens.mediastore.domain.publishing.model.PublishingEntityType
+                    .valueOf(request.entityType());
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("ENTITY_TYPE_NOT_SUPPORTED");
+        }
+        var space = publishingQueueService.requireFastPassTarget(
+                tenantId, userId, entityType, request.entityId(), request.spaceId());
+
+        BigDecimal amountUsd = space.effectiveFastPassPriceUsd().setScale(2, RoundingMode.HALF_UP);
+        var snapshot = xlmUsdPriceService.getPrice();
+        BigDecimal rate = snapshot != null ? snapshot.price() : null;
+        if (rate == null || rate.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalStateException("XLM/USD price unavailable — cannot process FastPass");
+        }
+        BigDecimal totalXlm = amountUsd.divide(rate, 7, RoundingMode.CEILING);
+        if (totalXlm.compareTo(BigDecimal.ZERO) <= 0) {
+            throw new IllegalStateException("Computed FastPass amount is non-positive");
+        }
+
+        List<PaymentSplit> splits = buildPublishingSplits(tenantId);
+        validateSplitWalletsActive(splits, tenantId, "PUBLISH_FAST_PASS", request.entityId());
+
+        String memo = "FASTPASS: " + formatXlmForMemo(totalXlm) + " XLM";
+        StellarTransactionService.BuildResult buildResult =
+                stellarTxService.buildTransaction(request.buyerWallet(), totalXlm, splits, memo);
+
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        Order order = new Order();
+        order.setTenantId(tenantId);
+        order.setUserId(userId);
+        order.setAmountXlm(totalXlm);
+        order.setOriginalAmountUsd(amountUsd);
+        order.setXlmUsdRate(rate);
+        order.setPriceCurrency("USD");
+        order.setBuyerWallet(request.buyerWallet());
+        order.setMemo(memo);
+        order.setUnsignedXdr(buildResult.unsignedXdr());
+        order.setIntegrityHash(buildResult.integrityHash());
+        order.setStellarTxHash(buildResult.txHash());
+        order.setStatus(OrderStatus.PENDING);
+        order.setExpiresAt(now.plusSeconds(stellarConfig.getTxTimeoutSeconds()));
+        order.setPaymentSplits(splits);
+        order.setTargetType(TargetType.PUBLISH_FAST_PASS);
+        order.setPublishSpaceId(request.spaceId());
+        order.setPublishEntityType(entityType.name());
+        order.setPublishEntityId(request.entityId());
+
+        Order saved = orderRepository.save(order);
+        logger.info("FastPass prepared: orderId={}, spaceId={}, entity={}/{}, buyer={}, amount=${} ({} XLM)",
+                saved.getId(), request.spaceId(), entityType, request.entityId(),
+                request.buyerWallet(), amountUsd.toPlainString(), totalXlm.toPlainString());
+        return toResponse(saved);
+    }
+
+    /**
+     * Split policy for publishing payments (fees & FastPass), per product
+     * decision: the MAIN tenant (earnlumens) keeps 100% for the platform;
+     * SECONDARY tenants pay the platform its fee percent (default 10%) and
+     * the remainder goes to the tenant owner's wallet.
+     */
+    private List<PaymentSplit> buildPublishingSplits(String tenantId) {
+        BigDecimal platformPercent = platformConfig.getFeePercent();
+        String platformWallet = platformConfig.getWallet();
+
+        Optional<TenantReadModel> tenantConfig = tenantConfigService.findActiveBySubdomain(tenantId);
+        if (tenantConfig.isPresent()) {
+            TenantReadModel t = tenantConfig.get();
+            String tenantWallet = t.getTenantWallet();
+            if (tenantWallet != null && !tenantWallet.isBlank()
+                    && !tenantWallet.equals(platformWallet)) {
+                if (t.getPlatformFeePercent() != null) {
+                    platformPercent = t.getPlatformFeePercent();
+                }
+                if (platformPercent.compareTo(BigDecimal.ZERO) <= 0
+                        || platformPercent.compareTo(ONE_HUNDRED) >= 0) {
+                    platformPercent = platformConfig.getFeePercent();
+                }
+                BigDecimal tenantPercent = ONE_HUNDRED.subtract(platformPercent);
+                List<PaymentSplit> splits = new ArrayList<>();
+                splits.add(new PaymentSplit(platformWallet, SplitRole.PLATFORM, platformPercent));
+                splits.add(new PaymentSplit(tenantWallet, SplitRole.TENANT, tenantPercent));
+                return splits;
+            }
+        }
+        // Main tenant (or secondary without a payout wallet): 100% platform.
+        return List.of(new PaymentSplit(platformWallet, SplitRole.PLATFORM, ONE_HUNDRED));
+    }
+
+    private void validateSplitWalletsActive(List<PaymentSplit> splits, String tenantId,
+                                            String kind, String contextId) {
+        for (PaymentSplit split : splits) {
+            if (!stellarTxService.isAccountActiveCached(split.getWallet())) {
+                logger.error("{} split wallet not active on Stellar: role={}, wallet={}, tenant={}, context={}",
+                        kind, split.getRole(), split.getWallet(), tenantId, contextId);
+                throw new IllegalArgumentException("SPLIT_WALLET_NOT_ACTIVE");
+            }
+        }
     }
 
     /**
@@ -963,6 +1130,15 @@ public class PaymentService {
         // already settled on-chain (creator paid directly); there is nothing else
         // to do. Returning here keeps the reconciliation/watchdog paths no-ops too.
         if (order.getTargetType() == TargetType.TIP) {
+            return;
+        }
+
+        // Publishing orders grant no entitlement either — their effect is applied
+        // to the publishing queue instead. Both effects are idempotent, so the
+        // reconciliation/watchdog paths safely re-invoke them.
+        if (order.getTargetType() == TargetType.PUBLISH_FEE
+                || order.getTargetType() == TargetType.PUBLISH_FAST_PASS) {
+            publishingQueueService.applyPaymentEffect(order);
             return;
         }
 

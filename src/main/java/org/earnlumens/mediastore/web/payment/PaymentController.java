@@ -101,6 +101,64 @@ public class PaymentController {
         }
     }
 
+    /**
+     * Prepare a Publish Priority Fee payment — reorders the caller's queue
+     * item within its publishing block. Same audited two-phase flow; grants
+     * no entitlement. Any amount > 0 XLM; cumulative until the block locks.
+     */
+    @PostMapping("/publish-fee/prepare")
+    public ResponseEntity<?> preparePublishFee(
+            @Valid @RequestBody org.earnlumens.mediastore.domain.media.dto.request.PreparePublishFeeRequest request
+    ) {
+        String userId = extractUserId();
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+        String tenantId = TenantContext.require();
+        try {
+            PreparePaymentResponse response = paymentService.preparePublishFee(tenantId, userId, request);
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            logger.warn("Prepare publish fee failed (400): {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (IllegalStateException e) {
+            logger.warn("Prepare publish fee failed (409): {}", e.getMessage());
+            return ResponseEntity.status(409).body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            logger.error("Prepare publish fee failed (500)", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "Internal error preparing publish fee"));
+        }
+    }
+
+    /**
+     * Prepare a FastPass payment — buys an extra slot in the next publishing
+     * block of a space (only while base slots are sold out). The queue item
+     * is created when the payment confirms on-chain. Grants no entitlement.
+     */
+    @PostMapping("/fast-pass/prepare")
+    public ResponseEntity<?> prepareFastPass(
+            @Valid @RequestBody org.earnlumens.mediastore.domain.media.dto.request.PrepareFastPassRequest request
+    ) {
+        String userId = extractUserId();
+        if (userId == null) {
+            return ResponseEntity.status(401).body(Map.of("error", "Unauthorized"));
+        }
+        String tenantId = TenantContext.require();
+        try {
+            PreparePaymentResponse response = paymentService.prepareFastPass(tenantId, userId, request);
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            logger.warn("Prepare FastPass failed (400): {}", e.getMessage());
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (IllegalStateException e) {
+            logger.warn("Prepare FastPass failed (409): {}", e.getMessage());
+            return ResponseEntity.status(409).body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            logger.error("Prepare FastPass failed (500)", e);
+            return ResponseEntity.internalServerError().body(Map.of("error", "Internal error preparing FastPass"));
+        }
+    }
+
     @PostMapping("/submit")
     public ResponseEntity<?> submit(
             @Valid @RequestBody SubmitPaymentRequest request

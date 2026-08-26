@@ -1,5 +1,6 @@
 package org.earnlumens.mediastore.domain.space;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -32,6 +33,21 @@ public class Space {
     /** Locale code → translated name. May be empty for the system space. */
     private Map<String, String> translations = new HashMap<>();
     private Instant archivedAt;
+
+    // ── Publishing Block configuration (admin-api owned, nullable → defaults) ──
+    /** Base slots per publishing block. Null → default 48. */
+    private Integer publishingBlockSize;
+    /** Minutes between block publications. Null → default 10. */
+    private Integer publishingBlockIntervalMinutes;
+    /** FastPass price in USD (converted to XLM at payment time). Null → default 2. */
+    private BigDecimal fastPassPriceUsd;
+
+    /** Default base slots per publishing block. */
+    public static final int DEFAULT_BLOCK_SIZE = 48;
+    /** Default minutes between block publications. */
+    public static final int DEFAULT_BLOCK_INTERVAL_MINUTES = 10;
+    /** Default FastPass price in USD. */
+    public static final BigDecimal DEFAULT_FAST_PASS_PRICE_USD = new BigDecimal("2");
 
     public Space() {}
 
@@ -75,4 +91,31 @@ public class Space {
 
     public Instant getArchivedAt() { return archivedAt; }
     public void setArchivedAt(Instant archivedAt) { this.archivedAt = archivedAt; }
+
+    public Integer getPublishingBlockSize() { return publishingBlockSize; }
+    public void setPublishingBlockSize(Integer publishingBlockSize) { this.publishingBlockSize = publishingBlockSize; }
+
+    public Integer getPublishingBlockIntervalMinutes() { return publishingBlockIntervalMinutes; }
+    public void setPublishingBlockIntervalMinutes(Integer publishingBlockIntervalMinutes) { this.publishingBlockIntervalMinutes = publishingBlockIntervalMinutes; }
+
+    public BigDecimal getFastPassPriceUsd() { return fastPassPriceUsd; }
+    public void setFastPassPriceUsd(BigDecimal fastPassPriceUsd) { this.fastPassPriceUsd = fastPassPriceUsd; }
+
+    /** Block size with default applied (invalid/absent config → 48). */
+    public int effectiveBlockSize() {
+        return publishingBlockSize != null && publishingBlockSize > 0
+                ? publishingBlockSize : DEFAULT_BLOCK_SIZE;
+    }
+
+    /** Block interval in minutes with default applied (invalid/absent config → 10). */
+    public int effectiveBlockIntervalMinutes() {
+        return publishingBlockIntervalMinutes != null && publishingBlockIntervalMinutes > 0
+                ? publishingBlockIntervalMinutes : DEFAULT_BLOCK_INTERVAL_MINUTES;
+    }
+
+    /** FastPass price in USD with default applied (invalid/absent config → 2). */
+    public BigDecimal effectiveFastPassPriceUsd() {
+        return fastPassPriceUsd != null && fastPassPriceUsd.signum() > 0
+                ? fastPassPriceUsd : DEFAULT_FAST_PASS_PRICE_USD;
+    }
 }

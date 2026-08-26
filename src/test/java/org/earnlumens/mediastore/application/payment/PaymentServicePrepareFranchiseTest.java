@@ -51,7 +51,7 @@ class PaymentServicePrepareFranchiseTest {
         service = new PaymentService(
                 entryRepository, null, orderRepository, null,
                 mock(StellarTransactionService.class), null, null, null, null,
-                franchiseReadRepository, null);
+                franchiseReadRepository, null, null);
 
         Entry entry = new Entry();
         entry.setUserId(SELLER);

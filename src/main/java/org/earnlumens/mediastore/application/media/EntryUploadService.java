@@ -34,7 +34,7 @@ import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.earnlumens.mediastore.domain.media.repository.UploadSessionRepository;
 import org.earnlumens.mediastore.domain.user.repository.UserRepository;
 import org.earnlumens.mediastore.application.user.UserBadgeService;
-import org.earnlumens.mediastore.application.space.SpaceValidationService;
+
 import org.earnlumens.mediastore.infrastructure.config.PlatformConfig;
 import org.earnlumens.mediastore.infrastructure.r2.R2PresignedUrlService;
 import org.earnlumens.mediastore.infrastructure.r2.R2StorageService;
@@ -173,7 +173,6 @@ public class EntryUploadService {
     private final TranscodingJobService transcodingJobService;
     private final ModerationJobService moderationJobService;
     private final UserBadgeService userBadgeService;
-    private final SpaceValidationService spaceValidationService;
     private final org.earnlumens.mediastore.application.payment.StellarTransactionService stellarTransactionService;
     private final ContentFingerprintService contentFingerprintService;
     private final OriginalAttributionService originalAttributionService;
@@ -193,7 +192,6 @@ public class EntryUploadService {
             TranscodingJobService transcodingJobService,
             ModerationJobService moderationJobService,
             UserBadgeService userBadgeService,
-            SpaceValidationService spaceValidationService,
             org.earnlumens.mediastore.application.payment.StellarTransactionService stellarTransactionService,
             ContentFingerprintService contentFingerprintService,
             OriginalAttributionService originalAttributionService,
@@ -212,7 +210,6 @@ public class EntryUploadService {
         this.transcodingJobService = transcodingJobService;
         this.moderationJobService = moderationJobService;
         this.userBadgeService = userBadgeService;
-        this.spaceValidationService = spaceValidationService;
         this.stellarTransactionService = stellarTransactionService;
         this.contentFingerprintService = contentFingerprintService;
         this.originalAttributionService = originalAttributionService;
@@ -289,7 +286,9 @@ public class EntryUploadService {
         entry.setPriceUsd(request.priceUsd());
         entry.setPriceCurrency(currency);
         entry.setContentLanguage(request.contentLanguage());
-        entry.setSpaceIds(spaceValidationService.validateForPublish(tenantId, userId, request.spaceIds()));
+        // spaceIds are no longer set directly: entries reach spaces only
+        // through the publishing-block queue (PublishingQueueService), which
+        // stamps spaceIds + spacePublishedAt when the assigned block releases.
 
         // Set seller wallet and generate payment splits for paid content.
         // Only non-platform splits are stored in the entry. The platform split
@@ -918,10 +917,8 @@ public class EntryUploadService {
         // Original First royalty (5–50, never zero). null = keep current.
         applyRemixRoyaltySettings(entry, request.remixRoyaltyPercent());
 
-        if (request.spaceIds() != null) {
-            // null = leave unchanged; empty list = clear; non-empty = replace.
-            entry.setSpaceIds(spaceValidationService.validateForPublish(tenantId, userId, request.spaceIds()));
-        }
+        // spaceIds are intentionally NOT editable here: space publication goes
+        // exclusively through the publishing-block queue (PublishingQueueService).
 
         // ── Auto-moderation: any edit on a non-DRAFT entry triggers re-review ──
         boolean requiresReReview = entry.getStatus() != EntryStatus.DRAFT

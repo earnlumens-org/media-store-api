@@ -48,6 +48,16 @@ public class Order {
     /** Snapshot of the payment splits at order-creation time (amounts, not just percents) */
     private List<PaymentSplit> paymentSplits = new ArrayList<>();
 
+    // ── Publishing Block fields (PUBLISH_FEE / PUBLISH_FAST_PASS orders) ──
+    /** Queue item the priority fee applies to (PUBLISH_FEE). */
+    private String publishQueueItemId;
+    /** Target space (PUBLISH_FAST_PASS; denormalized context on PUBLISH_FEE). */
+    private String publishSpaceId;
+    /** Entity type name being published (e.g. "ENTRY"). */
+    private String publishEntityType;
+    /** Entity id being published. */
+    private String publishEntityId;
+
     public Order() {}
 
     public String getId() { return id; }
@@ -102,4 +112,13 @@ public class Order {
     public void setExpiresAt(LocalDateTime expiresAt) { this.expiresAt = expiresAt; }
     public List<PaymentSplit> getPaymentSplits() { return paymentSplits; }
     public void setPaymentSplits(List<PaymentSplit> paymentSplits) { this.paymentSplits = paymentSplits; }
+
+    public String getPublishQueueItemId() { return publishQueueItemId; }
+    public void setPublishQueueItemId(String publishQueueItemId) { this.publishQueueItemId = publishQueueItemId; }
+    public String getPublishSpaceId() { return publishSpaceId; }
+    public void setPublishSpaceId(String publishSpaceId) { this.publishSpaceId = publishSpaceId; }
+    public String getPublishEntityType() { return publishEntityType; }
+    public void setPublishEntityType(String publishEntityType) { this.publishEntityType = publishEntityType; }
+    public String getPublishEntityId() { return publishEntityId; }
+    public void setPublishEntityId(String publishEntityId) { this.publishEntityId = publishEntityId; }
 }

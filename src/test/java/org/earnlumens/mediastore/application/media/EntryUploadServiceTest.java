@@ -62,7 +62,6 @@ class EntryUploadServiceTest {
     private TranscodingJobService transcodingJobService;
     private ModerationJobService moderationJobService;
     private UserBadgeService userBadgeService;
-    private org.earnlumens.mediastore.application.space.SpaceValidationService spaceValidationService;
     private org.earnlumens.mediastore.application.payment.StellarTransactionService stellarTransactionService;
     private EntryUploadService service;
 
@@ -79,14 +78,12 @@ class EntryUploadServiceTest {
         transcodingJobService = mock(TranscodingJobService.class);
         moderationJobService = mock(ModerationJobService.class);
         userBadgeService = mock(UserBadgeService.class);
-        spaceValidationService = mock(org.earnlumens.mediastore.application.space.SpaceValidationService.class);
-        when(spaceValidationService.validateForPublish(any(), any(), any())).thenReturn(java.util.List.of());
         platformConfig = new PlatformConfig();
         platformConfig.setWallet(PLATFORM_WALLET);
         platformConfig.setFeePercent(new BigDecimal("10.00"));
         stellarTransactionService = mock(org.earnlumens.mediastore.application.payment.StellarTransactionService.class);
         when(stellarTransactionService.isAccountActive(any())).thenReturn(true);
-        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, mock(org.earnlumens.mediastore.domain.media.repository.CollectionRepository.class), r2PresignedUrlService, r2StorageService, uploadSessionRepository, platformConfig, transcodingJobService, moderationJobService, userBadgeService, spaceValidationService, stellarTransactionService, mock(ContentFingerprintService.class), mock(OriginalAttributionService.class), 20, 10);
+        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, mock(org.earnlumens.mediastore.domain.media.repository.CollectionRepository.class), r2PresignedUrlService, r2StorageService, uploadSessionRepository, platformConfig, transcodingJobService, moderationJobService, userBadgeService, stellarTransactionService, mock(ContentFingerprintService.class), mock(OriginalAttributionService.class), 20, 10);
         when(userRepository.findAllById(any())).thenReturn(java.util.List.of());
         when(transcodingJobService.getMaxRetries()).thenReturn(3);
         when(transcodingJobService.createJob(any(TranscodingJob.class)))

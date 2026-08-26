@@ -25,6 +25,9 @@ public class SpaceMapper {
         s.setBaseName(entity.getBaseName());
         s.setTranslations(entity.getTranslations());
         s.setArchivedAt(entity.getArchivedAt());
+        s.setPublishingBlockSize(entity.getPublishingBlockSize());
+        s.setPublishingBlockIntervalMinutes(entity.getPublishingBlockIntervalMinutes());
+        s.setFastPassPriceUsd(entity.getFastPassPriceUsd());
         return s;
     }
 

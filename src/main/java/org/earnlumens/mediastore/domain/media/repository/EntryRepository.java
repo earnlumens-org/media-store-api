@@ -20,9 +20,23 @@ public interface EntryRepository {
 
     /**
      * Public space feed query: PUBLISHED (or other given status) entries
-     * whose {@code spaceIds} contains the given space, newest first.
+     * whose {@code spaceIds} contains the given space. Ordered by the
+     * per-space publication timestamp ({@code spacePublishedAt.<spaceId>})
+     * descending — block order preserved — with legacy entries (no per-space
+     * timestamp) after, newest first by {@code publishedAt}.
      */
     Page<Entry> findByTenantIdAndSpaceIdAndStatus(String tenantId, String spaceId, EntryStatus status, Pageable pageable);
+
+    /**
+     * Atomically publishes an entry into a space: adds {@code spaceId} to
+     * {@code spaceIds} and stamps {@code spacePublishedAt.<spaceId>}. Only
+     * matches PUBLISHED entries; idempotent (skips when the per-space
+     * timestamp is already present).
+     *
+     * @return true when the entry was published to the space now or before
+     *         (still PUBLISHED), false when the entry no longer qualifies.
+     */
+    boolean addSpacePublication(String tenantId, String entryId, String spaceId, LocalDateTime spacePublishedAt);
 
     Page<Entry> findByTenantIdAndAuthorUsernameAndStatus(String tenantId, String authorUsername, EntryStatus status, Pageable pageable);
 

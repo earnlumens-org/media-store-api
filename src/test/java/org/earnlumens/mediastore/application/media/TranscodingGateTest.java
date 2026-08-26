@@ -66,7 +66,6 @@ class TranscodingGateTest {
                 transcodingJobService,
                 mock(ModerationJobService.class),
                 mock(UserBadgeService.class),
-                mock(org.earnlumens.mediastore.application.space.SpaceValidationService.class),
                 stellarTransactionServiceMock(),
                 mock(ContentFingerprintService.class),
                 mock(OriginalAttributionService.class),

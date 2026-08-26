@@ -78,6 +78,12 @@ public class OrderEntity {
     private LocalDateTime expiresAt;
     private List<PaymentSplitEntity> paymentSplits = new ArrayList<>();
 
+    // ── Publishing Block fields (PUBLISH_FEE / PUBLISH_FAST_PASS orders) ──
+    private String publishQueueItemId;
+    private String publishSpaceId;
+    private String publishEntityType;
+    private String publishEntityId;
+
     public OrderEntity() {}
 
     public String getId() { return id; }
@@ -154,4 +160,13 @@ public class OrderEntity {
 
     public List<PaymentSplitEntity> getPaymentSplits() { return paymentSplits; }
     public void setPaymentSplits(List<PaymentSplitEntity> paymentSplits) { this.paymentSplits = paymentSplits; }
+
+    public String getPublishQueueItemId() { return publishQueueItemId; }
+    public void setPublishQueueItemId(String publishQueueItemId) { this.publishQueueItemId = publishQueueItemId; }
+    public String getPublishSpaceId() { return publishSpaceId; }
+    public void setPublishSpaceId(String publishSpaceId) { this.publishSpaceId = publishSpaceId; }
+    public String getPublishEntityType() { return publishEntityType; }
+    public void setPublishEntityType(String publishEntityType) { this.publishEntityType = publishEntityType; }
+    public String getPublishEntityId() { return publishEntityId; }
+    public void setPublishEntityId(String publishEntityId) { this.publishEntityId = publishEntityId; }
 }

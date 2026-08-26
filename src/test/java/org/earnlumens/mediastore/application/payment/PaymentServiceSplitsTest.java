@@ -48,6 +48,7 @@ class PaymentServiceSplitsTest {
                 null,
                 tenantConfigService,
                 null,
+                null,
                 null);
     }
 

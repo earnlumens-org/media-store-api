@@ -77,7 +77,14 @@ class TenantIsolationArchTest {
             // The U3 Stellar Ambassador badge is deliberately GLOBAL: granted only from
             // the main tenant but effective on every tenant, so the active-badge check
             // must NOT be scoped by tenantId (see BadgeType.U3 javadoc)
-            "UserBadgeRepository#hasActiveGlobalBadge"
+            "UserBadgeRepository#hasActiveGlobalBadge",
+            // Platform-level publishing scheduler locks due blocks across all tenants
+            // (runs under TenantContext.runWithoutTenant; every state transition is a
+            // CAS re-scoped by the block's own tenantId)
+            "PublishingBlockRepository#findBlocksToLock",
+            // Platform-level publishing scheduler publishes due blocks across all tenants
+            // (same runWithoutTenant + per-block tenant-scoped CAS pattern as above)
+            "PublishingBlockRepository#findBlocksToPublish"
     );
 
     // ── Methods that carry tenantId inside the entity (e.g. save) ──

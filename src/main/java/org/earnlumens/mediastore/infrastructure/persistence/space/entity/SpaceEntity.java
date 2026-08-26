@@ -3,6 +3,7 @@ package org.earnlumens.mediastore.infrastructure.persistence.space.entity;
 import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -42,6 +43,15 @@ public class SpaceEntity {
     private Map<String, String> translations = new HashMap<>();
 
     private Instant archivedAt;
+
+    /** Base slots per publishing block. Null → default 48. */
+    private Integer publishingBlockSize;
+
+    /** Minutes between block publications. Null → default 10. */
+    private Integer publishingBlockIntervalMinutes;
+
+    /** FastPass price in USD. Null → default 2. */
+    private BigDecimal fastPassPriceUsd;
 
     public SpaceEntity() {}
 
@@ -85,4 +95,13 @@ public class SpaceEntity {
 
     public Instant getArchivedAt() { return archivedAt; }
     public void setArchivedAt(Instant archivedAt) { this.archivedAt = archivedAt; }
+
+    public Integer getPublishingBlockSize() { return publishingBlockSize; }
+    public void setPublishingBlockSize(Integer publishingBlockSize) { this.publishingBlockSize = publishingBlockSize; }
+
+    public Integer getPublishingBlockIntervalMinutes() { return publishingBlockIntervalMinutes; }
+    public void setPublishingBlockIntervalMinutes(Integer publishingBlockIntervalMinutes) { this.publishingBlockIntervalMinutes = publishingBlockIntervalMinutes; }
+
+    public BigDecimal getFastPassPriceUsd() { return fastPassPriceUsd; }
+    public void setFastPassPriceUsd(BigDecimal fastPassPriceUsd) { this.fastPassPriceUsd = fastPassPriceUsd; }
 }

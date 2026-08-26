@@ -11,7 +11,9 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 @Document(collection = "entries")
 @CompoundIndex(name = "idx_tenant_id", def = "{'tenantId': 1, '_id': 1}", unique = true)
@@ -126,6 +128,12 @@ public class EntryEntity {
      * for fast {@code GET /public/spaces/{spaceId}/feed} queries.
      */
     private List<String> spaceIds = new ArrayList<>();
+
+    /**
+     * Per-space publication timestamp, keyed by spaceId. Stamped by the
+     * publishing-block scheduler; drives space feed ordering.
+     */
+    private Map<String, LocalDateTime> spacePublishedAt = new HashMap<>();
 
     /** ISO 639-1 language code of the content (e.g. "es", "en"). */
     private String contentLanguage;
@@ -256,6 +264,11 @@ public class EntryEntity {
     public List<String> getSpaceIds() { return spaceIds; }
     public void setSpaceIds(List<String> spaceIds) {
         this.spaceIds = spaceIds == null ? new ArrayList<>() : spaceIds;
+    }
+
+    public Map<String, LocalDateTime> getSpacePublishedAt() { return spacePublishedAt; }
+    public void setSpacePublishedAt(Map<String, LocalDateTime> spacePublishedAt) {
+        this.spacePublishedAt = spacePublishedAt == null ? new HashMap<>() : spacePublishedAt;
     }
 
     public String getContentLanguage() { return contentLanguage; }

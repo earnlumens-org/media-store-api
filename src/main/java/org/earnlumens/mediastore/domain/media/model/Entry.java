@@ -3,7 +3,9 @@ package org.earnlumens.mediastore.domain.media.model;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 public class Entry {
 
@@ -60,6 +62,13 @@ public class Entry {
      * everything regardless).
      */
     private List<String> spaceIds = new ArrayList<>();
+    /**
+     * Per-space publication timestamp, keyed by spaceId. Stamped by the
+     * publishing-block scheduler when the entity's block releases; drives the
+     * space feed ordering (block order preserved via millisecond offsets).
+     * Absent for legacy entries published before the queue existed.
+     */
+    private Map<String, LocalDateTime> spacePublishedAt = new HashMap<>();
     private String thumbnailR2Key;
     private String previewR2Key;
     /**
@@ -200,6 +209,11 @@ public class Entry {
     public List<String> getSpaceIds() { return spaceIds; }
     public void setSpaceIds(List<String> spaceIds) {
         this.spaceIds = spaceIds == null ? new ArrayList<>() : spaceIds;
+    }
+
+    public Map<String, LocalDateTime> getSpacePublishedAt() { return spacePublishedAt; }
+    public void setSpacePublishedAt(Map<String, LocalDateTime> spacePublishedAt) {
+        this.spacePublishedAt = spacePublishedAt == null ? new HashMap<>() : spacePublishedAt;
     }
 
     public String getThumbnailR2Key() { return thumbnailR2Key; }
