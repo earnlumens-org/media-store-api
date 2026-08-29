@@ -135,7 +135,11 @@ public class PublicTenantController {
         // second zero even before the owner customises it. When the owner has
         // flipped on "logo-only" mode, send an empty string so the storefront
         // can render no text at all (distinct from "unset" / null).
-        if (tenant.isBrandTextHidden()) {
+        // Hiding the EarnLumens branding is a PRO feature: honoured only while
+        // the plan (incl. grace) is active — read-side enforcement (1C.2), so
+        // an expired tenant regains the default branding within the cache TTL
+        // even before the hourly downgrade sweep persists the change.
+        if (tenant.isBrandTextHidden() && tenant.isPro(java.time.Instant.now())) {
             body.put("brandText", "");
             body.put("brandTextHidden", true);
         } else {

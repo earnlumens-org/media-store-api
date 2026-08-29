@@ -106,6 +106,16 @@ public class TenantReadModel {
     private String status;          // "ACTIVE" | "BLOCKED"
     private String blockedReason;
 
+    // ---- Commercial plan (Pro) — mirrors admin-api's Tenant fields -----
+    // admin-api persists planGraceUntil (= planExpiresAt + grace days) on
+    // every plan write, so this read side can evaluate isPro() without
+    // knowing the grace configuration.
+
+    /** "FREE" | "PRO"; null/missing = FREE (legacy tenants). */
+    private String plan;
+    private java.time.Instant planExpiresAt;
+    private java.time.Instant planGraceUntil;
+
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
@@ -211,6 +221,28 @@ public class TenantReadModel {
 
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+
+    public String getPlan() { return plan; }
+    public void setPlan(String plan) { this.plan = plan; }
+
+    public java.time.Instant getPlanExpiresAt() { return planExpiresAt; }
+    public void setPlanExpiresAt(java.time.Instant planExpiresAt) { this.planExpiresAt = planExpiresAt; }
+
+    public java.time.Instant getPlanGraceUntil() { return planGraceUntil; }
+    public void setPlanGraceUntil(java.time.Instant planGraceUntil) { this.planGraceUntil = planGraceUntil; }
+
+    /**
+     * Runtime Pro gate (1C.2 — defence in depth): every Pro-only decision
+     * (custom domain serving, branding removal, …) evaluates this live
+     * instead of trusting the hourly downgrade sweep in admin-api. Falls
+     * back to {@code planExpiresAt} when {@code planGraceUntil} is missing,
+     * failing toward the stricter bound.
+     */
+    public boolean isPro(java.time.Instant now) {
+        if (!"PRO".equals(plan)) return false;
+        java.time.Instant limit = planGraceUntil != null ? planGraceUntil : planExpiresAt;
+        return limit != null && limit.isAfter(now);
+    }
 
     public String getBlockedReason() { return blockedReason; }
     public void setBlockedReason(String blockedReason) { this.blockedReason = blockedReason; }

@@ -197,6 +197,7 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private Tier classifyRequest(String path) {
         if (path.startsWith("/api/auth/"))      return Tier.AUTH;
+        if (path.startsWith("/api/plan/"))      return Tier.AUTH;
         if (path.startsWith("/api/entries"))     return Tier.ENTRIES;
         if (path.startsWith("/api/uploads/"))    return Tier.UPLOAD;
         if (path.startsWith("/api/waitlist/"))   return Tier.WAITLIST;
