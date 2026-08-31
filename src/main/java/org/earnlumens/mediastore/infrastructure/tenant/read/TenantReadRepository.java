@@ -19,4 +19,7 @@ public interface TenantReadRepository extends MongoRepository<TenantReadModel, S
      * silently leaving secondary tenants out.
      */
     List<TenantReadModel> findByStatus(String status);
+
+    /** Backed by admin-api's unique sparse index on customDomain. */
+    Optional<TenantReadModel> findByCustomDomain(String customDomain);
 }

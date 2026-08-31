@@ -116,6 +116,20 @@ public class TenantReadModel {
     private java.time.Instant planExpiresAt;
     private java.time.Instant planGraceUntil;
 
+    // ---- Custom domain (Fase 2) — mirrors admin-api's Tenant fields ----
+    // admin-api is the single writer; this read side only gates resolution:
+    // a custom domain serves iff customDomainStatus == ACTIVE, the tenant is
+    // ACTIVE, and isPro(now) holds (2A.2).
+
+    /** FQDN lowercase, or null when the tenant has no custom domain. */
+    private String customDomain;
+
+    /** "NONE" | "PENDING_DNS" | "PENDING_SSL" | "ACTIVE" | "SUSPENDED" | "FAILED". */
+    private String customDomainStatus;
+
+    /** Opt-in 301 redirect {sub}.root → custom domain; boxed, default off. */
+    private Boolean redirectSubdomainToCustomDomain;
+
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
 
@@ -246,6 +260,33 @@ public class TenantReadModel {
 
     public String getBlockedReason() { return blockedReason; }
     public void setBlockedReason(String blockedReason) { this.blockedReason = blockedReason; }
+
+    public String getCustomDomain() { return customDomain; }
+    public void setCustomDomain(String customDomain) { this.customDomain = customDomain; }
+
+    public String getCustomDomainStatus() { return customDomainStatus; }
+    public void setCustomDomainStatus(String customDomainStatus) { this.customDomainStatus = customDomainStatus; }
+
+    public boolean isRedirectSubdomainToCustomDomain() {
+        return redirectSubdomainToCustomDomain != null && redirectSubdomainToCustomDomain;
+    }
+    public Boolean getRedirectSubdomainToCustomDomain() { return redirectSubdomainToCustomDomain; }
+    public void setRedirectSubdomainToCustomDomain(Boolean redirectSubdomainToCustomDomain) {
+        this.redirectSubdomainToCustomDomain = redirectSubdomainToCustomDomain;
+    }
+
+    /**
+     * True when this tenant's custom domain may serve traffic right now
+     * (2A.2): domain registered, lifecycle ACTIVE, tenant ACTIVE and the Pro
+     * plan (incl. persisted grace) still running — defence in depth on top
+     * of the edge KV gate.
+     */
+    public boolean isCustomDomainServable(java.time.Instant now) {
+        return customDomain != null
+                && "ACTIVE".equals(customDomainStatus)
+                && isActive()
+                && isPro(now);
+    }
 
     public boolean isActive() { return "ACTIVE".equals(status); }
     public boolean isBlocked() { return "BLOCKED".equals(status); }

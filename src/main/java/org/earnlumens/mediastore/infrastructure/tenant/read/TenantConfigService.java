@@ -33,6 +33,8 @@ public class TenantConfigService {
 
     private final TenantReadRepository repository;
     private final ConcurrentHashMap<String, CacheEntry> cache = new ConcurrentHashMap<>();
+    /** Separate keyspace: custom-domain host → tenant (same TTL as the subdomain cache). */
+    private final ConcurrentHashMap<String, CacheEntry> customDomainCache = new ConcurrentHashMap<>();
 
     public TenantConfigService(TenantReadRepository repository) {
         this.repository = repository;
@@ -62,8 +64,39 @@ public class TenantConfigService {
     public void invalidate(String subdomain) {
         if (subdomain != null) {
             cache.remove(subdomain);
+            // Custom-domain entries resolve to the same tenant document; drop
+            // any host cached for this subdomain so admin edits (domain
+            // suspended, plan applied) propagate as fast as subdomain lookups.
+            customDomainCache.entrySet().removeIf(e -> e.getValue().value()
+                    .map(t -> subdomain.equals(t.getSubdomain())).orElse(false));
             logger.debug("TenantConfigService: cache invalidated for subdomain={}", subdomain);
         }
+    }
+
+    /**
+     * Resolves a tenant by custom domain (custom-domain-upgrade 2A.2).
+     * Only returns a hit when the domain may serve right now:
+     * {@code customDomainStatus == ACTIVE} && tenant ACTIVE && {@code isPro(now)}.
+     * Pending/suspended/expired domains and unknown hosts resolve to empty —
+     * callers must treat that as tenant-not-found, never as a fallback to a
+     * default tenant. Cached 60 s per host, including negative results.
+     */
+    public Optional<TenantReadModel> findActiveByCustomDomain(String host) {
+        if (host == null || host.isBlank()) return Optional.empty();
+        String key = host.trim().toLowerCase();
+
+        CacheEntry entry = customDomainCache.get(key);
+        Instant now = Instant.now();
+        if (entry != null && entry.expiresAt().isAfter(now)) {
+            // Re-evaluate the time gate on every read so a plan that expires
+            // mid-TTL stops serving without waiting for the cache to roll.
+            return entry.value().filter(t -> t.isCustomDomainServable(now));
+        }
+
+        Optional<TenantReadModel> fresh = repository.findByCustomDomain(key)
+                .filter(t -> t.isCustomDomainServable(now));
+        customDomainCache.put(key, new CacheEntry(fresh, now.plus(TTL)));
+        return fresh;
     }
 
     /**
