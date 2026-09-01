@@ -125,7 +125,8 @@ public class WebSecurityConfig {
     @Bean
     OAuth2AuthorizationRequestResolver pkceResolver(
             ClientRegistrationRepository clientRegistrationRepository,
-            TenantConfigService tenantConfigService
+            TenantConfigService tenantConfigService,
+            @Value("${mediastore.tenant.root-domain:earnlumens.org}") String rootDomain
     ) {
         DefaultOAuth2AuthorizationRequestResolver delegate = new DefaultOAuth2AuthorizationRequestResolver(
                 clientRegistrationRepository,
@@ -133,10 +134,10 @@ public class WebSecurityConfig {
         );
         delegate.setAuthorizationRequestCustomizer(OAuth2AuthorizationRequestCustomizers.withPkce());
         // Wrap with tenant-aware resolver so the SuccessHandler can redirect
-        // the user back to the subdomain they started the OAuth flow from
-        // (the entire OAuth handshake itself runs on apex because that is the
-        // only redirect_uri registered with X / Google / Apple).
-        return new TenantOAuth2AuthorizationRequestResolver(delegate, tenantConfigService);
+        // the user back to the subdomain (or verified custom domain) they
+        // started the OAuth flow from (the entire OAuth handshake itself runs
+        // on apex because that is the only redirect_uri registered with X).
+        return new TenantOAuth2AuthorizationRequestResolver(delegate, tenantConfigService, rootDomain);
     }
 
     @Bean

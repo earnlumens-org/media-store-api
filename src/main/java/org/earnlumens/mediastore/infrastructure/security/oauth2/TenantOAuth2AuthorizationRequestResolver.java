@@ -29,9 +29,18 @@ import java.util.regex.Pattern;
  * {@link OAuth2AuthenticationSuccessHandler} can redirect the browser back to
  * the originating tenant after the provider hands the code back.
  *
+ * <p>Custom domains (custom-domain-upgrade 3.3): when login starts on a
+ * tenant's own domain the SPA sends {@code return_host=<fqdn>} instead. The
+ * host is validated against the database — it must be a verified-ACTIVE
+ * custom domain of an ACTIVE, Pro tenant
+ * ({@code TenantConfigService#findActiveByCustomDomain}) — never trusted from
+ * the parameter alone, and hosts under our own root domain are rejected
+ * (subdomains must keep using {@code tenant=}).</p>
+ *
  * <h3>Open-redirect hardening</h3>
  * The redirect target is always built as {@code https://<tenant>.<rootDomain>}
- * — the {@code tenant} value never reaches the URL whole. Combined with the
+ * (or {@code https://<return_host>} where the host was verified ACTIVE in the
+ * database) — the raw parameter never reaches the URL whole. Combined with the
  * regex + reserved-subdomain check + an "active tenant exists in DB"
  * gate, this prevents:
  * <ul>
@@ -44,6 +53,8 @@ import java.util.regex.Pattern;
 public class TenantOAuth2AuthorizationRequestResolver implements OAuth2AuthorizationRequestResolver {
 
     public static final String SESSION_ATTR = "oauth.originating.tenant";
+    /** Verified custom-domain host the browser must land on after OAuth (3.3). */
+    public static final String RETURN_HOST_SESSION_ATTR = "oauth.originating.returnHost";
 
     private static final Logger logger = LoggerFactory.getLogger(TenantOAuth2AuthorizationRequestResolver.class);
 
@@ -59,15 +70,21 @@ public class TenantOAuth2AuthorizationRequestResolver implements OAuth2Authoriza
     /** Same regex as TenantResolver. */
     private static final Pattern SUBDOMAIN = Pattern.compile("^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])$");
 
+    /** RFC-1123 hostname label (for return_host syntax pre-check). */
+    private static final Pattern HOST_LABEL = Pattern.compile("^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$");
+
     private final OAuth2AuthorizationRequestResolver delegate;
     private final TenantConfigService tenantConfigService;
+    private final String rootDomain;
 
     public TenantOAuth2AuthorizationRequestResolver(
             OAuth2AuthorizationRequestResolver delegate,
-            TenantConfigService tenantConfigService
+            TenantConfigService tenantConfigService,
+            String rootDomain
     ) {
         this.delegate = delegate;
         this.tenantConfigService = tenantConfigService;
+        this.rootDomain = rootDomain == null ? "earnlumens.org" : rootDomain.toLowerCase();
     }
 
     @Override
@@ -87,9 +104,10 @@ public class TenantOAuth2AuthorizationRequestResolver implements OAuth2Authoriza
     /**
      * Side-effect only: when the inbound request actually starts an OAuth
      * authorization (i.e. the delegate produced a non-null request), parse the
-     * {@code tenant} query parameter, validate it, and stash it in the session
-     * for the success handler. If validation fails the attribute is cleared so
-     * a stale value from a previous flow can't influence the redirect target.
+     * {@code return_host} / {@code tenant} query parameters, validate them, and
+     * stash the winner in the session for the success handler. If validation
+     * fails both attributes are cleared so a stale value from a previous flow
+     * can't influence the redirect target.
      */
     private void captureOriginatingTenant(HttpServletRequest request, OAuth2AuthorizationRequest authReq) {
         if (authReq == null) {
@@ -97,6 +115,22 @@ public class TenantOAuth2AuthorizationRequestResolver implements OAuth2Authoriza
         }
 
         HttpSession session = request.getSession(true);
+
+        // Custom domain flow takes precedence: validated against the DB, only
+        // verified-ACTIVE domains of Pro tenants are ever accepted (3.3).
+        String rawHost = request.getParameter("return_host");
+        String validatedHost = validateReturnHost(rawHost);
+        if (validatedHost != null) {
+            session.setAttribute(RETURN_HOST_SESSION_ATTR, validatedHost);
+            session.removeAttribute(SESSION_ATTR);
+            logger.debug("OAuth flow originated from custom domain={}", validatedHost);
+            return;
+        }
+        session.removeAttribute(RETURN_HOST_SESSION_ATTR);
+        if (rawHost != null && !rawHost.isBlank()) {
+            logger.warn("Discarding invalid OAuth return_host parameter: {}", rawHost);
+        }
+
         String raw = request.getParameter("tenant");
         String validated = validateTenant(raw);
 
@@ -125,5 +159,26 @@ public class TenantOAuth2AuthorizationRequestResolver implements OAuth2Authoriza
         if (RESERVED_SUBDOMAINS.contains(candidate)) return null;
         if (tenantConfigService.findActiveBySubdomain(candidate).isEmpty()) return null;
         return candidate;
+    }
+
+    /**
+     * Returns a normalized custom-domain host when the input is a syntactically
+     * valid FQDN, outside our own zone, and currently servable (verified ACTIVE
+     * domain of an ACTIVE, Pro tenant — checked against the database, never
+     * trusted from the parameter); {@code null} otherwise.
+     */
+    private String validateReturnHost(String raw) {
+        if (raw == null) return null;
+        String host = raw.trim().toLowerCase();
+        if (host.isEmpty() || host.length() > 253) return null;
+        String[] labels = host.split("\\.", -1);
+        if (labels.length < 2) return null;
+        for (String label : labels) {
+            if (!HOST_LABEL.matcher(label).matches()) return null;
+        }
+        // Hosts on our own zone must use the tenant= flow — never return_host.
+        if (host.equals(rootDomain) || host.endsWith("." + rootDomain)) return null;
+        if (tenantConfigService.findActiveByCustomDomain(host).isEmpty()) return null;
+        return host;
     }
 }

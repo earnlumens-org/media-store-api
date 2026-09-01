@@ -10,13 +10,15 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for {@link TenantResolver}: subdomain parsing, reserved-words
- * denylist, RFC-1123 regex, ACTIVE-tenant gating.
+ * denylist, RFC-1123 regex, ACTIVE-tenant gating, custom-domain resolution
+ * (custom-domain-upgrade 3.1: hit ⇒ tenant, miss ⇒ null — no default fallback).
  */
 class TenantResolverTest {
 
@@ -29,6 +31,8 @@ class TenantResolverTest {
         resolver = new TenantResolver(tenantConfigService);
         ReflectionTestUtils.setField(resolver, "rootDomain", "earnlumens.org");
         lenient().when(tenantConfigService.findActiveBySubdomain(org.mockito.ArgumentMatchers.anyString()))
+                .thenReturn(Optional.empty());
+        lenient().when(tenantConfigService.findActiveByCustomDomain(org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(Optional.empty());
     }
 
@@ -90,9 +94,38 @@ class TenantResolverTest {
     }
 
     @Test
-    void customDomain_returnsDefault() {
-        // Third-party host, not under root — we cannot infer the tenant yet.
-        assertEquals("earnlumens", resolver.resolve(req("my-store.example.com")));
+    void customDomainActive_returnsTenant() {
+        when(tenantConfigService.findActiveByCustomDomain("my-store.example.com"))
+                .thenReturn(Optional.of(activeTenant("alice")));
+        assertEquals("alice", resolver.resolve(req("my-store.example.com")));
+    }
+
+    @Test
+    void customDomainUnknown_returnsNull() {
+        // Unknown third-party host must NOT fall back to the default tenant.
+        assertNull(resolver.resolve(req("my-store.example.com")));
+    }
+
+    @Test
+    void customDomainNotServable_returnsNull() {
+        // Pending/suspended/plan-expired domains: findActiveByCustomDomain
+        // already filters them out, so the resolver sees empty ⇒ no tenant.
+        when(tenantConfigService.findActiveByCustomDomain("pending.example.com"))
+                .thenReturn(Optional.empty());
+        assertNull(resolver.resolve(req("pending.example.com")));
+    }
+
+    @Test
+    void customDomainMixedCase_isLowercased() {
+        when(tenantConfigService.findActiveByCustomDomain("my-store.example.com"))
+                .thenReturn(Optional.of(activeTenant("alice")));
+        assertEquals("alice", resolver.resolve(req("My-Store.EXAMPLE.com")));
+    }
+
+    @Test
+    void cloudRunHost_returnsDefault() {
+        // Health probes / internal jobs hit .run.app directly — keep default.
+        assertEquals("earnlumens", resolver.resolve(req("media-store-api-owuexaao5a-ew.a.run.app")));
     }
 
     @Test

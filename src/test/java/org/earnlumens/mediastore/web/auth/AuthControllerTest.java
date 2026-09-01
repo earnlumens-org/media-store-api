@@ -240,6 +240,47 @@ class AuthControllerTest {
     }
 
     @Test
+    void refreshAccessToken_onCustomDomainOfSameTenant_succeeds() throws Exception {
+        // Custom-domain-upgrade 3.4: a request arriving via a custom domain
+        // resolves (through TenantResolver/TenantFilter) to the SAME canonical
+        // tenantId as the subdomain. A cookie minted on the subdomain and
+        // replayed on the tenant's own domain therefore refreshes fine — the
+        // tenant_id claim does not change. Browsers never send it cross-host
+        // anyway (host-only + SameSite=Strict); this asserts the server-side
+        // invariant.
+        TenantContext.set("acme"); // as resolved from acme's ACTIVE custom domain
+        Claims claims = mock(Claims.class);
+
+        when(jwtUtils.validateJwtToken("refresh.jwt")).thenReturn(true);
+        when(jwtUtils.getAllClaimsFromToken("refresh.jwt")).thenReturn(claims);
+        when(jwtUtils.getTenantIdFromClaims(claims)).thenReturn("acme");
+        when(jwtUtils.generateAccessTokenFromClaims(eq(claims), any())).thenReturn("new.access.jwt");
+
+        mockMvc.perform(post("/api/auth/refresh").cookie(new Cookie("_rFTo", "refresh.jwt")))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.accessToken").value("new.access.jwt"));
+    }
+
+    @Test
+    void refreshAccessToken_onCustomDomainOfOtherTenant_returns401() throws Exception {
+        // Custom-domain-upgrade 3.4: a cookie replayed against a custom domain
+        // that resolves to a DIFFERENT tenant must be refused (same tenant_id
+        // pinning that already protects subdomains).
+        TenantContext.set("bob"); // as resolved from bob's ACTIVE custom domain
+        Claims claims = mock(Claims.class);
+
+        when(jwtUtils.validateJwtToken("refresh.jwt")).thenReturn(true);
+        when(jwtUtils.getAllClaimsFromToken("refresh.jwt")).thenReturn(claims);
+        when(jwtUtils.getTenantIdFromClaims(claims)).thenReturn("acme");
+
+        mockMvc.perform(post("/api/auth/refresh").cookie(new Cookie("_rFTo", "refresh.jwt")))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.error").value("Unauthorized"));
+
+        verify(jwtUtils, never()).generateAccessTokenFromClaims(any(), any());
+    }
+
+    @Test
     void logout_clearsCookieAndReturnsSuccess() throws Exception {
         mockMvc.perform(post("/api/auth/logout"))
                 .andExpect(status().isOk())

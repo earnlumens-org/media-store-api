@@ -42,6 +42,17 @@ public class TenantFilter extends OncePerRequestFilter {
             throws ServletException, IOException {
         try {
             String tenantId = tenantResolver.resolve(request);
+            if (tenantId == null) {
+                // Unknown/non-servable custom domain (custom-domain-upgrade 3.1).
+                // Short-circuit with a generic 404 so no downstream code ever
+                // runs without a tenant — and never against the default tenant.
+                logger.debug("No tenant for host={}, path={} — responding 404",
+                        request.getServerName(), request.getRequestURI());
+                response.setStatus(HttpServletResponse.SC_NOT_FOUND);
+                response.setContentType("application/json");
+                response.getWriter().write("{\"error\":\"tenant_not_found\"}");
+                return;
+            }
             TenantContext.set(tenantId);
             logger.trace("TenantContext set: tenant={}, path={}", tenantId, request.getRequestURI());
             filterChain.doFilter(request, response);

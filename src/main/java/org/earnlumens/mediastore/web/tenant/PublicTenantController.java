@@ -83,9 +83,26 @@ public class PublicTenantController {
 
         String suffix = "." + rootDomain;
         if (!hostname.endsWith(suffix)) {
-            // Unknown root domain (custom domain, preview deploy, etc.).
-            // Treat as platform so the SPA still renders something usable.
-            return ResponseEntity.ok(platform());
+            if (hostname.endsWith(".run.app")) {
+                // Direct Cloud Run host (probes, internal tooling) — platform.
+                return ResponseEntity.ok(platform());
+            }
+            // Custom domain (custom-domain-upgrade 3.2): serve the tenant's
+            // storefront config when the domain is verified ACTIVE and the
+            // tenant is Pro; anything else is a hard 404 (no platform fallback).
+            var byDomain = tenantConfigService.findActiveByCustomDomain(hostname);
+            if (byDomain.isEmpty()) {
+                Map<String, Object> notFound = new LinkedHashMap<>();
+                notFound.put("error", "tenant_not_found");
+                notFound.put("host", hostname);
+                return ResponseEntity.status(404).body(notFound);
+            }
+            var domainTenant = byDomain.get();
+            Map<String, Object> tenantBody = new LinkedHashMap<>();
+            tenantBody.put("kind", "tenant");
+            tenantBody.put("subdomain", domainTenant.getSubdomain());
+            applyTenantConfig(tenantBody, domainTenant, domainTenant.getSubdomain());
+            return ResponseEntity.ok(tenantBody);
         }
 
         String subdomain = hostname.substring(0, hostname.length() - suffix.length());

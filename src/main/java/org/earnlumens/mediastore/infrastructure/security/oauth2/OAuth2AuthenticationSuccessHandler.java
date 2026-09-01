@@ -45,21 +45,32 @@ public class OAuth2AuthenticationSuccessHandler implements AuthenticationSuccess
 
     /**
      * Returns the origin the SPA must land on after OAuth completes. If the
-     * resolver captured an originating tenant in the session (login came from
-     * a tenant subdomain), the user is sent back there so the {@code _rFTo}
-     * cookie subsequently emitted by {@code POST /api/auth/session} stays
-     * scoped to the right host. Otherwise we fall back to the apex SPA.
+     * resolver captured a verified custom-domain host (login came from a
+     * tenant's own domain, custom-domain-upgrade 3.3) the user is sent back
+     * there; else if it captured an originating tenant (login came from a
+     * tenant subdomain), the user is sent back to that subdomain so the
+     * {@code _rFTo} cookie subsequently emitted by {@code POST /api/auth/session}
+     * stays scoped to the right host. Otherwise we fall back to the apex SPA.
      * <p>
-     * The session attribute is consumed (removed) so a stale value cannot
-     * affect a subsequent OAuth flow on the same browser session.
+     * Both session attributes are consumed (removed) so a stale value cannot
+     * affect a subsequent OAuth flow on the same browser session. The values
+     * were validated against the database at resolve() time (return_host only
+     * matches verified-ACTIVE custom domains), so concatenation here cannot
+     * produce a redirect outside a host we serve.
      */
     private String resolveCallbackBaseUrl(HttpServletRequest request) {
         HttpSession session = request.getSession(false);
         if (session == null) {
             return frontendBaseUri;
         }
+        Object hostAttr = session.getAttribute(TenantOAuth2AuthorizationRequestResolver.RETURN_HOST_SESSION_ATTR);
+        session.removeAttribute(TenantOAuth2AuthorizationRequestResolver.RETURN_HOST_SESSION_ATTR);
         Object attr = session.getAttribute(TenantOAuth2AuthorizationRequestResolver.SESSION_ATTR);
         session.removeAttribute(TenantOAuth2AuthorizationRequestResolver.SESSION_ATTR);
+
+        if (hostAttr instanceof String returnHost && !returnHost.isBlank()) {
+            return "https://" + returnHost;
+        }
         if (!(attr instanceof String tenant) || tenant.isBlank()) {
             return frontendBaseUri;
         }
