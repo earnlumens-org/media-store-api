@@ -78,6 +78,11 @@ public class PublicCacheControlFilter extends OncePerRequestFilter {
 
     /** Edge TTL per resource family. Feeds stay short; config-like data longer. */
     private int ttlSecondsFor(String path) {
+        // PWA manifest: installed apps re-read it on launch to pick up a new
+        // name/icon, so keep it short enough that branding changes land fast.
+        if (path.startsWith("/public/tenant/manifest")) {
+            return 60;
+        }
         if (path.startsWith("/public/tenant")
                 || path.startsWith("/public/guidelines")
                 || path.startsWith("/public/franchises")

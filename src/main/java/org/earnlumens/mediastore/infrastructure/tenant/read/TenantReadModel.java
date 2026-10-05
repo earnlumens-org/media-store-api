@@ -41,6 +41,9 @@ public class TenantReadModel {
     /** Optional R2 object key for the per-tenant browser favicon. Lives under public/tenants/{subdomain}/favicon/. */
     private String faviconR2Key;
 
+    /** Optional R2 object key for the PWA app icon (512×512 PNG). Lives under public/tenants/{subdomain}/appicon/. */
+    private String pwaIconR2Key;
+
     /**
      * When {@code true} the storefront renders no text label next to the
      * logo at all (logo-only mode). Persisted alongside {@link #brandText}
@@ -159,6 +162,9 @@ public class TenantReadModel {
 
     public String getFaviconR2Key() { return faviconR2Key; }
     public void setFaviconR2Key(String faviconR2Key) { this.faviconR2Key = faviconR2Key; }
+
+    public String getPwaIconR2Key() { return pwaIconR2Key; }
+    public void setPwaIconR2Key(String pwaIconR2Key) { this.pwaIconR2Key = pwaIconR2Key; }
 
     public boolean isBrandTextHidden() { return brandTextHidden; }
     public void setBrandTextHidden(boolean brandTextHidden) { this.brandTextHidden = brandTextHidden; }

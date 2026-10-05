@@ -64,13 +64,30 @@ public class PublicTenantController {
         this.tenantConfigService = tenantConfigService;
     }
 
-    @GetMapping("/visitor")
-    public ResponseEntity<Map<String, Object>> visitor(HttpServletRequest request) {
+    /** How the visitor reached us; drives both the visitor payload and the PWA manifest. */
+    enum HostKind { PLATFORM, SUBDOMAIN, CUSTOM_DOMAIN, NOT_FOUND }
+
+    /**
+     * Result of classifying the visitor host. {@code subdomain} is the
+     * tenant slug for SUBDOMAIN/CUSTOM_DOMAIN hits and the typed label for
+     * subdomain misses; {@code tenant} is non-null only on hits.
+     */
+    record HostContext(HostKind kind, String hostname, String subdomain, TenantReadModel tenant) {
+        boolean isCustomDomain() { return kind == HostKind.CUSTOM_DOMAIN; }
+    }
+
+    /**
+     * Classifies {@code request.getServerName()} with the same rules the
+     * visitor endpoint has always used: apex/loopback/{@code .run.app}/reserved
+     * ⇒ PLATFORM; valid {@code <sub>.<root>} ⇒ SUBDOMAIN (or NOT_FOUND);
+     * anything else ⇒ CUSTOM_DOMAIN gated by {@code findActiveByCustomDomain}
+     * (or NOT_FOUND — never platform, decision #6).
+     */
+    HostContext classify(HttpServletRequest request) {
         String host = request.getServerName();
         if (host == null || host.isBlank()) {
-            return ResponseEntity.ok(platform());
+            return new HostContext(HostKind.PLATFORM, "", null, null);
         }
-
         String hostname = host.contains(":") ? host.substring(0, host.indexOf(':')) : host;
         hostname = hostname.toLowerCase();
 
@@ -78,54 +95,181 @@ public class PublicTenantController {
                 || "localhost.dv".equals(hostname)
                 || "127.0.0.1".equals(hostname)
                 || rootDomain.equals(hostname)) {
-            return ResponseEntity.ok(platform());
+            return new HostContext(HostKind.PLATFORM, hostname, null, null);
         }
 
         String suffix = "." + rootDomain;
         if (!hostname.endsWith(suffix)) {
             if (hostname.endsWith(".run.app")) {
                 // Direct Cloud Run host (probes, internal tooling) — platform.
-                return ResponseEntity.ok(platform());
+                return new HostContext(HostKind.PLATFORM, hostname, null, null);
             }
-            // Custom domain (custom-domain-upgrade 3.2): serve the tenant's
-            // storefront config when the domain is verified ACTIVE and the
-            // tenant is Pro; anything else is a hard 404 (no platform fallback).
+            // Custom domain (custom-domain-upgrade 3.2): only when the domain
+            // is verified ACTIVE and the tenant is Pro; anything else is a
+            // hard 404 (no platform fallback).
             var byDomain = tenantConfigService.findActiveByCustomDomain(hostname);
             if (byDomain.isEmpty()) {
-                Map<String, Object> notFound = new LinkedHashMap<>();
-                notFound.put("error", "tenant_not_found");
-                notFound.put("host", hostname);
-                return ResponseEntity.status(404).body(notFound);
+                return new HostContext(HostKind.NOT_FOUND, hostname, null, null);
             }
-            var domainTenant = byDomain.get();
-            Map<String, Object> tenantBody = new LinkedHashMap<>();
-            tenantBody.put("kind", "tenant");
-            tenantBody.put("subdomain", domainTenant.getSubdomain());
-            applyTenantConfig(tenantBody, domainTenant, domainTenant.getSubdomain());
-            return ResponseEntity.ok(tenantBody);
+            return new HostContext(HostKind.CUSTOM_DOMAIN, hostname, byDomain.get().getSubdomain(), byDomain.get());
         }
 
         String subdomain = hostname.substring(0, hostname.length() - suffix.length());
         if (subdomain.contains(".")
                 || RESERVED_SUBDOMAINS.contains(subdomain)
                 || !SUBDOMAIN.matcher(subdomain).matches()) {
-            return ResponseEntity.ok(platform());
+            return new HostContext(HostKind.PLATFORM, hostname, null, null);
         }
 
         var tenantOpt = tenantConfigService.findActiveBySubdomain(subdomain);
         if (tenantOpt.isEmpty()) {
-            Map<String, Object> body = new LinkedHashMap<>();
-            body.put("error", "tenant_not_found");
-            body.put("subdomain", subdomain);
-            return ResponseEntity.status(404).body(body);
+            return new HostContext(HostKind.NOT_FOUND, hostname, subdomain, null);
         }
+        return new HostContext(HostKind.SUBDOMAIN, hostname, subdomain, tenantOpt.get());
+    }
 
-        var tenant = tenantOpt.get();
+    private static ResponseEntity<Map<String, Object>> notFound(HostContext ctx) {
         Map<String, Object> body = new LinkedHashMap<>();
-        body.put("kind", "tenant");
-        body.put("subdomain", subdomain);
-        applyTenantConfig(body, tenant, subdomain);
+        body.put("error", "tenant_not_found");
+        if (ctx.subdomain() != null) {
+            body.put("subdomain", ctx.subdomain());
+        } else {
+            body.put("host", ctx.hostname());
+        }
+        return ResponseEntity.status(404).body(body);
+    }
+
+    @GetMapping("/visitor")
+    public ResponseEntity<Map<String, Object>> visitor(HttpServletRequest request) {
+        HostContext ctx = classify(request);
+        Map<String, Object> body;
+        switch (ctx.kind()) {
+            case NOT_FOUND -> {
+                return notFound(ctx);
+            }
+            case PLATFORM -> body = platform();
+            default -> {
+                body = new LinkedHashMap<>();
+                body.put("kind", "tenant");
+                body.put("subdomain", ctx.subdomain());
+                applyTenantConfig(body, ctx.tenant(), ctx.subdomain());
+            }
+        }
+        // PWA install CTA policy: offered on the platform apex and on custom
+        // domains (each is its own branded app); NOT offered on tenant
+        // subdomains so users don't collect look-alike platform-badged apps.
+        // The manifest is still served there (see /manifest), so a manual
+        // "Add to Home screen" works — just without our prompt.
+        body.put("installOffered", ctx.kind() != HostKind.SUBDOMAIN);
+        // Own PWA icon only on custom domains (same policy as /manifest): the
+        // SPA uses it for the iOS apple-touch-icon swap. Subdomains get the
+        // generic badge, so the key is deliberately not emitted there.
+        if (ctx.isCustomDomain()) {
+            String ownIcon = ctx.tenant().getPwaIconR2Key();
+            if (ownIcon != null && APPICON_KEY.matcher(ownIcon).matches()) {
+                body.put("pwaIconR2Key", ownIcon);
+            }
+        }
         return ResponseEntity.ok(body);
+    }
+
+    // ------------------------------------------------------------ PWA manifest
+
+    /** Platform-default colours; mirror media-store-ui/vite.config.mts manifest. */
+    private static final String MANIFEST_THEME_COLOR = "#10131A";
+    private static final String MANIFEST_DESCRIPTION =
+            "A collaborative financial education platform on the Stellar network";
+    private static final String PLATFORM_APP_NAME = "Earn Lumens";
+    /** Web App Manifest spec recommends ≤ 12 chars for short_name. */
+    private static final int SHORT_NAME_MAX = 12;
+    private static final int NAME_MAX = 45;
+    /** Only hostnames of this shape are echoed back into related_applications. */
+    private static final Pattern SAFE_HOSTNAME = Pattern.compile("^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$");
+    /** R2 keys we are willing to turn into a manifest icon URL (set by admin-api's presign). */
+    private static final Pattern APPICON_KEY = Pattern.compile("^public/tenants/[a-z0-9-]{3,30}/appicon/[A-Za-z0-9-]+\\.png$");
+
+    /**
+     * Per-host Web App Manifest. tenants-router rewrites
+     * {@code GET /manifest.webmanifest} to this endpoint so every origin
+     * (apex, tenant subdomain, custom domain) installs as a distinguishable
+     * app while {@code id}/{@code scope}/{@code start_url} stay relative
+     * (PWA identity is per-origin by construction):
+     * <ul>
+     *   <li>PLATFORM ⇒ the official Earn Lumens manifest.</li>
+     *   <li>SUBDOMAIN ⇒ tenant name + the generic "store on EarnLumens"
+     *       badge icon (never the tenant's own icon, never the bare
+     *       platform icon).</li>
+     *   <li>CUSTOM_DOMAIN ⇒ tenant name + its own icon when uploaded, else
+     *       the badge icon.</li>
+     *   <li>NOT_FOUND ⇒ 404 (the Worker then falls back to the static
+     *       manifest from Pages; TenantFilter normally short-circuits before).</li>
+     * </ul>
+     * Everything serialized here is either a constant, an admin-api-validated
+     * tenant field (title/brandText are length-capped and JSON-escaped by
+     * Jackson) or a regex-allowlisted key/host.
+     */
+    @GetMapping(value = "/manifest", produces = "application/manifest+json")
+    public ResponseEntity<Map<String, Object>> manifest(HttpServletRequest request) {
+        HostContext ctx = classify(request);
+        if (ctx.kind() == HostKind.NOT_FOUND) {
+            return notFound(ctx);
+        }
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", "/");
+        String name;
+        java.util.List<Map<String, Object>> icons;
+        if (ctx.kind() == HostKind.PLATFORM) {
+            name = PLATFORM_APP_NAME;
+            icons = platformIcons("/pwa/pwa-192.png", "/pwa/pwa-512.png", "/pwa/pwa-maskable-512.png");
+        } else {
+            TenantReadModel t = ctx.tenant();
+            name = firstNonBlank(t.getBrowserTitle(), t.getBrandText(), t.getTitle(), ctx.subdomain());
+            String ownIcon = ctx.isCustomDomain() ? t.getPwaIconR2Key() : null;
+            if (ownIcon != null && APPICON_KEY.matcher(ownIcon).matches()) {
+                String src = "/cdn/" + ownIcon;
+                icons = java.util.List.of(icon(src, "512x512", "any"), icon(src, "512x512", "maskable"));
+            } else {
+                icons = platformIcons("/pwa/pwa-tenant-192.png", "/pwa/pwa-tenant-512.png", "/pwa/pwa-tenant-maskable-512.png");
+            }
+        }
+        name = truncate(name.trim(), NAME_MAX);
+        m.put("name", name);
+        m.put("short_name", truncate(name, SHORT_NAME_MAX));
+        m.put("description", MANIFEST_DESCRIPTION);
+        m.put("theme_color", MANIFEST_THEME_COLOR);
+        m.put("background_color", MANIFEST_THEME_COLOR);
+        m.put("display", "standalone");
+        m.put("orientation", "portrait");
+        m.put("scope", "/");
+        m.put("start_url", "/?source=pwa");
+        if (SAFE_HOSTNAME.matcher(ctx.hostname()).matches()) {
+            m.put("related_applications", java.util.List.of(Map.of(
+                    "platform", "webapp",
+                    "url", "https://" + ctx.hostname() + "/manifest.webmanifest")));
+        }
+        m.put("icons", icons);
+        return ResponseEntity.ok(m);
+    }
+
+    private static java.util.List<Map<String, Object>> platformIcons(String s192, String s512, String maskable) {
+        return java.util.List.of(
+                icon(s192, "192x192", "any"),
+                icon(s512, "512x512", "any"),
+                icon(maskable, "512x512", "maskable"));
+    }
+
+    private static Map<String, Object> icon(String src, String sizes, String purpose) {
+        Map<String, Object> i = new LinkedHashMap<>();
+        i.put("src", src);
+        i.put("sizes", sizes);
+        i.put("type", "image/png");
+        i.put("purpose", purpose);
+        return i;
+    }
+
+    private static String truncate(String s, int max) {
+        if (s.length() <= max) return s;
+        return s.substring(0, max).trim();
     }
 
     /**
