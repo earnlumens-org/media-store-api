@@ -153,6 +153,10 @@ public class PublicTenantController {
                 body.put("kind", "tenant");
                 body.put("subdomain", ctx.subdomain());
                 applyTenantConfig(body, ctx.tenant(), ctx.subdomain());
+                // Human-readable app/store name, independent of the logo-only
+                // switch (brandText is blanked when hidden). Same chain as the
+                // manifest so the install banner and the installed app agree.
+                body.put("appName", appNameFor(ctx));
             }
         }
         // PWA install CTA policy: offered on the platform apex and on custom
@@ -223,7 +227,7 @@ public class PublicTenantController {
             icons = platformIcons("/pwa/pwa-192.png", "/pwa/pwa-512.png", "/pwa/pwa-maskable-512.png");
         } else {
             TenantReadModel t = ctx.tenant();
-            name = firstNonBlank(t.getBrowserTitle(), t.getBrandText(), t.getTitle(), ctx.subdomain());
+            name = appNameFor(ctx);
             String ownIcon = ctx.isCustomDomain() ? t.getPwaIconR2Key() : null;
             if (ownIcon != null && APPICON_KEY.matcher(ownIcon).matches()) {
                 String src = "/cdn/" + ownIcon;
@@ -239,7 +243,8 @@ public class PublicTenantController {
         m.put("theme_color", MANIFEST_THEME_COLOR);
         m.put("background_color", MANIFEST_THEME_COLOR);
         m.put("display", "standalone");
-        m.put("orientation", "portrait");
+        // No `orientation` lock: the storefront must stay readable in both
+        // portrait and landscape (video/landscape phones, tablets, desktop).
         m.put("scope", "/");
         m.put("start_url", "/?source=pwa");
         if (SAFE_HOSTNAME.matcher(ctx.hostname()).matches()) {
@@ -249,6 +254,13 @@ public class PublicTenantController {
         }
         m.put("icons", icons);
         return ResponseEntity.ok(m);
+    }
+
+    /** Tenant app/store name: browserTitle → brandText → title → subdomain (never the platform brand). */
+    private static String appNameFor(HostContext ctx) {
+        TenantReadModel t = ctx.tenant();
+        String name = firstNonBlank(t.getBrowserTitle(), t.getBrandText(), t.getTitle(), ctx.subdomain());
+        return truncate(name.trim(), NAME_MAX);
     }
 
     private static java.util.List<Map<String, Object>> platformIcons(String s192, String s512, String maskable) {

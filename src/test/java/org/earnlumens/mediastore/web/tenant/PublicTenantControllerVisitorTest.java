@@ -131,6 +131,20 @@ class PublicTenantControllerVisitorTest {
     }
 
     @Test
+    void visitor_appName_ignoresLogoOnlyMode() throws Exception {
+        // brandTextHidden blanks brandText in the payload; appName must still
+        // carry the real store name so install prompts never say "EarnLumens".
+        TenantReadModel t = tenant("alice");
+        t.setBrandText("Alice");
+        t.setBrandTextHidden(true);
+        when(tenantConfigService.findActiveByCustomDomain("shop.example.com")).thenReturn(Optional.of(t));
+        mockMvc.perform(visitor("shop.example.com"))
+                .andExpect(jsonPath("$.appName").value("Alice"));
+        mockMvc.perform(visitor("earnlumens.org"))
+                .andExpect(jsonPath("$.appName").doesNotExist());
+    }
+
+    @Test
     void visitor_pwaIconKey_onlyOnCustomDomain() throws Exception {
         TenantReadModel t = tenant("alice");
         t.setPwaIconR2Key("public/tenants/alice/appicon/abc.png");
@@ -159,6 +173,7 @@ class PublicTenantControllerVisitorTest {
                 .andExpect(jsonPath("$.id").value("/"))
                 .andExpect(jsonPath("$.scope").value("/"))
                 .andExpect(jsonPath("$.start_url").value("/?source=pwa"))
+                .andExpect(jsonPath("$.orientation").doesNotExist())
                 .andExpect(jsonPath("$.name").value("Earn Lumens"))
                 .andExpect(jsonPath("$.icons[0].src").value("/pwa/pwa-192.png"))
                 .andExpect(jsonPath("$.related_applications[0].url")
