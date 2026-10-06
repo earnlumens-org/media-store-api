@@ -171,11 +171,11 @@ class PublicTenantControllerVisitorTest {
         // brandTextHidden blanks brandText in the payload; appName must still
         // carry the real store name so install prompts never say "EarnLumens".
         TenantReadModel t = tenant("alice");
-        t.setBrandText("Alice");
+        t.setBrandText("Alice & Co");
         t.setBrandTextHidden(true);
         when(tenantConfigService.findActiveByCustomDomain("shop.example.com")).thenReturn(Optional.of(t));
         mockMvc.perform(visitor("shop.example.com"))
-                .andExpect(jsonPath("$.appName").value("Alice"));
+                .andExpect(jsonPath("$.appName").value("Alice & Co"));
         mockMvc.perform(visitor("earnlumens.org"))
                 .andExpect(jsonPath("$.appName").doesNotExist());
     }
