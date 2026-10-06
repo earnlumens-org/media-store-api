@@ -131,6 +131,40 @@ class PublicTenantControllerVisitorTest {
     }
 
     @Test
+    void appName_customDomain_usesDomainBrandWhenTitleIsJustTheSlug() throws Exception {
+        TenantReadModel t = new TenantReadModel();
+        t.setSubdomain("750");
+        t.setStatus("ACTIVE");
+        t.setTitle("750");
+        when(tenantConfigService.findActiveByCustomDomain("www.udemo.app")).thenReturn(Optional.of(t));
+        when(tenantConfigService.findActiveBySubdomain("750")).thenReturn(Optional.of(t));
+        mockMvc.perform(visitor("www.udemo.app"))
+                .andExpect(jsonPath("$.appName").value("udemo"));
+        mockMvc.perform(manifest("www.udemo.app"))
+                .andExpect(jsonPath("$.name").value("udemo"));
+        // On the subdomain there is no domain brand to fall back to: slug.
+        mockMvc.perform(manifest("750.earnlumens.org"))
+                .andExpect(jsonPath("$.name").value("750"));
+    }
+
+    @Test
+    void appName_customDomain_realTitleStillWinsOverDomain() throws Exception {
+        when(tenantConfigService.findActiveByCustomDomain("www.alicestore.com"))
+                .thenReturn(Optional.of(tenant("alice")));
+        mockMvc.perform(visitor("www.alicestore.com"))
+                .andExpect(jsonPath("$.appName").value("Alice Store"));
+    }
+
+    @Test
+    void brandLabelFromHost_handlesWwwAndMultiLabelSuffixes() {
+        org.assertj.core.api.Assertions.assertThat(PublicTenantController.brandLabelFromHost("www.udemo.app")).isEqualTo("udemo");
+        org.assertj.core.api.Assertions.assertThat(PublicTenantController.brandLabelFromHost("shop.acme.com")).isEqualTo("acme");
+        org.assertj.core.api.Assertions.assertThat(PublicTenantController.brandLabelFromHost("tienda.com.ar")).isEqualTo("tienda");
+        org.assertj.core.api.Assertions.assertThat(PublicTenantController.brandLabelFromHost("www.tienda.co.uk")).isEqualTo("tienda");
+        org.assertj.core.api.Assertions.assertThat(PublicTenantController.brandLabelFromHost("localhost")).isNull();
+    }
+
+    @Test
     void visitor_appName_ignoresLogoOnlyMode() throws Exception {
         // brandTextHidden blanks brandText in the payload; appName must still
         // carry the real store name so install prompts never say "EarnLumens".

@@ -256,11 +256,47 @@ public class PublicTenantController {
         return ResponseEntity.ok(m);
     }
 
-    /** Tenant app/store name: browserTitle → brandText → title → subdomain (never the platform brand). */
+    /**
+     * Tenant app/store name: browserTitle → brandText → title → brand label of
+     * the custom domain → subdomain. A title identical to the subdomain slug
+     * is a placeholder, not a name, so it is skipped; on a custom domain the
+     * domain the owner chose is a better brand than the slug.
+     */
     private static String appNameFor(HostContext ctx) {
         TenantReadModel t = ctx.tenant();
-        String name = firstNonBlank(t.getBrowserTitle(), t.getBrandText(), t.getTitle(), ctx.subdomain());
+        String title = t.getTitle();
+        if (title != null && title.trim().equalsIgnoreCase(ctx.subdomain())) {
+            title = null;
+        }
+        String domainLabel = ctx.isCustomDomain() ? brandLabelFromHost(ctx.hostname()) : null;
+        String name = firstNonBlank(t.getBrowserTitle(), t.getBrandText(), title, domainLabel, ctx.subdomain());
         return truncate(name.trim(), NAME_MAX);
+    }
+
+    /** Public suffixes with two labels where the brand sits one label further left. */
+    private static final Set<String> MULTI_LABEL_PUBLIC_SUFFIXES = Set.of(
+            "co.uk", "org.uk", "ac.uk", "gov.uk", "com.ar", "com.br", "com.mx", "com.au",
+            "com.co", "com.pe", "com.uy", "com.ve", "com.ec", "com.bo", "com.py", "com.tr",
+            "co.jp", "co.kr", "co.nz", "co.za", "com.es", "com.pt", "net.ar", "org.ar");
+
+    /**
+     * Brand label of a custom hostname: drops a leading {@code www.} and
+     * returns the registrable-domain label ({@code www.udemo.app} ⇒ {@code udemo},
+     * {@code shop.acme.com} ⇒ {@code acme}, {@code tienda.com.ar} ⇒ {@code tienda}).
+     * Null when the host has fewer than two labels.
+     */
+    static String brandLabelFromHost(String hostname) {
+        if (hostname == null || hostname.isBlank()) return null;
+        String host = hostname.toLowerCase();
+        if (host.startsWith("www.")) host = host.substring(4);
+        String[] labels = host.split("\\.");
+        if (labels.length < 2) return null;
+        String suffix2 = labels[labels.length - 2] + "." + labels[labels.length - 1];
+        int idx = (labels.length >= 3 && MULTI_LABEL_PUBLIC_SUFFIXES.contains(suffix2))
+                ? labels.length - 3
+                : labels.length - 2;
+        String label = labels[idx];
+        return label.isBlank() ? null : label;
     }
 
     private static java.util.List<Map<String, Object>> platformIcons(String s192, String s512, String maskable) {
