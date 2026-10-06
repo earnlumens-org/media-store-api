@@ -258,19 +258,27 @@ public class PublicTenantController {
 
     /**
      * Tenant app/store name: browserTitle → brandText → title → brand label of
-     * the custom domain → subdomain. A title identical to the subdomain slug
-     * is a placeholder, not a name, so it is skipped; on a custom domain the
-     * domain the owner chose is a better brand than the slug.
+     * the custom domain → subdomain. Any of the owner-set names that merely
+     * repeats the subdomain slug is a placeholder, not a brand, so it is
+     * skipped; on a custom domain the domain the owner chose is a better
+     * brand than the slug.
      */
     private static String appNameFor(HostContext ctx) {
         TenantReadModel t = ctx.tenant();
-        String title = t.getTitle();
-        if (title != null && title.trim().equalsIgnoreCase(ctx.subdomain())) {
-            title = null;
-        }
+        String slug = ctx.subdomain();
         String domainLabel = ctx.isCustomDomain() ? brandLabelFromHost(ctx.hostname()) : null;
-        String name = firstNonBlank(t.getBrowserTitle(), t.getBrandText(), title, domainLabel, ctx.subdomain());
+        String name = firstNonBlank(
+                unlessSlug(t.getBrowserTitle(), slug),
+                unlessSlug(t.getBrandText(), slug),
+                unlessSlug(t.getTitle(), slug),
+                domainLabel,
+                slug);
         return truncate(name.trim(), NAME_MAX);
+    }
+
+    private static String unlessSlug(String value, String slug) {
+        if (value == null || slug == null) return value;
+        return value.trim().equalsIgnoreCase(slug) ? null : value;
     }
 
     /** Public suffixes with two labels where the brand sits one label further left. */

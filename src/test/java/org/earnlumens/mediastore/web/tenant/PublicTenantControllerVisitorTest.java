@@ -136,6 +136,8 @@ class PublicTenantControllerVisitorTest {
         t.setSubdomain("750");
         t.setStatus("ACTIVE");
         t.setTitle("750");
+        t.setBrandText("750");
+        t.setBrowserTitle(" 750 ");
         when(tenantConfigService.findActiveByCustomDomain("www.udemo.app")).thenReturn(Optional.of(t));
         when(tenantConfigService.findActiveBySubdomain("750")).thenReturn(Optional.of(t));
         mockMvc.perform(visitor("www.udemo.app"))
