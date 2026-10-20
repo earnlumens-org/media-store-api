@@ -9,6 +9,7 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import java.time.LocalDateTime;
 
 @Document(collection = "assets")
+// Created explicitly by CoreIndexMigration (auto-index-creation is disabled).
 @CompoundIndex(name = "idx_tenant_entry_kind", def = "{'tenantId': 1, 'entryId': 1, 'kind': 1}")
 @CompoundIndex(name = "idx_tenant_r2key", def = "{'tenantId': 1, 'r2Key': 1}", unique = true)
 public class AssetEntity {

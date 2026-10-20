@@ -9,8 +9,13 @@ import org.springframework.data.mongodb.core.mapping.Document;
 import java.time.LocalDateTime;
 
 @Document(collection = "entitlements")
-@CompoundIndex(name = "idx_ent_tenant_user_target_entry", def = "{'tenantId': 1, 'userId': 1, 'targetType': 1, 'entryId': 1}", unique = true)
-@CompoundIndex(name = "idx_ent_tenant_user_target_coll", def = "{'tenantId': 1, 'userId': 1, 'targetType': 1, 'collectionId': 1}", unique = true)
+// All indexes below are created by CoreIndexMigration (auto-index-creation is
+// disabled). The unique indexes are PARTIAL on targetType: entryId is null on
+// every COLLECTION entitlement (and collectionId on every ENTRY one), and a
+// unique compound index treats a missing field as null, so without the filter
+// a user's second collection purchase would collide on (tenantId, userId, null).
+@CompoundIndex(name = "idx_ent_tenant_user_entry", def = "{'tenantId': 1, 'userId': 1, 'entryId': 1}", unique = true, partialFilter = "{'targetType': 'ENTRY'}")
+@CompoundIndex(name = "idx_ent_tenant_user_coll", def = "{'tenantId': 1, 'userId': 1, 'collectionId': 1}", unique = true, partialFilter = "{'targetType': 'COLLECTION'}")
 @CompoundIndex(name = "idx_tenant_entry_status", def = "{'tenantId': 1, 'entryId': 1, 'status': 1}")
 @CompoundIndex(name = "idx_ent_tenant_coll_status", def = "{'tenantId': 1, 'collectionId': 1, 'status': 1}")
 @CompoundIndex(name = "idx_tenant_user_status_granted", def = "{'tenantId': 1, 'userId': 1, 'status': 1, 'grantedAt': -1}")

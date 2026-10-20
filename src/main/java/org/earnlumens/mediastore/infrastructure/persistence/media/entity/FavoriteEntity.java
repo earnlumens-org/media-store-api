@@ -18,6 +18,7 @@ import java.time.LocalDateTime;
  * </ul>
  */
 @Document(collection = "favorites")
+// Created explicitly by CoreIndexMigration (auto-index-creation is disabled).
 @CompoundIndex(name = "idx_tenant_user_item", def = "{'tenantId': 1, 'userId': 1, 'itemId': 1}", unique = true)
 @CompoundIndex(name = "idx_tenant_user_added", def = "{'tenantId': 1, 'userId': 1, 'addedAt': -1}")
 public class FavoriteEntity {

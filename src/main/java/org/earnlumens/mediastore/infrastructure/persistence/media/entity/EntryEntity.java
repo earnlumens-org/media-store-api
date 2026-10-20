@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 
 @Document(collection = "entries")
+// Base indexes (the next five) are created explicitly by CoreIndexMigration.
 @CompoundIndex(name = "idx_tenant_id", def = "{'tenantId': 1, '_id': 1}", unique = true)
 @CompoundIndex(name = "idx_tenant_user", def = "{'tenantId': 1, 'userId': 1}")
 @CompoundIndex(name = "idx_tenant_status_published", def = "{'tenantId': 1, 'status': 1, 'publishedAt': -1}")

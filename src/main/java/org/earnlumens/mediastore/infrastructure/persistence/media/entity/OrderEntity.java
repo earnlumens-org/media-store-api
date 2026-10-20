@@ -12,8 +12,12 @@ import java.util.ArrayList;
 import java.util.List;
 
 @Document(collection = "orders")
-@CompoundIndex(name = "idx_order_tenant_user_target_entry", def = "{'tenantId': 1, 'userId': 1, 'targetType': 1, 'entryId': 1}", unique = true)
-@CompoundIndex(name = "idx_order_tenant_user_target_coll", def = "{'tenantId': 1, 'userId': 1, 'targetType': 1, 'collectionId': 1}", unique = true)
+// All indexes below are created by CoreIndexMigration (auto-index-creation is
+// disabled). The two per-target indexes are deliberately NON-unique: a user may
+// hold several orders for one target (FAILED/EXPIRED retries, repeated tips);
+// purchase idempotency is the CAS on status, not an index.
+@CompoundIndex(name = "idx_order_tenant_user_target_entry", def = "{'tenantId': 1, 'userId': 1, 'targetType': 1, 'entryId': 1}")
+@CompoundIndex(name = "idx_order_tenant_user_target_coll", def = "{'tenantId': 1, 'userId': 1, 'targetType': 1, 'collectionId': 1}")
 @CompoundIndex(name = "idx_order_tenant_entry_status", def = "{'tenantId': 1, 'entryId': 1, 'status': 1}")
 @CompoundIndex(name = "idx_order_tenant_coll_status", def = "{'tenantId': 1, 'collectionId': 1, 'status': 1}")
 @CompoundIndex(name = "idx_order_tenant_user_status_created", def = "{'tenantId': 1, 'userId': 1, 'status': 1, 'createdAt': -1}")
