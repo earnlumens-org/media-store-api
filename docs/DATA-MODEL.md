@@ -268,7 +268,9 @@ DELETED   ←── creator, from ANY status ──→ restore   restores previo
 > "existing — keep" although no code created them. Atlas was measured on
 > 2026-10-19 (R-28, plan §10.0): **none of them existed** — only the
 > `_id_` index and the ones created by the other migrations. H9 added
-> `CoreIndexMigration`; the first deploy that runs it creates them.
+> `CoreIndexMigration`; its first production run (2026-10-21, revision
+> `media-store-api-00225-wrt`) created all 27 core indexes of §2–§7, verified
+> with `getIndexes()`.
 
 ---
 
