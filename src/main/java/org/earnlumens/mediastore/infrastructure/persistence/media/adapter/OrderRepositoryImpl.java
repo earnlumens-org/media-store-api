@@ -2,6 +2,7 @@ package org.earnlumens.mediastore.infrastructure.persistence.media.adapter;
 
 import org.earnlumens.mediastore.domain.media.model.Order;
 import org.earnlumens.mediastore.domain.media.model.OrderStatus;
+import org.earnlumens.mediastore.domain.media.model.TargetType;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.OrderEntity;
 import org.earnlumens.mediastore.infrastructure.persistence.media.mapper.OrderMapper;
@@ -37,16 +38,20 @@ public class OrderRepositoryImpl implements OrderRepository {
     }
 
     @Override
-    public List<Order> findAllByTenantIdAndUserIdAndEntryId(String tenantId, String userId, String entryId) {
-        return orderMongoRepository.findByTenantIdAndUserIdAndEntryId(tenantId, userId, entryId)
+    public List<Order> findAllByTenantIdAndUserIdAndTargetTypeAndEntryId(
+            String tenantId, String userId, TargetType targetType, String entryId) {
+        return orderMongoRepository
+                .findByTenantIdAndUserIdAndTargetTypeAndEntryId(tenantId, userId, targetType.name(), entryId)
                 .stream()
                 .map(orderMapper::toModel)
                 .toList();
     }
 
     @Override
-    public List<Order> findAllByTenantIdAndUserIdAndCollectionId(String tenantId, String userId, String collectionId) {
-        return orderMongoRepository.findByTenantIdAndUserIdAndCollectionId(tenantId, userId, collectionId)
+    public List<Order> findAllByTenantIdAndUserIdAndTargetTypeAndCollectionId(
+            String tenantId, String userId, TargetType targetType, String collectionId) {
+        return orderMongoRepository
+                .findByTenantIdAndUserIdAndTargetTypeAndCollectionId(tenantId, userId, targetType.name(), collectionId)
                 .stream()
                 .map(orderMapper::toModel)
                 .toList();

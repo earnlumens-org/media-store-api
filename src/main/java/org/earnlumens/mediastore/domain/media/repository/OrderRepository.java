@@ -2,6 +2,7 @@ package org.earnlumens.mediastore.domain.media.repository;
 
 import org.earnlumens.mediastore.domain.media.model.Order;
 import org.earnlumens.mediastore.domain.media.model.OrderStatus;
+import org.earnlumens.mediastore.domain.media.model.TargetType;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -9,10 +10,17 @@ import java.util.Optional;
 
 public interface OrderRepository {
 
-    List<Order> findAllByTenantIdAndUserIdAndEntryId(String tenantId, String userId, String entryId);
+    /**
+     * Existing orders of a buyer for one entry, restricted to {@code targetType}
+     * (duplicate purchase check). The filter matters: {@code TIP} orders carry
+     * the tipped entry's id as context and must never be mistaken for purchases.
+     */
+    List<Order> findAllByTenantIdAndUserIdAndTargetTypeAndEntryId(
+            String tenantId, String userId, TargetType targetType, String entryId);
 
-    /** Find existing orders for a user+collection (duplicate purchase check) */
-    List<Order> findAllByTenantIdAndUserIdAndCollectionId(String tenantId, String userId, String collectionId);
+    /** Existing orders of a buyer for one collection, restricted to {@code targetType} (duplicate purchase check). */
+    List<Order> findAllByTenantIdAndUserIdAndTargetTypeAndCollectionId(
+            String tenantId, String userId, TargetType targetType, String collectionId);
 
     Optional<Order> findByTenantIdAndId(String tenantId, String id);
 

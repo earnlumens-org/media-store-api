@@ -10,9 +10,11 @@ import java.util.Optional;
 
 public interface OrderMongoRepository extends MongoRepository<OrderEntity, String> {
 
-    List<OrderEntity> findByTenantIdAndUserIdAndEntryId(String tenantId, String userId, String entryId);
+    List<OrderEntity> findByTenantIdAndUserIdAndTargetTypeAndEntryId(
+            String tenantId, String userId, String targetType, String entryId);
 
-    List<OrderEntity> findByTenantIdAndUserIdAndCollectionId(String tenantId, String userId, String collectionId);
+    List<OrderEntity> findByTenantIdAndUserIdAndTargetTypeAndCollectionId(
+            String tenantId, String userId, String targetType, String collectionId);
 
     List<OrderEntity> findByTenantIdAndUserIdAndStatus(String tenantId, String userId, String status);
 

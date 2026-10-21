@@ -582,19 +582,26 @@ franchise (`FRANCHISE_SELF_PURCHASE`).
 
 ### 5.3 Existing-order reconciliation at `prepare`
 
-Before creating a new order, `prepare` loads the buyer's previous orders for
-the same target and handles each by status: `COMPLETED` ⇒ self-heal a missing
-entitlement, then reject "already purchased"; live `PENDING` ⇒ **reuse** (same
-XDR); `PROCESSING`/`FAILED` ⇒ reconcile against Horizon (complete, block as
-in-flight, or expire); `EXPIRED`/`REFUNDED` ⇒ ignore.
+Before creating a new order, `prepare` loads the buyer's previous **purchase**
+orders for the same target — `{tenantId, userId, targetType, entryId}` for an
+entry, `{tenantId, userId, targetType, collectionId}` for a collection, with
+`targetType` fixed to `ENTRY` / `COLLECTION` — and handles each by status:
+`COMPLETED` ⇒ self-heal a missing entitlement, then reject "already
+purchased"; live `PENDING` ⇒ **reuse** (same XDR); `PROCESSING`/`FAILED` ⇒
+reconcile against Horizon (complete, block as in-flight, or expire);
+`EXPIRED`/`REFUNDED` ⇒ ignore.
 
-> ⚠️ **H10 — the lookup does not filter by `targetType`.** A `TIP` order on
-> the same entry/collection is therefore treated as a purchase: a completed
-> tip blocks the purchase ("already purchased" with nothing purchased) and an
-> abandoned pending tip is returned as the reusable order (the buyer signs a
-> tip believing it is a purchase). 🔜 H10 adds `targetType` to the two
-> repository queries. The pseudocode in §9.11/§9.12 is the intended
-> behaviour.
+> ✅ **H10 (2026-10-21).** The lookup filters by `targetType`
+> (`OrderRepository.findAllByTenantIdAndUserIdAndTargetTypeAndEntryId` /
+> `...AndCollectionId`, backed by the derived queries of the same name in
+> `OrderMongoRepository`, which match `idx_order_tenant_user_target_entry` /
+> `..._coll` field for field). A `TIP` order carries the tipped entry/collection
+> id **as context only** and is never seen by `processExistingOrders`: a
+> completed tip no longer blocks the purchase and an abandoned pending tip is
+> never returned as the reusable order. Before H10 the query omitted
+> `targetType` and both failures were reachable from the UI. Proven against a
+> real mongod in `OrderRepositoryImplIntegrationTest` and at the `prepare`
+> level in `PaymentServicePrepareTipIsolationTest`.
 
 ---
 
@@ -1448,7 +1455,7 @@ require(entry.isPaid && entry.status == "PUBLISHED" && entry.userId != U)
 // (⏸ pricingMode is NOT checked — D-17)
 
 // 2. Reconcile the buyer's previous orders for THIS target type (§5.3)
-//    ⚠️ today the query omits targetType and picks up TIP orders — H10
+//    ✅ H10: targetType is part of the query — TIP orders on E are never seen here
 existing = db.orders.find({ tenantId: T, userId: U, targetType: "ENTRY", entryId: E })
 processExistingOrders(existing)        // may reuse a live PENDING order or reject "already purchased"
 
@@ -1483,7 +1490,7 @@ db.entitlements.upsert(                                   // 🔜 H11 / S-06 (to
 coll = db.collections.findOne({ tenantId: T, _id: C })
 require(coll.isPaid && coll.status == "PUBLISHED" && coll.userId != U)
 
-// 2. Reconcile previous orders for THIS target type (⚠️ H10: today without targetType)
+// 2. Reconcile previous orders for THIS target type (✅ H10: targetType in the query)
 existing = db.orders.find({ tenantId: T, userId: U, targetType: "COLLECTION", collectionId: C })
 processExistingOrders(existing)
 
@@ -1512,7 +1519,7 @@ execution and acceptance criteria live there; this table is the map.
 | # | Gap | Where | Plan ref | Depends on a product decision? |
 |---|---|---|---|---|
 | ~~1~~ | ~~Core indexes exist only as annotations; unique definitions on `orders`/`entitlements` are wrong (§5, §6)~~ — ✅ closed by **H9** (`CoreIndexMigration`, corrected annotations, real-mongod test) | `*Entity`, `CoreIndexMigration` | **H9** | No |
-| 2 | `prepare` treats `TIP` orders as purchases (§5.3) | `OrderMongoRepository`, `OrderRepositoryImpl` | **H10** | No |
+| ~~2~~ | ~~`prepare` treats `TIP` orders as purchases (§5.3)~~ — ✅ closed by **H10** (`targetType` in the previous-order lookups, real-mongod + `prepare`-level tests) | `OrderRepository`, `OrderMongoRepository`, `OrderRepositoryImpl`, `PaymentService.prepare` | **H10** | No |
 | 3 | Re-purchase after `REVOKED` silently fails (§6) | `PaymentService.createEntitlement` → upsert | **H11** / S-06 | No |
 | 4 | CDN ignores entry status; UI hides buyers in `IN_REVIEW`/`REJECTED`/`SUSPENDED`; free content served in any status; three denials collapsed into one | new `ContentAccessPolicy` used by `MediaEntitlementService` + `PublicEntryService` | **H3** (D-01, D-19, S-03) | Resolved (D-19) |
 | 5 | No `moderationBlock`, `moderation_cases`, `disputes`; takedown = status change | entities + new collections + admin-api moderation | **H3** (D-09, D-13, D-15, D-16) | Resolved |
@@ -1582,7 +1589,7 @@ on-chain change (D-03).
 ### 🔜 Planned — owned by `MYCELIUM-RESILIENCE.md` (in execution order)
 
 - [x] **H9** — real Atlas indexes recorded (plan §10.0: none of the core indexes existed); `CoreIndexMigration`; non-unique order indexes; partial unique entitlement indexes; aligned annotations; `CoreIndexMigrationIntegrationTest` (embedded real mongod, no Docker)
-- [ ] **H10** — `targetType` filter in previous-order lookups; tip-then-buy tests
+- [x] **H10** — `targetType` filter in previous-order lookups (`OrderRepository` → `OrderMongoRepository` → `OrderRepositoryImpl` → `PaymentService.prepare`); `PaymentServicePrepareTipIsolationTest` (tip-then-buy, pending-tip-then-buy, purchase regressions) + `OrderRepositoryImplIntegrationTest` (embedded real mongod)
 - [ ] **N10** — this document's factual sync (done in this revision; keep it true)
 - [ ] **H3 + N9** — `ContentAccessPolicy` (§8.3) in CDN and UI; `moderationBlock`; `moderation_cases`; `disputes` trigger with union of access paths; `pendingVersion` staging; free-content rule (D-19); edge-cache invalidation; buyer-facing denial messages
 - [ ] **H8 + N8** — repository "latest READY FULL"; 409 gate on FULL outside the versioned path; `versions[]` / `currentVersion`; `version_choices` collection + unique index; per-entry update / undo; computed purchased version; change summary; "absent = v1"; no GC

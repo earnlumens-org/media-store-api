@@ -5,6 +5,7 @@ import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
 import org.earnlumens.mediastore.domain.media.model.SplitRole;
+import org.earnlumens.mediastore.domain.media.model.TargetType;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.earnlumens.mediastore.infrastructure.franchise.read.FranchiseReadModel;
@@ -61,7 +62,7 @@ class PaymentServicePrepareFranchiseTest {
         entry.setPaymentSplits(List.of(
                 new PaymentSplit("G" + "S".repeat(55), SplitRole.SELLER, new BigDecimal("90.00"))));
         when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(entry));
-        when(orderRepository.findAllByTenantIdAndUserIdAndEntryId(TENANT, BUYER, ENTRY_ID))
+        when(orderRepository.findAllByTenantIdAndUserIdAndTargetTypeAndEntryId(TENANT, BUYER, TargetType.ENTRY, ENTRY_ID))
                 .thenReturn(List.of());
     }
 

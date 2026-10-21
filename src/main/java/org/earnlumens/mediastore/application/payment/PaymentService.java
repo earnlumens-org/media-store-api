@@ -194,9 +194,10 @@ public class PaymentService {
                 }
             }
 
-            // Check for existing orders
-            List<Order> existingOrders = orderRepository.findAllByTenantIdAndUserIdAndCollectionId(
-                    tenantId, userId, collectionId);
+            // Check for existing PURCHASE orders only — TIP orders on the same
+            // collection are context, not purchases (H10).
+            List<Order> existingOrders = orderRepository.findAllByTenantIdAndUserIdAndTargetTypeAndCollectionId(
+                    tenantId, userId, TargetType.COLLECTION, collectionId);
             Order reusableOrder = processExistingOrders(existingOrders);
             if (reusableOrder != null) {
                 return toResponse(reusableOrder);
@@ -248,9 +249,10 @@ public class PaymentService {
                 }
             }
 
-            // Check for existing orders
-            List<Order> existingOrders = orderRepository.findAllByTenantIdAndUserIdAndEntryId(
-                    tenantId, userId, entryId);
+            // Check for existing PURCHASE orders only — TIP orders on the same
+            // entry are context, not purchases (H10).
+            List<Order> existingOrders = orderRepository.findAllByTenantIdAndUserIdAndTargetTypeAndEntryId(
+                    tenantId, userId, TargetType.ENTRY, entryId);
             Order reusableOrder = processExistingOrders(existingOrders);
             if (reusableOrder != null) {
                 return toResponse(reusableOrder);
