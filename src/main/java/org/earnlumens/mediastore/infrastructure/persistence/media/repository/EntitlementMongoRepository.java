@@ -37,4 +37,10 @@ public interface EntitlementMongoRepository extends MongoRepository<EntitlementE
      * whose entitlement was never created (crash between completion and grant).
      */
     List<EntitlementEntity> findByOrderIdIn(java.util.Collection<String> orderIds);
+
+    List<EntitlementEntity> findByTenantIdAndTargetTypeAndEntryIdAndGrantTypeAndStatus(
+            String tenantId, String targetType, String entryId, String grantType, String status);
+
+    List<EntitlementEntity> findByTenantIdAndTargetTypeAndCollectionIdInAndGrantTypeAndStatus(
+            String tenantId, String targetType, List<String> collectionIds, String grantType, String status);
 }

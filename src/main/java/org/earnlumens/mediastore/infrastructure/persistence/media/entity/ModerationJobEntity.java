@@ -79,6 +79,9 @@ public class ModerationJobEntity {
     @LastModifiedDate
     private LocalDateTime updatedAt;
 
+    /** CONTENT | PENDING_VERSION (S-05 / N9); null on legacy jobs = CONTENT. */
+    private String scope;
+
     // ── Getters / Setters ──────────────────────────────────────
 
     public String getId() { return id; }
@@ -167,4 +170,7 @@ public class ModerationJobEntity {
 
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+
+    public String getScope() { return scope; }
+    public void setScope(String scope) { this.scope = scope; }
 }

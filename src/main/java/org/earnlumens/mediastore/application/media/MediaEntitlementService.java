@@ -3,26 +3,15 @@ package org.earnlumens.mediastore.application.media;
 import org.earnlumens.mediastore.domain.media.dto.response.MediaEntitlementResponse;
 import org.earnlumens.mediastore.domain.media.model.Asset;
 import org.earnlumens.mediastore.domain.media.model.AssetStatus;
-import org.earnlumens.mediastore.domain.media.model.Collection;
-import org.earnlumens.mediastore.domain.media.model.CollectionStatus;
-import org.earnlumens.mediastore.domain.media.model.Entitlement;
 import org.earnlumens.mediastore.domain.media.model.Entry;
-import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
-import org.earnlumens.mediastore.domain.media.model.GrantType;
 import org.earnlumens.mediastore.domain.media.model.MediaKind;
-import org.earnlumens.mediastore.domain.media.model.Order;
-import org.earnlumens.mediastore.domain.media.model.OrderStatus;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
-import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
-import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
-import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.util.List;
 import java.util.Optional;
 
 @Service
@@ -30,33 +19,32 @@ public class MediaEntitlementService {
 
     private static final Logger logger = LoggerFactory.getLogger(MediaEntitlementService.class);
 
+    /** Outcome of a CDN entitlement check: the decision plus, when allowed, the asset to serve. */
+    public record Check(AccessDecision decision, Optional<MediaEntitlementResponse> response) {
+        static Check denied(AccessDecision decision) { return new Check(decision, Optional.empty()); }
+    }
+
     private final EntryRepository entryRepository;
-    private final EntitlementRepository entitlementRepository;
     private final AssetRepository assetRepository;
-    private final CollectionRepository collectionRepository;
-    private final OrderRepository orderRepository;
+    private final ContentAccessPolicy accessPolicy;
 
     public MediaEntitlementService(EntryRepository entryRepository,
-                                   EntitlementRepository entitlementRepository,
                                    AssetRepository assetRepository,
-                                   CollectionRepository collectionRepository,
-                                   OrderRepository orderRepository) {
+                                   ContentAccessPolicy accessPolicy) {
         this.entryRepository = entryRepository;
-        this.entitlementRepository = entitlementRepository;
         this.assetRepository = assetRepository;
-        this.collectionRepository = collectionRepository;
-        this.orderRepository = orderRepository;
+        this.accessPolicy = accessPolicy;
     }
 
     /**
      * Checks whether a user is entitled to access a media entry's full asset.
      * <p>
-     * Access rules (evaluated in order):
-     * <ol>
-     *   <li>Free content ({@code isPaid = false}) is accessible to anyone (including unauthenticated)</li>
-     *   <li>Owner always has access</li>
-     *   <li>Paid content requires an ACTIVE entitlement (purchase)</li>
-     * </ol>
+     * The decision is delegated to {@link ContentAccessPolicy} — the same
+     * rule the public detail page applies (H3: the CDN is never more
+     * permissive than the UI). In short: a moderation block denies everyone;
+     * the owner always passes; free content is served only while publicly
+     * visible (D-19); paid content needs an ACTIVE entitlement backed by a
+     * COMPLETED order, in any status the creator or a review can set.
      *
      * @param tenantId the tenant identifier
      * @param userId   the requesting user's OAuth user ID (JWT subject), or {@code null} if unauthenticated
@@ -64,100 +52,29 @@ public class MediaEntitlementService {
      * @return the entitlement response if allowed, empty otherwise
      */
     public Optional<MediaEntitlementResponse> checkEntitlement(String tenantId, String userId, String entryId) {
+        return check(tenantId, userId, entryId).response();
+    }
+
+    /** Same as {@link #checkEntitlement} but also exposes the denial reason. */
+    public Check check(String tenantId, String userId, String entryId) {
         Optional<Entry> optEntry = entryRepository.findByTenantIdAndId(tenantId, entryId);
         if (optEntry.isEmpty()) {
             logger.debug("Entry not found: tenantId={}, entryId={}", tenantId, entryId);
-            return Optional.empty();
+            return Check.denied(AccessDecision.DENIED_HIDDEN);
         }
 
         Entry entry = optEntry.get();
-
-        // Free content is accessible to anyone (including unauthenticated users)
-        if (!entry.isPaid()) {
-            logger.debug("Access granted (free content): userId={}, entryId={}", userId, entryId);
-            return buildAssetResponse(tenantId, entry);
+        ContentAccessPolicy.Result result = accessPolicy.evaluate(tenantId, entry, userId);
+        if (!result.allowed()) {
+            logger.debug("Access denied ({}): tenantId={}, userId={}, entryId={}, status={}",
+                    result.decision(), tenantId, userId, entryId, entry.getStatus());
+            return Check.denied(result.decision());
         }
 
-        // Paid content requires authentication
-        if (userId == null) {
-            logger.debug("Access denied (unauthenticated, paid content): entryId={}", entryId);
-            return Optional.empty();
-        }
-
-        // Owner always has access
-        if (userId.equals(entry.getUserId())) {
-            logger.debug("Access granted (owner): userId={}, entryId={}", userId, entryId);
-            return buildAssetResponse(tenantId, entry);
-        }
-
-        // Paid content requires an active entitlement (purchase), and the
-        // entitlement itself must be backed by a server-confirmed COMPLETED order.
-        Optional<Entitlement> entryEntitlement = entitlementRepository
-                .findByTenantIdAndUserIdAndEntryIdAndStatus(tenantId, userId, entryId, EntitlementStatus.ACTIVE);
-
-        if (entryEntitlement.isPresent() && isBackedByCompletedOrder(entryEntitlement.get())) {
-            logger.debug("Access granted (entry entitlement): userId={}, entryId={}", userId, entryId);
-            return buildAssetResponse(tenantId, entry);
-        }
-
-        // Check collection-level access: find PUBLISHED collections containing this entry,
-        // then check if the user has an ACTIVE collection entitlement for any of them.
-        List<Collection> parentCollections = collectionRepository
-                .findByTenantIdAndStatusAndItemsEntryId(tenantId, CollectionStatus.PUBLISHED, entryId);
-
-        if (!parentCollections.isEmpty()) {
-            List<String> collIds = parentCollections.stream()
-                    .filter(Collection::isPaid)
-                    .map(Collection::getId)
-                    .toList();
-
-            if (!collIds.isEmpty()) {
-                List<Entitlement> collEntitlements = entitlementRepository
-                        .findByTenantIdAndUserIdAndCollectionIdsAndStatus(
-                                tenantId, userId, collIds, EntitlementStatus.ACTIVE);
-
-                boolean entitledViaCollection = collEntitlements.stream()
-                        .anyMatch(this::isBackedByCompletedOrder);
-
-                if (entitledViaCollection) {
-                    logger.debug("Access granted (collection entitlement): userId={}, entryId={}",
-                            userId, entryId);
-                    return buildAssetResponse(tenantId, entry);
-                }
-            }
-        }
-
-        logger.debug("Access denied (no entitlement): tenantId={}, userId={}, entryId={}", tenantId, userId, entryId);
-        return Optional.empty();
-    }
-
-    /**
-     * Defense in depth for unlock endpoints: a PURCHASE entitlement only grants
-     * access if its backing order is COMPLETED with an on-chain tx hash recorded.
-     * An entitlement that somehow exists without a confirmed payment never
-     * releases content. Non-purchase grants (e.g. promotional) pass through.
-     */
-    private boolean isBackedByCompletedOrder(Entitlement entitlement) {
-        if (entitlement.getGrantType() != GrantType.PURCHASE) {
-            return true;
-        }
-        if (entitlement.getOrderId() == null) {
-            logger.warn("PURCHASE entitlement without orderId — denying access: entitlementId={}",
-                    entitlement.getId());
-            return false;
-        }
-        Optional<Order> order = orderRepository.findByTenantIdAndId(
-                entitlement.getTenantId(), entitlement.getOrderId());
-        boolean valid = order.isPresent()
-                && order.get().getStatus() == OrderStatus.COMPLETED
-                && order.get().getStellarTxHash() != null;
-        if (!valid) {
-            logger.warn("PURCHASE entitlement not backed by a confirmed COMPLETED order — denying access: "
-                            + "entitlementId={}, orderId={}, orderStatus={}",
-                    entitlement.getId(), entitlement.getOrderId(),
-                    order.map(o -> o.getStatus().name()).orElse("MISSING"));
-        }
-        return valid;
+        logger.debug("Access granted ({}): userId={}, entryId={}",
+                result.owner() ? "owner" : result.entitled() ? "entitlement" : "public", userId, entryId);
+        Optional<MediaEntitlementResponse> response = buildAssetResponse(tenantId, entry);
+        return new Check(response.isPresent() ? AccessDecision.ALLOWED : AccessDecision.DENIED_HIDDEN, response);
     }
 
     private Optional<MediaEntitlementResponse> buildAssetResponse(String tenantId, Entry entry) {

@@ -50,6 +50,8 @@ public class ModerationJobService {
     private final ModerationDispatchPort dispatchPort;
     private final TranscodingJobService transcodingJobService;
     private final ThumbnailJobService thumbnailJobService;
+    private final ContentVersionService contentVersionService;
+    private final ContentModerationService contentModerationService;
     private final Executor dispatchExecutor;
 
     public ModerationJobService(ModerationJobRepository jobRepository,
@@ -60,6 +62,8 @@ public class ModerationJobService {
                                  ModerationDispatchPort dispatchPort,
                                  TranscodingJobService transcodingJobService,
                                  ThumbnailJobService thumbnailJobService,
+                                 ContentVersionService contentVersionService,
+                                 ContentModerationService contentModerationService,
                                  @Qualifier("moderationDispatchExecutor") Executor dispatchExecutor) {
         this.jobRepository = jobRepository;
         this.entryRepository = entryRepository;
@@ -69,6 +73,8 @@ public class ModerationJobService {
         this.dispatchPort = dispatchPort;
         this.transcodingJobService = transcodingJobService;
         this.thumbnailJobService = thumbnailJobService;
+        this.contentVersionService = contentVersionService;
+        this.contentModerationService = contentModerationService;
         this.dispatchExecutor = dispatchExecutor;
     }
 
@@ -323,9 +329,11 @@ public class ModerationJobService {
         // Source-of-truth rule: the moderation pipeline overrides the
         // user-declared default whenever it has a verdict. We skip on
         // REJECT (the entry will not be public anyway) and on null
-        // (no signal — keep the user's default for human review).
+        // (no signal — keep the user's default for human review). A
+        // pending-version job never writes the live document (N9).
         if (detectedLanguage != null && !detectedLanguage.isBlank()
-                && moderationDecision != ModerationDecision.REJECT) {
+                && moderationDecision != ModerationDecision.REJECT
+                && !job.isPendingVersionScope()) {
             applyDetectedLanguage(job, detectedLanguage);
         }
 
@@ -372,14 +380,35 @@ public class ModerationJobService {
 
     /**
      * On approval: transition entry to APPROVED and create a TranscodingJob for videos.
+     * A {@link ModerationScope#PENDING_VERSION} job instead projects the
+     * staged edit onto the published entry (N9); the status never changes.
      */
     private void handleApproval(ModerationJob job) {
         if (job.getEntryType() == EntryType.COLLECTION) {
             handleCollectionApproval(job);
             return;
         }
+        if (job.isPendingVersionScope()) {
+            entryRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId())
+                    .ifPresent(entry -> {
+                        if (!isSlotOf(entry, job)) {
+                            logger.info("moderation: pending-version job {} no longer matches the slot of entry {} — ignored",
+                                    job.getId(), entry.getId());
+                            return;
+                        }
+                        contentVersionService.applyPendingVersion(job.getTenantId(), entry);
+                    });
+            return;
+        }
         entryRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId())
                 .ifPresent(entry -> {
+                    if (entry.isBlocked()) {
+                        // An automatic approval never lifts a moderation block (H3):
+                        // reinstatement is an explicit moderator action.
+                        logger.warn("moderation: entry {} approved by the pipeline but under block (case={}) — status left as is",
+                                entry.getId(), entry.getModerationBlock().getCaseId());
+                        return;
+                    }
                     EntryStatus previous = entry.getStatus();
                     entry.setStatus(EntryStatus.APPROVED);
                     entry.getStatusHistory().add(
@@ -511,6 +540,18 @@ public class ModerationJobService {
                 entry.getId(), asset.getId());
     }
 
+    /**
+     * Rejection with the scope inferred from the moderated object (S-05 / D-13):
+     * <ul>
+     *   <li>{@code PENDING_VERSION} → {@code CHANGES_REJECTED}: the slot is
+     *       discarded, nothing visible changes, no dispute. If the classifier
+     *       flagged an illegal / high-severity category, the live content gets
+     *       a {@code PREVENTIVE} block until a human reviews it (R-21).</li>
+     *   <li>{@code CONTENT} of an entry that was live → {@code CONTENT_TAKEDOWN}:
+     *       status REJECTED plus block, case and disputes for its buyers.</li>
+     *   <li>{@code CONTENT} never published → plain REJECTED, as before.</li>
+     * </ul>
+     */
     private void handleRejection(ModerationJob job) {
         if (job.getEntryType() == EntryType.COLLECTION) {
             handleCollectionRejection(job);
@@ -518,6 +559,25 @@ public class ModerationJobService {
         }
         entryRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId())
                 .ifPresent(entry -> {
+                    if (job.isPendingVersionScope()) {
+                        if (!isSlotOf(entry, job)) {
+                            logger.info("moderation: pending-version job {} no longer matches the slot of entry {} — ignored",
+                                    job.getId(), entry.getId());
+                            return;
+                        }
+                        Entry saved = contentVersionService.rejectPendingVersion(
+                                job.getTenantId(), entry, job.getDecisionReason());
+                        if (hasHighSeverityCategory(job.getCategoriesDetected())) {
+                            contentModerationService.preventiveBlockEntry(job.getTenantId(), saved,
+                                    "Illegal or high-severity content detected in a pending edit: "
+                                            + job.getDecisionReason(),
+                                    ContentModerationService.SYSTEM_ACTOR);
+                        }
+                        return;
+                    }
+
+                    boolean wasLive = ContentAccessPolicy.isPubliclyVisible(entry.getStatus())
+                            || ContentAccessPolicy.isPubliclyVisible(entry.getPreviousStatus());
                     EntryStatus previous = entry.getStatus();
                     entry.setStatus(EntryStatus.REJECTED);
                     entry.setModerationFeedback(job.getDecisionReason());
@@ -527,7 +587,31 @@ public class ModerationJobService {
                     entryRepository.save(entry);
                     logger.info("moderation: entry {} rejected — status=REJECTED, reason={}",
                             entry.getId(), job.getDecisionReason());
+
+                    if (wasLive) {
+                        contentModerationService.blockRejectedLiveEntry(job.getTenantId(), entry,
+                                job.getDecisionReason(), ContentModerationService.SYSTEM_ACTOR);
+                    }
                 });
+    }
+
+    /** Categories the classifier may return that mean illegal / high-severity content (R-21). */
+    static final java.util.Set<String> HIGH_SEVERITY_CATEGORIES = java.util.Set.of(
+            "CSAM", "ILLEGAL", "SELF_HARM", "VIOLENCE", "EXTREME_VIOLENCE",
+            "SCAM", "CRYPTO_SCAM", "PHISHING", "MALWARE", "DOXXING", "PERSONAL_INFO");
+
+    static boolean hasHighSeverityCategory(List<String> categories) {
+        return categories != null && categories.stream()
+                .filter(c -> c != null)
+                .map(c -> c.trim().toUpperCase())
+                .anyMatch(HIGH_SEVERITY_CATEGORIES::contains);
+    }
+
+    /** A pending-version job acts only on the slot it was created for. */
+    private static boolean isSlotOf(Entry entry, ModerationJob job) {
+        return entry.getPendingVersion() != null
+                && (entry.getPendingVersion().getModerationJobId() == null
+                    || entry.getPendingVersion().getModerationJobId().equals(job.getId()));
     }
 
     private void handleCollectionRejection(ModerationJob job) {

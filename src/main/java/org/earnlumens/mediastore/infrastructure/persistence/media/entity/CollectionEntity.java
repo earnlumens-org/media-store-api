@@ -97,6 +97,9 @@ public class CollectionEntity {
 
     private LocalDateTime publishedAt;
 
+    /** Non-null ⇒ blocked for everyone (H3 / S-03). */
+    private ModerationBlockEmbeddable moderationBlock;
+
     public CollectionEntity() {}
 
     public String getId() { return id; }
@@ -176,4 +179,7 @@ public class CollectionEntity {
 
     public LocalDateTime getPublishedAt() { return publishedAt; }
     public void setPublishedAt(LocalDateTime publishedAt) { this.publishedAt = publishedAt; }
+
+    public ModerationBlockEmbeddable getModerationBlock() { return moderationBlock; }
+    public void setModerationBlock(ModerationBlockEmbeddable moderationBlock) { this.moderationBlock = moderationBlock; }
 }

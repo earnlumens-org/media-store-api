@@ -486,6 +486,11 @@ public class CollectionService {
         Collection collection = opt.get();
         boolean isOwner = userId != null && userId.equals(collection.getUserId());
 
+        // H3: a moderation block hides the collection from everyone, owner included
+        if (collection.isBlocked()) {
+            return Optional.empty();
+        }
+
         // Non-owner can only see published collections
         if (!isOwner && collection.getStatus() != CollectionStatus.PUBLISHED) {
             return Optional.empty();
@@ -553,7 +558,8 @@ public class CollectionService {
                             entry.getPriceXlm(),
                             entryLocked,
                             entryUnlocked,
-                            entry.getThumbnailVariantsPrefix()
+                            entry.getThumbnailVariantsPrefix(),
+                            entry.isBlocked()
                     );
                 })
                 .toList();
@@ -582,6 +588,13 @@ public class CollectionService {
                 entryItems,
                 collection.getCoverVariantsPrefix()
         ));
+    }
+
+    /** True when the collection exists and is under a moderation block (H3). */
+    public boolean isBlocked(String tenantId, String collectionId) {
+        return collectionRepository.findByTenantIdAndId(tenantId, collectionId)
+                .map(Collection::isBlocked)
+                .orElse(false);
     }
 
     /** Find purchasable collections containing a specific entry (for COLLECTION_ONLY entries) */

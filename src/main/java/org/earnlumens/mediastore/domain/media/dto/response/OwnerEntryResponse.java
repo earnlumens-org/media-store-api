@@ -41,5 +41,11 @@ public record OwnerEntryResponse(
         /** Original First: true when this entry was detected as a duplicate of another user's upload. */
         boolean remix,
         /** Original First royalty on remix sales (5–50). */
-        BigDecimal remixRoyaltyPercent
+        BigDecimal remixRoyaltyPercent,
+        /** A staged edit is awaiting moderation (N9); the live fields above are the approved ones. */
+        boolean hasPendingVersion,
+        /** Parts of the pending edit (TITLE, DESCRIPTION, THUMBNAIL, …); empty when none. */
+        java.util.List<String> pendingChanges,
+        /** Content is under a moderation block (H3). */
+        boolean blocked
 ) {}

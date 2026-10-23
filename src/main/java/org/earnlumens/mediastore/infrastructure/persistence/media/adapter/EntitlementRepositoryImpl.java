@@ -2,6 +2,7 @@ package org.earnlumens.mediastore.infrastructure.persistence.media.adapter;
 
 import org.earnlumens.mediastore.domain.media.model.Entitlement;
 import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
+import org.earnlumens.mediastore.domain.media.model.GrantType;
 import org.earnlumens.mediastore.domain.media.model.TargetType;
 import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.EntitlementEntity;
@@ -129,6 +130,31 @@ public class EntitlementRepositoryImpl implements EntitlementRepository {
                 .map(EntitlementEntity::getCollectionId)
                 .filter(id -> id != null)
                 .collect(Collectors.toSet());
+    }
+
+    @Override
+    public List<Entitlement> findActivePurchasesByEntryId(String tenantId, String entryId) {
+        return entitlementMongoRepository
+                .findByTenantIdAndTargetTypeAndEntryIdAndGrantTypeAndStatus(
+                        tenantId, TargetType.ENTRY.name(), entryId,
+                        GrantType.PURCHASE.name(), EntitlementStatus.ACTIVE.name())
+                .stream()
+                .map(entitlementMapper::toModel)
+                .toList();
+    }
+
+    @Override
+    public List<Entitlement> findActivePurchasesByCollectionIds(String tenantId, List<String> collectionIds) {
+        if (collectionIds.isEmpty()) {
+            return List.of();
+        }
+        return entitlementMongoRepository
+                .findByTenantIdAndTargetTypeAndCollectionIdInAndGrantTypeAndStatus(
+                        tenantId, TargetType.COLLECTION.name(), collectionIds,
+                        GrantType.PURCHASE.name(), EntitlementStatus.ACTIVE.name())
+                .stream()
+                .map(entitlementMapper::toModel)
+                .toList();
     }
 
     @Override

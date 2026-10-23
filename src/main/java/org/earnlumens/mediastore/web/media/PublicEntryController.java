@@ -4,10 +4,10 @@ import jakarta.servlet.http.HttpServletRequest;
 import org.earnlumens.mediastore.application.media.PublicEntryService;
 import org.earnlumens.mediastore.application.user.UserService;
 import org.earnlumens.mediastore.domain.media.dto.response.PublicEntryPageResponse;
-import org.earnlumens.mediastore.domain.media.dto.response.PublicEntryResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PublicFeedPageResponse;
 import org.earnlumens.mediastore.domain.media.model.LanguageFilter;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantContext;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -242,17 +242,29 @@ public class PublicEntryController {
      * Returns 404 if the entry doesn't exist or is not published.
      */
     @GetMapping("/{id}")
-    public ResponseEntity<PublicEntryResponse> getPublishedEntryById(
+    public ResponseEntity<?> getPublishedEntryById(
             @PathVariable("id") String id
     ) {
         String tenantId = TenantContext.require();
-        // Pass viewer userId so ARCHIVED entries remain visible to the
-        // owner and to users who already paid for them (entry- or
-        // collection-level entitlement). Anonymous viewers still get 404.
+        // Pass viewer userId so entries the viewer bought stay reachable in
+        // any creator/review status (H3). Anonymous viewers still get 404
+        // for anything not public. A moderation takedown is reported as
+        // 451 for everyone (never a generic 404), with the buyer's open
+        // dispute reference when there is one.
         String viewerUserId = extractOptionalUserId();
-        return publicEntryService.getPublishedEntryById(tenantId, id, viewerUserId)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+        PublicEntryService.Lookup lookup = publicEntryService.lookupEntry(tenantId, id, viewerUserId);
+        if (lookup.entry().isPresent()) {
+            return ResponseEntity.ok(lookup.entry().get());
+        }
+        if (lookup.blocked()) {
+            java.util.Map<String, Object> body = new java.util.LinkedHashMap<>();
+            body.put("error", "CONTENT_BLOCKED");
+            if (lookup.disputeId() != null) {
+                body.put("disputeId", lookup.disputeId());
+            }
+            return ResponseEntity.status(HttpStatus.UNAVAILABLE_FOR_LEGAL_REASONS).body(body);
+        }
+        return ResponseEntity.notFound().build();
     }
 
     /**

@@ -5,6 +5,7 @@ import org.earnlumens.mediastore.application.media.CollectionService;
 import org.earnlumens.mediastore.domain.media.dto.response.CollectionDetailResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.CollectionPageResponse;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantResolver;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -14,6 +15,8 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import java.util.Optional;
 
 /**
  * Public (no auth required) controller for browsing published collections.
@@ -60,16 +63,23 @@ public class PublicCollectionController {
      * Optionally extracts userId from the auth context to compute locked/unlocked.
      */
     @GetMapping("/{id}")
-    public ResponseEntity<CollectionDetailResponse> getCollectionDetail(
+    public ResponseEntity<?> getCollectionDetail(
             @PathVariable("id") String id,
             HttpServletRequest request) {
 
         String tenantId = tenantResolver.resolve(request);
         String userId = extractUserIdOptional();
 
-        return collectionService.getCollectionDetail(tenantId, id, userId)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+        Optional<CollectionDetailResponse> detail = collectionService.getCollectionDetail(tenantId, id, userId);
+        if (detail.isPresent()) {
+            return ResponseEntity.ok(detail.get());
+        }
+        // A moderation takedown is never a generic 404 (H3)
+        if (collectionService.isBlocked(tenantId, id)) {
+            return ResponseEntity.status(HttpStatus.UNAVAILABLE_FOR_LEGAL_REASONS)
+                    .body(java.util.Map.of("error", "CONTENT_BLOCKED"));
+        }
+        return ResponseEntity.notFound().build();
     }
 
     /** Best-effort userId extraction — returns null if not authenticated. */

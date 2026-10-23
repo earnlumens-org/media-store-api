@@ -57,7 +57,8 @@ class MediaEntitlementServiceTest {
         when(entitlementRepository.findByTenantIdAndUserIdAndCollectionIdsAndStatus(any(), any(), any(), any()))
                 .thenReturn(List.of());
         service = new MediaEntitlementService(
-                entryRepository, entitlementRepository, assetRepository, collectionRepository, orderRepository);
+                entryRepository, assetRepository,
+                new ContentAccessPolicy(entitlementRepository, collectionRepository, orderRepository));
     }
 
     /** Stubs an ACTIVE PURCHASE entitlement backed by a confirmed COMPLETED order. */

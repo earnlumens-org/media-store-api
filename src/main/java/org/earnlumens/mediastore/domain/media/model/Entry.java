@@ -134,6 +134,17 @@ public class Entry {
     private String moderationFeedback;
     /** Chronological log of every status transition (audit trail). */
     private List<StatusChangeRecord> statusHistory = new ArrayList<>();
+    /**
+     * Non-null ⇒ blocked for everyone, all versions (H3 / S-03 / D-16). Set and
+     * cleared only by explicit moderation actions, never by status changes.
+     */
+    private ModerationBlock moderationBlock;
+    /** Staged edit awaiting moderation; the live fields stay untouched (N9). */
+    private PendingVersion pendingVersion;
+    /** Approved version the live fields project. Absent/null ≡ 1 (S-01, no backfill). */
+    private Integer currentVersion;
+    /** Approved versions, metadata only. First written when the second version is approved (S-01). */
+    private List<EntryVersion> versions = new ArrayList<>();
 
     public Entry() {}
 
@@ -288,4 +299,27 @@ public class Entry {
         return statusHistory;
     }
     public void setStatusHistory(List<StatusChangeRecord> statusHistory) { this.statusHistory = statusHistory; }
+
+    public ModerationBlock getModerationBlock() { return moderationBlock; }
+    public void setModerationBlock(ModerationBlock moderationBlock) { this.moderationBlock = moderationBlock; }
+    /** True when a moderation block is in force (denied to everyone). */
+    public boolean isBlocked() { return moderationBlock != null; }
+
+    public PendingVersion getPendingVersion() { return pendingVersion; }
+    public void setPendingVersion(PendingVersion pendingVersion) { this.pendingVersion = pendingVersion; }
+
+    public Integer getCurrentVersion() { return currentVersion; }
+    public void setCurrentVersion(Integer currentVersion) { this.currentVersion = currentVersion; }
+    /** Effective current version: "absent = v1" is the permanent rule (S-01). */
+    public int currentVersionOrOne() { return currentVersion == null ? 1 : currentVersion; }
+
+    public List<EntryVersion> getVersions() {
+        if (versions == null) {
+            versions = new ArrayList<>();
+        } else if (!(versions instanceof ArrayList)) {
+            versions = new ArrayList<>(versions);
+        }
+        return versions;
+    }
+    public void setVersions(List<EntryVersion> versions) { this.versions = versions; }
 }

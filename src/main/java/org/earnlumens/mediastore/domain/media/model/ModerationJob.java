@@ -97,9 +97,19 @@ public class ModerationJob {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
+    /**
+     * What this job reviews (S-05 / N9). Null on jobs created before the field
+     * existed, which were always about the live document → {@link ModerationScope#CONTENT}.
+     */
+    private ModerationScope scope;
+
     public ModerationJob() {}
 
     // ── Getters / Setters ──────────────────────────────────────
+
+    public ModerationScope getScope() { return scope; }
+    public void setScope(ModerationScope scope) { this.scope = scope; }
+    public boolean isPendingVersionScope() { return scope == ModerationScope.PENDING_VERSION; }
 
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }

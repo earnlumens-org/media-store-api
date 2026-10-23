@@ -41,6 +41,8 @@ public class Collection {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
     private LocalDateTime publishedAt;
+    /** Non-null ⇒ blocked for everyone (H3 / S-03). Same semantics as on {@link Entry}. */
+    private ModerationBlock moderationBlock;
 
     public Collection() {}
 
@@ -99,4 +101,7 @@ public class Collection {
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
     public LocalDateTime getPublishedAt() { return publishedAt; }
     public void setPublishedAt(LocalDateTime publishedAt) { this.publishedAt = publishedAt; }
+    public ModerationBlock getModerationBlock() { return moderationBlock; }
+    public void setModerationBlock(ModerationBlock moderationBlock) { this.moderationBlock = moderationBlock; }
+    public boolean isBlocked() { return moderationBlock != null; }
 }

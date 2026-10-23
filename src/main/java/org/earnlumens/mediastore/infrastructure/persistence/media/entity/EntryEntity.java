@@ -191,6 +191,18 @@ public class EntryEntity {
     /** Chronological log of every status transition (audit trail). */
     private List<StatusChangeRecordEntity> statusHistory = new ArrayList<>();
 
+    /** Non-null ⇒ blocked for everyone (H3 / S-03). */
+    private ModerationBlockEmbeddable moderationBlock;
+
+    /** Staged edit awaiting moderation (N9). */
+    private PendingVersionEmbeddable pendingVersion;
+
+    /** Approved version the live fields project; absent ≡ 1 (S-01). */
+    private Integer currentVersion;
+
+    /** Approved versions (metadata only, D-14). */
+    private List<EntryVersionEmbeddable> versions;
+
     public EntryEntity() {}
 
     public String getId() { return id; }
@@ -343,4 +355,16 @@ public class EntryEntity {
 
     public List<StatusChangeRecordEntity> getStatusHistory() { return statusHistory; }
     public void setStatusHistory(List<StatusChangeRecordEntity> statusHistory) { this.statusHistory = statusHistory; }
+
+    public ModerationBlockEmbeddable getModerationBlock() { return moderationBlock; }
+    public void setModerationBlock(ModerationBlockEmbeddable moderationBlock) { this.moderationBlock = moderationBlock; }
+
+    public PendingVersionEmbeddable getPendingVersion() { return pendingVersion; }
+    public void setPendingVersion(PendingVersionEmbeddable pendingVersion) { this.pendingVersion = pendingVersion; }
+
+    public Integer getCurrentVersion() { return currentVersion; }
+    public void setCurrentVersion(Integer currentVersion) { this.currentVersion = currentVersion; }
+
+    public List<EntryVersionEmbeddable> getVersions() { return versions; }
+    public void setVersions(List<EntryVersionEmbeddable> versions) { this.versions = versions; }
 }

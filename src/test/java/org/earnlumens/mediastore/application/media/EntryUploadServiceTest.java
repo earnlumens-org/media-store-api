@@ -63,6 +63,7 @@ class EntryUploadServiceTest {
     private ModerationJobService moderationJobService;
     private UserBadgeService userBadgeService;
     private org.earnlumens.mediastore.application.payment.StellarTransactionService stellarTransactionService;
+    private ContentVersionService contentVersionService;
     private EntryUploadService service;
 
     @BeforeEach
@@ -83,7 +84,8 @@ class EntryUploadServiceTest {
         platformConfig.setFeePercent(new BigDecimal("10.00"));
         stellarTransactionService = mock(org.earnlumens.mediastore.application.payment.StellarTransactionService.class);
         when(stellarTransactionService.isAccountActive(any())).thenReturn(true);
-        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, mock(org.earnlumens.mediastore.domain.media.repository.CollectionRepository.class), r2PresignedUrlService, r2StorageService, uploadSessionRepository, platformConfig, transcodingJobService, moderationJobService, userBadgeService, stellarTransactionService, mock(ContentFingerprintService.class), mock(OriginalAttributionService.class), 20, 10);
+        contentVersionService = new ContentVersionService(entryRepository, assetRepository, mock(ThumbnailJobService.class));
+        service = new EntryUploadService(entryRepository, assetRepository, userRepository, orderRepository, mock(org.earnlumens.mediastore.domain.media.repository.CollectionRepository.class), r2PresignedUrlService, r2StorageService, uploadSessionRepository, platformConfig, transcodingJobService, moderationJobService, userBadgeService, stellarTransactionService, mock(ContentFingerprintService.class), mock(OriginalAttributionService.class), contentVersionService, 20, 10);
         when(userRepository.findAllById(any())).thenReturn(java.util.List.of());
         when(transcodingJobService.getMaxRetries()).thenReturn(3);
         when(transcodingJobService.createJob(any(TranscodingJob.class)))
@@ -608,5 +610,216 @@ class EntryUploadServiceTest {
         assertTrue(result.isPresent());
         assertEquals("READY", result.get().status());
         verify(transcodingJobService, never()).createJob(any());
+    }
+
+    // ─── N9: pending-version staging on published entries ──────
+
+    private void stubReadyFullAsset() {
+        Asset full = new Asset();
+        full.setId("asset-full");
+        full.setR2Key("private/media/entry-abc/full/uuid-img.jpg");
+        full.setContentType("image/jpeg");
+        full.setFileName("img.jpg");
+        full.setKind(MediaKind.FULL);
+        full.setStatus(AssetStatus.READY);
+        when(assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(TENANT, ENTRY_ID, MediaKind.FULL, AssetStatus.UPLOADED))
+                .thenReturn(Optional.empty());
+        when(assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(TENANT, ENTRY_ID, MediaKind.FULL, AssetStatus.READY))
+                .thenReturn(Optional.of(full));
+    }
+
+    private Entry publishedEntry() {
+        Entry e = draftEntry();
+        e.setStatus(EntryStatus.PUBLISHED);
+        e.setType(EntryType.IMAGE);
+        e.setDescription("Approved description");
+        e.setThumbnailR2Key("public/media/entry-abc/thumbnail/old.jpg");
+        return e;
+    }
+
+    private org.earnlumens.mediastore.domain.media.dto.request.UpdateEntryMetadataRequest titleEdit(String title) {
+        return new org.earnlumens.mediastore.domain.media.dto.request.UpdateEntryMetadataRequest(
+                title, null, null, null, null, null, null, null, null, null, null, null);
+    }
+
+    @Test
+    void updateMetadata_published_stagesEditKeepsLiveFieldsAndStatus_createsPendingVersionJob() {
+        Entry entry = publishedEntry();
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(entry));
+        when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
+        stubReadyFullAsset();
+
+        assertTrue(service.updateEntryMetadata(TENANT, USER_ID, ENTRY_ID, titleEdit("New title")));
+
+        assertEquals("My Video", entry.getTitle());
+        assertEquals(EntryStatus.PUBLISHED, entry.getStatus());
+        assertTrue(entry.getStatusHistory().isEmpty());
+        assertNotNull(entry.getPendingVersion());
+        assertEquals("New title", entry.getPendingVersion().getTitle());
+        assertEquals("mod-job-1", entry.getPendingVersion().getModerationJobId());
+
+        org.mockito.ArgumentCaptor<ModerationJob> job = org.mockito.ArgumentCaptor.forClass(ModerationJob.class);
+        verify(moderationJobService).createJob(job.capture());
+        assertEquals(org.earnlumens.mediastore.domain.media.model.ModerationScope.PENDING_VERSION, job.getValue().getScope());
+        assertEquals("New title", job.getValue().getEntryTitle());
+        assertEquals("Approved description", job.getValue().getEntryDescription());
+    }
+
+    @Test
+    void updateMetadata_published_secondEditCancelsActiveJobAndKeepsOneSlot() {
+        Entry entry = publishedEntry();
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(entry));
+        when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
+        stubReadyFullAsset();
+
+        service.updateEntryMetadata(TENANT, USER_ID, ENTRY_ID, titleEdit("First"));
+
+        ModerationJob active = new ModerationJob();
+        active.setId("mod-job-1");
+        active.setStatus(ModerationJobStatus.DISPATCHED);
+        // The first job is active when the second edit arrives; after cancellation nothing is active.
+        when(moderationJobService.findActiveByTenantIdAndEntryId(TENANT, ENTRY_ID))
+                .thenReturn(Optional.of(active))
+                .thenReturn(Optional.empty());
+
+        service.updateEntryMetadata(TENANT, USER_ID, ENTRY_ID, titleEdit("Second"));
+
+        verify(moderationJobService).cancelJob(eq(active), anyString());
+        verify(moderationJobService, times(2)).createJob(any(ModerationJob.class));
+        assertEquals("Second", entry.getPendingVersion().getTitle());
+        assertEquals("My Video", entry.getTitle());
+        assertEquals(EntryStatus.PUBLISHED, entry.getStatus());
+    }
+
+    @Test
+    void updateMetadata_published_priceChangeAppliesDirectlyWithoutModeration() {
+        Entry entry = publishedEntry();
+        entry.setPaid(true);
+        entry.setSellerWallet(SELLER_WALLET);
+        entry.setPriceXlm(new BigDecimal("5"));
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(entry));
+        when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        var req = new org.earnlumens.mediastore.domain.media.dto.request.UpdateEntryMetadataRequest(
+                null, null, true, new BigDecimal("9"), null, "XLM", null, null, null, null, null, null);
+        assertTrue(service.updateEntryMetadata(TENANT, USER_ID, ENTRY_ID, req));
+
+        assertEquals(new BigDecimal("9"), entry.getPriceXlm());
+        assertNull(entry.getPendingVersion());
+        assertEquals(EntryStatus.PUBLISHED, entry.getStatus());
+        verify(moderationJobService, never()).createJob(any());
+    }
+
+    @Test
+    void updateMetadata_draft_stillWritesLiveDocumentDirectly() {
+        Entry entry = draftEntry();
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(entry));
+        when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
+
+        assertTrue(service.updateEntryMetadata(TENANT, USER_ID, ENTRY_ID, titleEdit("Draft title")));
+
+        assertEquals("Draft title", entry.getTitle());
+        assertNull(entry.getPendingVersion());
+        assertEquals(EntryStatus.DRAFT, entry.getStatus());
+        verify(moderationJobService, never()).createJob(any());
+    }
+
+    @Test
+    void updateMetadata_approved_stillGoesBackToInReviewLive() {
+        Entry entry = draftEntry();
+        entry.setStatus(EntryStatus.APPROVED);
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(entry));
+        when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
+        stubReadyFullAsset();
+
+        assertTrue(service.updateEntryMetadata(TENANT, USER_ID, ENTRY_ID, titleEdit("Edited")));
+
+        assertEquals("Edited", entry.getTitle());
+        assertEquals(EntryStatus.IN_REVIEW, entry.getStatus());
+        assertNull(entry.getPendingVersion());
+    }
+
+    @Test
+    void updateMetadata_blockedEntry_isRefused() {
+        Entry entry = publishedEntry();
+        entry.setModerationBlock(new org.earnlumens.mediastore.domain.media.model.ModerationBlock(
+                "case", "illegal", "mod", java.time.LocalDateTime.now()));
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(entry));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.updateEntryMetadata(TENANT, USER_ID, ENTRY_ID, titleEdit("x")));
+        assertEquals("CONTENT_BLOCKED", ex.getMessage());
+        verify(entryRepository, never()).save(any());
+    }
+
+    @Test
+    void updateStatus_blockedEntry_cannotBeMovedByCreator() {
+        Entry entry = publishedEntry();
+        entry.setStatus(EntryStatus.SUSPENDED);
+        entry.setModerationBlock(new org.earnlumens.mediastore.domain.media.model.ModerationBlock(
+                "case", "illegal", "mod", java.time.LocalDateTime.now()));
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(entry));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> service.updateEntryStatus(TENANT, USER_ID, ENTRY_ID, new UpdateEntryStatusRequest("PUBLISHED")));
+        assertEquals("CONTENT_BLOCKED", ex.getMessage());
+        assertEquals(EntryStatus.SUSPENDED, entry.getStatus());
+    }
+
+    @Test
+    void finalizeUpload_publishedThumbnail_isStagedNotAppliedLive() {
+        Entry entry = publishedEntry();
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(entry));
+        when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(assetRepository.save(any(Asset.class))).thenAnswer(inv -> {
+            Asset a = inv.getArgument(0);
+            a.setId("asset-t2");
+            return a;
+        });
+        stubReadyFullAsset();
+        stubSession("uid2", "public/media/entry-abc/thumbnail/uuid-new.jpg",
+                "image/jpeg", "new.jpg", "THUMBNAIL", 40_000L);
+
+        FinalizeUploadRequest request = new FinalizeUploadRequest(
+                "uid2", ENTRY_ID, "public/media/entry-abc/thumbnail/uuid-new.jpg",
+                "image/jpeg", "new.jpg", 40_000L, "THUMBNAIL",
+                800, 450, null, null, null, null);
+
+        Optional<FinalizeUploadResponse> result = service.finalizeUpload(TENANT, USER_ID, request);
+
+        assertTrue(result.isPresent());
+        assertEquals("public/media/entry-abc/thumbnail/old.jpg", entry.getThumbnailR2Key());
+        assertEquals(EntryStatus.PUBLISHED, entry.getStatus());
+        assertTrue(entry.getStatusHistory().isEmpty());
+        assertNotNull(entry.getPendingVersion());
+        assertEquals("public/media/entry-abc/thumbnail/uuid-new.jpg", entry.getPendingVersion().getThumbnailR2Key());
+
+        org.mockito.ArgumentCaptor<ModerationJob> job = org.mockito.ArgumentCaptor.forClass(ModerationJob.class);
+        verify(moderationJobService).createJob(job.capture());
+        assertEquals(org.earnlumens.mediastore.domain.media.model.ModerationScope.PENDING_VERSION, job.getValue().getScope());
+        assertEquals("public/media/entry-abc/thumbnail/uuid-new.jpg", job.getValue().getThumbnailR2Key());
+    }
+
+    @Test
+    void finalizeUpload_draftThumbnail_stillAppliesLive() {
+        Entry entry = draftEntry();
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(entry));
+        when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
+        when(assetRepository.save(any(Asset.class))).thenAnswer(inv -> {
+            Asset a = inv.getArgument(0);
+            a.setId("asset-t3");
+            return a;
+        });
+        stubSession("uid3", "public/media/entry-abc/thumbnail/uuid-d.jpg",
+                "image/jpeg", "d.jpg", "THUMBNAIL", 40_000L);
+
+        service.finalizeUpload(TENANT, USER_ID, new FinalizeUploadRequest(
+                "uid3", ENTRY_ID, "public/media/entry-abc/thumbnail/uuid-d.jpg",
+                "image/jpeg", "d.jpg", 40_000L, "THUMBNAIL",
+                800, 450, null, null, null, null));
+
+        assertEquals("public/media/entry-abc/thumbnail/uuid-d.jpg", entry.getThumbnailR2Key());
+        assertNull(entry.getPendingVersion());
+        verify(moderationJobService, never()).createJob(any());
     }
 }

@@ -65,13 +65,16 @@ public class ReportService {
     private final ReportMongoRepository reportRepository;
     private final EntryRepository entryRepository;
     private final CollectionRepository collectionRepository;
+    private final ContentModerationService contentModerationService;
 
     public ReportService(ReportMongoRepository reportRepository,
                          EntryRepository entryRepository,
-                         CollectionRepository collectionRepository) {
+                         CollectionRepository collectionRepository,
+                         ContentModerationService contentModerationService) {
         this.reportRepository = reportRepository;
         this.entryRepository = entryRepository;
         this.collectionRepository = collectionRepository;
+        this.contentModerationService = contentModerationService;
     }
 
     // ── Public API ─────────────────────────────────────────────
@@ -341,14 +344,33 @@ public class ReportService {
                 || totalReports >= ESCALATION_REPORT_COUNT;
     }
 
+    /**
+     * Escalation (H3 action 3): the entry leaves the feeds and lands in the
+     * moderators' queue; buyers <b>retain</b> access (no block) unless the
+     * aggregate severity of its reports is HIGH, in which case the live
+     * content gets a {@code PREVENTIVE} block — denied to everyone until a
+     * human reviews it — and the affected buyers get their disputes (D-09).
+     */
     private void escalateToReview(Entry entry, String tenantId, long reportCount) {
+        boolean highSeverity = reportRepository.countByTenantIdAndEntryIdAndSeverity(
+                tenantId, entry.getId(), ReportSeverity.HIGH.name()) > 0;
+        String reason = "Escalated by user reports (" + reportCount + " reports)";
+
+        if (highSeverity) {
+            contentModerationService.preventiveBlockEntry(tenantId, entry,
+                    reason + " — high-severity report, blocked pending human review", "EarnLumens");
+            logger.warn("Entry {} escalated to IN_REVIEW with PREVENTIVE block (count={}, tenant={})",
+                    entry.getId(), reportCount, tenantId);
+            return;
+        }
+
         EntryStatus prev = entry.getStatus();
         entry.setPreviousStatus(prev);
         entry.setStatus(EntryStatus.IN_REVIEW);
         entry.getStatusHistory().add(new StatusChangeRecord(
                 prev, EntryStatus.IN_REVIEW,
                 "EarnLumens",
-                "Escalated by user reports (" + reportCount + " reports)"
+                reason
         ));
         entry.setUpdatedAt(LocalDateTime.now());
         entryRepository.save(entry);

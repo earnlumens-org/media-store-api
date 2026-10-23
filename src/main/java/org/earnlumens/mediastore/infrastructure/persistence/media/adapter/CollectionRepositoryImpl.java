@@ -85,6 +85,14 @@ public class CollectionRepositoryImpl implements CollectionRepository {
     }
 
     @Override
+    public List<Collection> findByTenantIdAndItemsEntryId(String tenantId, String entryId) {
+        return collectionMongoRepository.findByTenantIdAndItems_EntryId(tenantId, entryId)
+                .stream()
+                .map(collectionMapper::toModel)
+                .toList();
+    }
+
+    @Override
     public long updateAuthorInfoByUserId(String tenantId, String userId, String newUsername, String newAvatarUrl) {
         Query query = new Query(Criteria.where("tenantId").is(tenantId).and("userId").is(userId));
         Update update = new Update()

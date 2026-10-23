@@ -41,5 +41,11 @@ public record StudioItemResponse(
         /** R2 prefix for preview-image variants (entries). */
         String previewVariantsPrefix,
         /** R2 prefix for cover variants (collections). */
-        String coverVariantsPrefix
+        String coverVariantsPrefix,
+        /** Entries only: a staged edit is awaiting moderation (N9). */
+        boolean hasPendingVersion,
+        /** Parts of the pending edit (TITLE, DESCRIPTION, THUMBNAIL, …); empty when none. */
+        java.util.List<String> pendingChanges,
+        /** Content is under a moderation block (H3): blocked for everyone until reinstated. */
+        boolean blocked
 ) {}

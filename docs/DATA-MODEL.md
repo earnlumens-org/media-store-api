@@ -63,16 +63,16 @@ these markers. **Anything unmarked describes the code as it is today**
 
 | Collection     | Purpose                                    | Cardinality                          | Written by |
 |----------------|--------------------------------------------|--------------------------------------|---|
-| `entries`      | Content listings (the "product")           | 1 per publishable item               | media-store-api (status also by admin-api moderation) |
+| `entries`      | Content listings (the "product")           | 1 per publishable item               | media-store-api (admin-api moderation acts through `/api/internal/moderation/**` since H3 — it no longer saves `entries` itself) |
 | `assets`       | Files stored in R2                         | N per entry (append-only)            | media-store-api |
-| `collections`  | Curated groups of entries (album, course…) | 1 per group                          | media-store-api (takedown by admin-api) |
+| `collections`  | Curated groups of entries (album, course…) | 1 per group                          | media-store-api (takedown by admin-api through the same internal surface) |
 | `orders`       | **All Stellar payments** — purchases, tips, publishing fees | N per user × target (retries, tips) | media-store-api |
 | `entitlements` | Granted access rights                      | **1 per user × target** (entry or collection) | media-store-api |
 | `favorites`    | User-saved items (entries or collections)  | 1 per user × item                    | media-store-api |
 | `franchises`   | Franchise ("beta") storefronts under a tenant | 1 per franchise                   | admin-api (read here) |
 | `franchise_user_bans` | Users barred from creating a franchise under a tenant | 1 per tenant × user | admin-api (read here) |
-| `moderation_cases` 🔜 (H3/D-15) | One document per moderation action that blocks content | 1 per action | media-store-api / admin-api |
-| `disputes` 🔜 (H3/D-09/D-15) | One document per **purchase** affected by a content takedown | 1 per case × entitlement | media-store-api |
+| `moderation_cases` ✅ (H3/D-15) | One document per moderation action that blocks content | 1 per action | media-store-api (admin-api acts through `/api/internal/moderation/**`) |
+| `disputes` ✅ (H3/D-09/D-15) | One document per **purchase** affected by a content takedown | 1 per case × entitlement | media-store-api (opened); admin-api (resolution `RESOLVED` / `DISMISSED` only) |
 | `version_choices` 🔜 (N8/D-14) | A buyer's chosen version of one entry — exists **only** if the buyer ever updated | 1 per user × entry (sparse) | media-store-api |
 
 ### 1.2 Other collections (owned elsewhere — listed so nothing is "unknown")
@@ -149,10 +149,10 @@ A publishable content item (video, audio, image, or resource/article).
 | `createdAt`        | DateTime   | auto     |              | `@CreatedDate`                                                |
 | `updatedAt`        | DateTime   | auto     |              | `@LastModifiedDate`                                           |
 | `publishedAt`      | DateTime   |          | `null`       | Set when status → `PUBLISHED`                                 |
-| `moderationBlock`  | Object     |          | `null`       | 🔜 **Planned (H3 / S-03).** `{ caseId, reason, by, at }`. Non-null ⇒ blocked for **everyone** (§8.8). Set only by explicit moderation actions, cleared on reinstatement |
-| `currentVersion`   | Integer    |          | `1`          | 🔜 **Planned (N8 / D-14).** Absent ⇒ `1` (S-01: no backfill)   |
-| `versions[]`       | [Object]   |          | `[]`         | 🔜 **Planned (N8 / D-14).** One entry per **approved** version (§2.3). Absent ⇒ the entry's current fields are version 1 |
-| `pendingVersion`   | Object     |          | `null`       | 🔜 **Planned (N9).** Single staging slot for an edit awaiting moderation (§2.3). The live fields are never touched until approval |
+| `moderationBlock`  | Object     |          | `null`       | ✅ **H3 / S-03.** `{ caseId, reason, by, at }`. Non-null ⇒ blocked for **everyone**, all versions (§8.8). Set only by explicit moderation actions (`ContentModerationService`), cleared on reinstatement. While set, the creator cannot change the status nor upload |
+| `currentVersion`   | Integer    |          | `1`          | ✅ **N9 (creator side of D-14).** Absent ⇒ `1` (S-01: no backfill). Incremented when a pending edit is approved |
+| `versions[]`       | [Object]   |          | —            | ✅ **N9 (creator side of D-14).** One element per **approved** version (§2.3). Absent until the first edit of a published entry is approved; then it holds the reconstructed v1 plus the new version. The buyer-side choice (`version_choices`, N8) is 🔜 |
+| `pendingVersion`   | Object     |          | `null`       | ✅ **N9.** Single staging slot for an edit awaiting moderation (§2.3). The live fields are never touched until approval; the entry **stays in its status** |
 
 #### 2.1 `paymentSplits[]` sub-document
 
@@ -180,67 +180,87 @@ UI does not expose it**. Every paid entry is purchasable individually today.
 > `PaymentService.prepare` rejecting `COLLECTION_ONLY` entries plus a Studio
 > toggle; the query of §9.9 already exists (`getCollectionsContainingEntry`).
 
-#### 2.3 Versions — 🔜 Planned (N8 / N9 / D-14)
+#### 2.3 Versions — ✅ creator side (N9), 🔜 buyer side (N8 / D-14)
 
 ```jsonc
-// versions[] element — written ONLY when a version is approved
+// versions[] element — written ONLY when a version is approved (ContentVersionService.applyPendingVersion)
 { "version": 2, "assetId": "…", "hlsR2Prefix": "…",
-  "title": "…", "description": "…", "thumbnailR2Key": "…", "previewR2Key": "…",
-  "resourceContent": "…", "approvedAt": "…",
-  "changeSummary": { "parts": ["FILE","TITLE"], "fileSizeBytes": 123, "durationSec": 45 },
+  "title": "…", "description": "…", "resourceContent": "…", "tags": ["…"],
+  "thumbnailR2Key": "…", "previewR2Key": "…", "approvedAt": "…",
+  "changeSummary": ["TITLE", "THUMBNAIL"],   // parts touched: TITLE, DESCRIPTION, RESOURCE_TEXT, TAGS, THUMBNAIL, PREVIEW
   "creatorNote": "…" }
 
-// pendingVersion — same shape minus approvedAt, plus submittedAt + moderationJobId
+// pendingVersion — same text/visual fields (null = unchanged from the live entry),
+// plus changeSummary, creatorNote, submittedAt, moderationJobId.
+// assetId / hlsR2Prefix are reserved for the versioned FULL replacement (H8/N8) and unused today.
 ```
 
-Rules (D-14, S-01, S-02, N9):
+Rules (D-14, S-01, S-02, N9) — implemented in `ContentVersionService`:
 
 - **Metadata only.** A version points to `Asset` documents that already exist
   (assets are append-only, §3). No file is ever copied.
 - **The entry's denormalized fields are the projection of `currentVersion`.**
   Approving a pending version = append it to `versions[]` as
   `currentVersion + 1`, project its fields onto the entry, clear the slot.
+  Thumbnail / preview variants are regenerated when those keys changed.
 - **"Absent = v1".** An entry without `versions[]` *is* version 1, built from
   its current fields. `versions[]` is first written when the **second**
-  version is approved (and then includes the reconstructed v1). No backfill.
-- **One pending slot.** A newer edit overwrites `pendingVersion` and cancels
-  the previous moderation job. Edits on `DRAFT` / `REJECTED` entries (never
-  sold) keep writing the live document directly, as today.
+  version is approved (and then includes the reconstructed v1 with
+  `approvedAt = publishedAt`). No backfill; the mapper never persists an
+  empty `versions` array.
+- **One pending slot.** A newer edit builds on the same slot and cancels the
+  previous moderation job (`ModerationScope.PENDING_VERSION`). The slot is
+  used only when `status ∈ {PUBLISHED, UNLISTED, ARCHIVED}`; edits on
+  `DRAFT` / `APPROVED` / `REJECTED` / `IN_REVIEW` entries (nothing sold)
+  keep writing the live document directly, as before.
+- **Only moderated content is staged.** Title, description, resource text
+  and thumbnail / preview go to the slot. Pricing, wallet, reseller and
+  royalty settings are not content the classifier inspects and apply to the
+  live document directly (a price change no longer sends a published entry
+  to review).
 - **Rejecting a pending version changes nothing visible**: the slot is
   cleared, the justification goes to `moderationFeedback`, `status` is
-  untouched. This is what makes D-13 implementable (§8.8).
+  untouched, no dispute is opened. This is what makes D-13 implementable
+  (§8.8). If the classifier flagged an illegal / high-severity category, the
+  live content additionally gets a `PREVENTIVE` block (R-21).
 - **Retention is infinite by default** (S-02): no job deletes version files.
   A reference-based GC is an optional P2 item, never part of the core design.
+- 🔜 **N8**: `version_choices`, computed `purchasedVersion`, update / undo
+  and asset resolution by effective version are not implemented; every
+  viewer still sees `currentVersion`.
 
 ### Status State Machine (as implemented)
 
 ```
                  creator submits          AI / moderator
 DRAFT ─────────────────────→ IN_REVIEW ──────────────→ APPROVED ──creator──→ PUBLISHED ⇄ UNLISTED
-  ↑                            │   ↑                      │                      │
-  │        creator re-edits    ↓   │ edit / report        │ edit                 │ admin
-  ←──────────────────────── REJECTED                      └──────────────────────┤
-  ↑                                                                              ↓
+  ↑                            │   ↑                      │                      │   │
+  │        creator re-edits    ↓   │ report escalation    │ edit                 │   │ edit → pendingVersion
+  ←──────────────────────── REJECTED                      └──────────────────────┤   │ (status unchanged, N9)
+  ↑                                                                              ↓   ↲
   │    reinstate (→ previousStatus) / to draft                              SUSPENDED
   └──────────────────────────────────────────────────────────────────────────────┘
 
 ARCHIVED  ←── creator, from ANY status ──→ unarchive restores previousStatus (fallback DRAFT)
 DELETED   ←── creator, from ANY status ──→ restore   restores previousStatus (fallback DRAFT)
+
+moderationBlock (orthogonal to status, H3): set by takedown / preventive block, cleared by reinstate.
+While set the creator cannot change the status or upload (409 CONTENT_BLOCKED).
 ```
 
 | Transition                      | Actor / trigger                          | Side-effects                                                        |
 |---------------------------------|------------------------------------------|---------------------------------------------------------------------|
 | `DRAFT → IN_REVIEW`             | Creator submits                          | Creates a `moderation_jobs` document; blocked while transcoding is in progress; burst limit on concurrent reviews |
 | `IN_REVIEW → APPROVED`          | AI moderation (`ModerationJobService`) or admin-api moderator | Post-approval media pipeline (thumbnail variants, HLS transcode for VIDEO) |
-| `IN_REVIEW → REJECTED`          | AI moderation or admin-api moderator     | `moderationFeedback` = justification. ⚠️ Today this also happens for **re-reviews of an already-sold entry** (edit or report) — see §8.8 and N9 |
+| `IN_REVIEW → REJECTED`          | AI moderation or admin-api moderator     | `moderationFeedback` = justification. ✅ H3: if the entry **was live** (`previousStatus` public — report escalation) this is a `CONTENT_TAKEDOWN`: `moderationBlock` set, case created, disputes opened. A first submission is a plain rejection. Edits of published entries no longer pass through here (N9) |
 | `APPROVED → PUBLISHED`          | Creator publishes                        | `publishedAt = now()`, `authorBadge` stamped                        |
 | `APPROVED → IN_REVIEW`          | Creator edits before publishing          | New moderation job                                                  |
 | `REJECTED → DRAFT \| IN_REVIEW` | Creator re-edits / resubmits             |                                                                     |
 | `PUBLISHED → UNLISTED`          | Creator unlists                          | Reachable by direct link, hidden from feeds                         |
 | `UNLISTED → PUBLISHED`          | Creator re-lists                         |                                                                     |
-| `PUBLISHED → IN_REVIEW`         | Creator edits metadata / thumbnail / preview (`EntryUploadService`), **or** report escalation (`ReportService.escalateToReview`) | New moderation job; the previous active job is cancelled. ⚠️ Edits are applied to the **live document** before review — 🔜 N9 moves them to `pendingVersion` and the entry **stays `PUBLISHED`** |
-| `PUBLISHED \| APPROVED → SUSPENDED` | **admin-api** moderator (`ModerationService.suspendEntry`, justification required) | Saves `previousStatus`, `moderationFeedback`. 🔜 H3: also sets `moderationBlock` and opens disputes (§8.8) |
-| `SUSPENDED → PUBLISHED \| DRAFT` | Moderator reinstates                    | 🔜 H3: clears `moderationBlock`; access returns automatically       |
+| `PUBLISHED → IN_REVIEW`         | Report escalation (`ReportService.escalateToReview`) **only** | `previousStatus` saved; buyers retain access (no block). If any report on the entry has severity `HIGH`, a `PREVENTIVE` `moderationBlock` is set instead (denied to everyone, disputes opened) pending human review. ✅ N9: creator edits **no longer** cause this transition — they go to `pendingVersion` and the entry stays `PUBLISHED` |
+| `PUBLISHED \| APPROVED \| UNLISTED \| IN_REVIEW → SUSPENDED` | **admin-api** moderator → `/api/internal/moderation/entries/{id}/takedown` (justification required) | ✅ H3: saves `previousStatus`, sets `moderationBlock` + `moderationFeedback`, creates a `moderation_cases` document and opens one dispute per affected purchase (§8.8) |
+| `SUSPENDED \| IN_REVIEW \| REJECTED → previousStatus` | Moderator reinstates (`…/reinstate`, or approving a preventively blocked `IN_REVIEW` entry) | ✅ H3: clears `moderationBlock` and `moderationFeedback`; access returns automatically; the case is marked `REINSTATED` when none of its items is still blocked. Disputes are **not** touched |
 | `Any → ARCHIVED`                | Creator                                  | Saves `previousStatus`. Purchasers keep access (§8)                 |
 | `Any → DELETED`                 | Creator (soft delete)                    | Saves `previousStatus`. Purchasers keep access (§8). No hard delete of entries exists outside `DraftCleanupService` (DRAFT without assets) |
 | `ARCHIVED \| DELETED → previousStatus` | Creator unarchives / restores     | Falls back to `DRAFT` if `previousStatus` is null                   |
@@ -263,6 +283,7 @@ DELETED   ←── creator, from ANY status ──→ restore   restores previo
 | `idx_tenant_status_titlelower` | `{tenantId:1, status:1, titleLower:1}` | ✅ `SearchTextIndexMigration` |
 | `idx_text_search` | text index on `title` (10), `tags` (8), `authorUsername` (5), `description` (1), prefixed by `tenantId, status` | ✅ `SearchTextIndexMigration` |
 | `idx_tenant_fingerprint` | `{tenantId:1, contentFingerprint:1}` sparse | ✅ `OriginalFirstIndexMigration` |
+| `idx_tenant_pending_submitted` | `{tenantId:1, 'pendingVersion.submittedAt':1}` partial on `pendingVersion: {$exists: true}` | ✅ `ModerationIndexMigration` (N9 — moderators' pending-edit queue) |
 
 > The first five indexes are what an earlier revision of this document called
 > "existing — keep" although no code created them. Atlas was measured on
@@ -388,13 +409,14 @@ model** (§8.6, D-11 / D-20).
 | `createdAt`        | DateTime   | auto     |              |                                                          |
 | `updatedAt`        | DateTime   | auto     |              |                                                          |
 | `publishedAt`      | DateTime   |          | `null`       | Set when status → `PUBLISHED`                            |
-| `moderationBlock`  | Object     |          | `null`       | 🔜 **Planned (H3 / S-03).** Same semantics as on Entry   |
-| `pendingVersion`   | Object     |          | `null`       | 🔜 **Planned (N9).** Staged edit (title, description, cover, items) awaiting moderation; `changeSummary` holds `added[]` / `removed[]` entry ids (D-14) |
+| `moderationBlock`  | Object     |          | `null`       | ✅ **H3 / S-03.** Same semantics as on Entry: the collection page is hidden from everyone and the collection **stops granting access to its entries** (its direct buyers get a dispute) |
+| `pendingVersion`   | Object     |          | `null`       | 🔜 **Planned (N9 — deferred to the H2 / N8 block).** Staged edit (title, description, cover, items) awaiting moderation; `changeSummary` holds `added[]` / `removed[]` entry ids (D-14). Today collection edits are **not re-moderated at all** (pre-existing gap, see §10) and depend on the membership history of H2 |
 
-> ⚠️ admin-api's `CollectionAdminDocument` writes a `previousStatus` field on
-> collection takedown that the media-store-api model does not read. Harmless
-> today; 🔜 H3 replaces the takedown-by-`ARCHIVED` workaround with
-> `moderationBlock`, after which the field can be dropped.
+> ⚠️ admin-api's `CollectionAdminDocument` still declares a `previousStatus`
+> field that the media-store-api model does not read. Since H3 admin-api no
+> longer saves collections (takedown goes through
+> `/api/internal/moderation/collections/{id}/takedown` and sets
+> `moderationBlock`), so the field is dead and can be dropped.
 
 #### 4.1 `items[]` sub-document — membership history
 
@@ -428,15 +450,17 @@ DRAFT ──publish──→ IN_REVIEW ──→ PUBLISHED
   │                   ↓
   ←──────────────── REJECTED ──(hard delete allowed)──→ ∅
   ↑
-  ├── ARCHIVED  (creator archive, from any status; admin-api takedown also uses ARCHIVED today)
+  ├── ARCHIVED  (creator archive, from any status)
   └── DELETED   (creator soft delete)       — unarchive / restore → DRAFT
+
+moderationBlock (orthogonal to status, H3): admin-api takedown sets it; reinstate clears it.
 ```
 
 | Transition | Actor | Notes |
 |---|---|---|
 | `DRAFT \| ARCHIVED \| DELETED \| REJECTED → IN_REVIEW` | Creator publishes | Requires `sellerWallet` + valid price when paid, and **every item `PUBLISHED`**; creates a `moderation_jobs` document with `entryType = COLLECTION` |
 | `IN_REVIEW → PUBLISHED \| REJECTED` | AI moderation / moderator | `publishedAt` set on `PUBLISHED` |
-| `Any → ARCHIVED` | Creator — **or admin-api takedown** (`ModerationService.archiveCollection`, justification required) | ⚠️ Today a takedown is indistinguishable from a creator archive at the data level. 🔜 H3: takedown sets `moderationBlock` instead |
+| `Any → ARCHIVED` | Creator only | ✅ H3: an admin takedown no longer archives — it sets `moderationBlock` (status unchanged) through the internal moderation surface |
 | `Any → DELETED` | Creator (soft delete) | |
 | `ARCHIVED \| DELETED → DRAFT` | Creator unarchives / restores | Must be re-published (re-moderated) |
 | `DRAFT \| REJECTED → ∅` | Creator hard-deletes | ⚠️ Allowed even when entitlements reference the collection ⇒ irreversible loss. 🔜 **H2**: 409 when `entitlements.count(collectionId) > 0` |
@@ -639,10 +663,9 @@ one document per user × target**, regardless of how many orders exist.
 - Written only by `PaymentService.createEntitlement` and only when the order is
   `COMPLETED` **and** has a `stellarTxHash` (hard precondition). `TIP` and
   `PUBLISH_*` orders return without writing.
-- `MediaEntitlementService` re-verifies on every CDN check that a `PURCHASE`
-  entitlement is backed by a `COMPLETED` order with a tx hash
-  (`isBackedByCompletedOrder`). 🔜 H3 applies the same check in the public
-  entry view via `ContentAccessPolicy`.
+- `ContentAccessPolicy.isBackedByCompletedOrder` re-verifies on every access
+  check — CDN **and** public entry view (✅ H3) — that a `PURCHASE`
+  entitlement is backed by a `COMPLETED` order with a tx hash.
 - ⚠️ Today creation is an **insert** that treats `DuplicateKeyException` as
   success. With a `REVOKED` entitlement in place (after a refund) a re-purchase
   would pay and silently get nothing (**H11**). 🔜 **H11 / S-06**: creation
@@ -832,31 +855,35 @@ already own elsewhere. Written by admin-api; read at franchise-creation time.
 
 ---
 
-## 7d. `moderation_cases` — 🔜 Planned (H3 / D-15)
+## 7d. `moderation_cases` — ✅ Implemented (H3 / D-15)
 
 One document per **moderation action that blocks content**. It is the home of
 `moderationCaseId`: the grouping key the administrator resolves in bulk, the
 reference stored in `entry.moderationBlock.caseId`, and the parent of every
-`disputes` document.
+`disputes` document. Written by `ContentModerationService` (model
+`ModerationCase`, entity `ModerationCaseEntity`).
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
 | `_id` | ObjectId | auto | = `moderationCaseId` |
 | `tenantId` | String | ✔ | |
-| `kind` | String | ✔ | `TAKEDOWN` (content is illegal / stolen / violates policy — D-13 `CONTENT_TAKEDOWN`) \| `PREVENTIVE` (high-severity reports or an illegal pending edit; awaiting human review) |
+| `kind` | String | ✔ | `TAKEDOWN` (explicit removal, or rejection of content that was live — D-13 `CONTENT_TAKEDOWN`) \| `PREVENTIVE` (HIGH-severity report escalation or an illegal pending edit; awaiting human review) |
 | `entryIds[]` | [String] | | Entries blocked by this action |
 | `collectionIds[]` | [String] | | Collections blocked by this action |
-| `reason` | String | ✔ | Justification (also copied to `moderationFeedback`) |
-| `actor` | String | ✔ | Moderator id or `"EarnLumens"` (AI) |
+| `reason` | String | ✔ | Justification (also copied to `moderationFeedback` and to each dispute) |
+| `actor` | String | ✔ | Moderator username or `"EarnLumens"` (automatic) |
 | `createdAt` | DateTime | auto | |
-| `resolvedAt` | DateTime | | Set on reinstatement or dismissal |
-| `resolution` | String | | `REINSTATED` \| `UPHELD` |
+| `resolvedAt` | DateTime | | Set when every item of the case has been reinstated |
+| `resolution` | String | | `REINSTATED` \| `UPHELD` (the latter is reserved; nothing writes it yet) |
 
-Indexes (migration): `{tenantId:1, createdAt:-1}`, `{tenantId:1, entryIds:1}`.
+Indexes (`ModerationIndexMigration`, fail-fast like `CoreIndexMigration`):
+`idx_case_tenant_created {tenantId:1, createdAt:-1}`,
+`idx_case_tenant_entries {tenantId:1, entryIds:1}`,
+`idx_case_resolved_created {resolvedAt:1, createdAt:1}` (sweep).
 
 ---
 
-## 7e. `disputes` — 🔜 Planned (H3 / D-09 / D-15)
+## 7e. `disputes` — ✅ Implemented (H3 / D-09 / D-15)
 
 One document per **purchase affected** by a takedown (not one per file). It
 is informational: the system opens it automatically; **only an administrator
@@ -870,23 +897,27 @@ resolves it**. The entitlement is never revoked by the dispute.
 | `entitlementId` | String | ✔ | The affected purchase |
 | `orderId` | String | ✔ | Copied from the entitlement |
 | `userId` | String | ✔ | Buyer |
-| `entryId` | String | ✔ | The entry that triggered this dispute |
-| `affectedEntryIds[]` | [String] | ✔ | All entries of the case this purchase gives access to (≥ 1) |
+| `entryId` | String | | The entry that triggered this dispute (smallest affected id); `null` for a collection-only block |
+| `affectedEntryIds[]` | [String] | ✔ | All entries of the case this purchase gives access to (every item of the collection for a collection block) |
 | `collectionId` | String | | Set when the access path is a collection entitlement |
 | `reason` | String | ✔ | Copied from the case |
 | `status` | String | ✔ | `OPEN` → `REFUNDED` \| `RESOLVED` \| `DISMISSED` |
 | `createdAt`, `resolvedAt`, `resolvedBy` | | | |
 
-Indexes (migration): `{tenantId:1, moderationCaseId:1, entitlementId:1}`
-**unique** (idempotency), `{tenantId:1, userId:1, status:1}`,
-`{tenantId:1, status:1, createdAt:-1}`.
+Indexes (`ModerationIndexMigration`): `idx_dispute_case_entitlement
+{tenantId:1, moderationCaseId:1, entitlementId:1}` **unique** (idempotency —
+the trigger is an upsert with `$setOnInsert` only, so a re-run never
+duplicates nor overwrites a resolution; verified with concurrent writers
+against a real mongod in `ModerationIndexMigrationIntegrationTest`),
+`idx_dispute_tenant_user_status {tenantId:1, userId:1, status:1}`,
+`idx_dispute_tenant_status_created {tenantId:1, status:1, createdAt:-1}`.
 
 | Status      | Meaning                                                           |
 |-------------|-------------------------------------------------------------------|
 | `OPEN`      | Buyer was affected by a takedown. Awaiting administrator.         |
-| `REFUNDED`  | Admin issued a (partial) compensating payment. Order → `REFUNDED`, entitlement → `REVOKED` |
-| `RESOLVED`  | Content was reinstated. Access returned automatically when `moderationBlock` was cleared |
-| `DISMISSED` | Admin reviewed and dismissed (e.g. content violated ToS, no refund owed) |
+| `REFUNDED`  | Admin issued a (partial) compensating payment. Order → `REFUNDED`, entitlement → `REVOKED`. 🔜 **Not writable yet**: admin-api refuses it until the refund flow (order + entitlement transition, H11) exists |
+| `RESOLVED`  | Content was reinstated. Access returned automatically when `moderationBlock` was cleared. ✅ admin-api (`/api/moderation/cases/{id}/resolve`, `/disputes/{id}/resolve`) |
+| `DISMISSED` | Admin reviewed and dismissed (e.g. content violated ToS, no refund owed). ✅ same endpoints |
 
 ---
 
@@ -903,14 +934,15 @@ collection membership and the moderation block.
 > the entitlement is never revoked; access is blocked and a dispute is opened
 > for the administrator.
 >
-> **Implementation state.** Today the two decision points disagree:
-> `MediaEntitlementService.checkEntitlement` (CDN) **never looks at
-> `entry.status`**, while `PublicEntryService.isVisibleToViewer` (UI) hides
-> `IN_REVIEW` / `REJECTED` / `SUSPENDED` from everyone and only preserves
-> buyers in `ARCHIVED` / `DELETED`. The CDN also serves free content in any
-> status. 🔜 **H3** unifies both behind one `ContentAccessPolicy` implementing
-> §8.3 as written here. Everything in §8.3–§8.9 is the **target rule**; where
-> the code differs today it is marked ⚠️.
+> **Implementation state.** ✅ **H3**: both decision points —
+> `MediaEntitlementService.check` (CDN) and `PublicEntryService.lookupEntry`
+> (UI) — delegate to one `ContentAccessPolicy` that implements §8.3 as
+> written (block first, owner, free-only-when-public, confirmed purchase in
+> any status). The three denials are distinct (`AccessDecision`): the CDN
+> returns them as `403 {reason}`, the UI as `451 CONTENT_BLOCKED` /
+> `404`. What is still ⚠️ in §8.3–§8.6 belongs to **H2** (collection
+> membership history, collection access in any status) and **N8** (version
+> resolution).
 
 ### 8.1 Terminology (matches UI code)
 
@@ -927,7 +959,7 @@ Two orthogonal facts decide access (D-01, S-03):
 | Fact | Decides | Who sets it |
 |---|---|---|
 | `entry.status` | **Public visibility** — who can *discover* the entry and whether a non-buyer can open it | Creator (publish / unlist / archive / delete) and the moderation workflow |
-| `entry.moderationBlock` 🔜 (H3) | **Blocked for everyone** — buyers, visitors and the creator alike | Moderation only, by an explicit takedown or preventive block; cleared on reinstatement |
+| `entry.moderationBlock` ✅ (H3) | **Blocked for everyone** — buyers, visitors and the creator alike | Moderation only, by an explicit takedown or preventive block; cleared on reinstatement |
 
 Consequences (the conceptual matrix of D-01 — `NONE / BUYERS_RETAIN /
 BLOCKED_ALL` — collapses to these two facts, nothing else is persisted):
@@ -938,8 +970,8 @@ BLOCKED_ALL` — collapses to these two facts, nothing else is persisted):
 | `UNLISTED` | ✔ by direct link | ✔ | ✔ |
 | `DRAFT`, `ARCHIVED`, `DELETED`, `APPROVED` (creator-controlled, not public) | ✘ | ✔ **retain** | ✔ |
 | `IN_REVIEW` — first review (nothing sold yet) | ✘ | — (no buyers exist) | ✔ |
-| `IN_REVIEW` — re-review by report escalation | ✘ | ✔ **retain** (⚠️ today: 404 in UI, served by CDN) | ✔ |
-| `REJECTED` — of a **pending edit** 🔜 (N9, D-13 `CHANGES_REJECTED`) | unchanged — the entry stays `PUBLISHED` | ✔ unchanged | ✔ |
+| `IN_REVIEW` — re-review by report escalation | ✘ | ✔ **retain** ✅ | ✔ |
+| `REJECTED` — of a **pending edit** ✅ (N9, D-13 `CHANGES_REJECTED`) | unchanged — the entry stays `PUBLISHED` | ✔ unchanged | ✔ |
 | `REJECTED` — first submission (nothing sold) | ✘ | — | ✔ |
 | **`moderationBlock != null`** (D-13 `CONTENT_TAKEDOWN` or preventive) — any status, **all versions** (D-16) | ✘ | ✘ **blocked** (disputes opened, §8.8) | ✘ |
 
@@ -947,25 +979,23 @@ BLOCKED_ALL` — collapses to these two facts, nothing else is persisted):
 > users by any ordinary action — status change, price change, collection
 > edit, new version. A moderation takedown overrides everything, for everyone.
 
-#### Status classification helper (target)
+#### Status classification helper (✅ `ContentAccessPolicy`)
 
 ```java
 // Public, discoverable / reachable without purchase
-Set<EntryStatus> PUBLIC_VISIBLE  = Set.of(PUBLISHED, UNLISTED);
+Set<EntryStatus> PUBLIC_VISIBLE  = Set.of(PUBLISHED, UNLISTED);   // ContentAccessPolicy.PUBLIC_VISIBLE
 
-// Hidden from non-buyers; buyers retain access (creator-controlled or in re-review)
-Set<EntryStatus> BUYERS_RETAIN   = Set.of(DRAFT, APPROVED, IN_REVIEW, ARCHIVED, DELETED, REJECTED);
+// Every other status: hidden from non-buyers; buyers retain access
+// (creator-controlled, first review, re-review, suspended, rejected)
 
 // Blocked for everyone — NOT a status: entry.moderationBlock != null
 ```
 
-⚠️ Today the code has no such helper; `SUSPENDED` and `REJECTED` act as the
-"blocked" signal in the UI only (`ADMIN_BLOCKED` of the previous revision),
-and the CDN ignores status entirely. After H3, `SUSPENDED` remains a status
-(set by admin-api together with `moderationBlock`) but the **block field, not
-the status, is what denies access**.
+`SUSPENDED` remains a status (set together with `moderationBlock` by a
+takedown) but the **block field, not the status, is what denies access**; a
+buyer of a `SUSPENDED` entry whose block has been cleared keeps access.
 
-### 8.3 Entry Access Check (target — `ContentAccessPolicy.canAccess`)
+### 8.3 Entry Access Check (✅ `ContentAccessPolicy.evaluate` — H3; steps 4/8 partially 🔜 H2 / N8)
 
 ```python
 def has_entry_access(user_id, entry):
@@ -1009,22 +1039,26 @@ def has_entry_access(user_id, entry):
 ```
 
 Three distinct denials, so the UI never shows a generic 404 to a buyer:
-`DENIED_BLOCKED` (takedown; buyers see their dispute), `DENIED_HIDDEN`
-(not public and no right), `DENIED_LOCKED` (public, paywalled).
+`DENIED_BLOCKED` (takedown; the UI answers **451 `CONTENT_BLOCKED`** with the
+buyer's open `disputeId` when there is one), `DENIED_HIDDEN` (not public and
+no right → 404), `DENIED_LOCKED` (public, paywalled → the detail page is
+shown as the paywall; the CDN denies). The detail response also carries
+`status` and `viewerAccess` (`OWNER` / `PUBLIC` / `ENTITLED`) so the
+storefront can show "in review" / "archived by the creator" notices.
 
-⚠️ **Code today** (`MediaEntitlementService.checkEntitlement`): no step 0, step 2
-is "free ⇒ allowed in any status", step 4 uses only live membership of
-`PUBLISHED` collections (no `removedAt` records exist yet), and the three
-denials are one 403.
-`PublicEntryService.isVisibleToViewer` additionally denies buyers in
-`IN_REVIEW` / `REJECTED` / `SUSPENDED` and does not check
-`backed_by_completed_order`.
+✅ **Implemented (H3)**: steps 0, 1, 2, 3, 5 exactly as written, on both
+decision points, including `backed_by_completed_order` on the UI path.
+⚠️ **Step 4 today**: membership is the live `items[]` of **`PUBLISHED`**
+collections (no `removedAt` records exist yet) and a collection under
+`moderationBlock` grants nothing — the union-by-right-date rule and "any
+collection status" arrive with **H2**. The CDN's step 8 still resolves the
+asset with the single-result query (**H8**).
 
 ### 8.4 Collection Access Check
 
 ```python
 def has_collection_access(user_id, collection):
-    if collection.moderationBlock is not None:      # 🔜 H3
+    if collection.moderationBlock is not None:      # ✅ H3 (ContentAccessPolicy.evaluateCollection; detail page → 451)
         return DENIED_BLOCKED
     if collection.userId == user_id:
         return ALLOWED
@@ -1086,7 +1120,8 @@ entitlement ∪ entries of any entitled collection) and collections.
 | Creator hard-deletes a collection with buyers             | — | — | ✘ **409** — not allowed | ⚠️ allowed from `DRAFT`/`REJECTED` — H2 |
 | Creator changes free entry to paid inside collection      | — | any | ✔ still accessible via collection | ✔ |
 | Creator changes paid entry to free                        | — | any | ✔ accessible to everyone while `PUBLISHED`/`UNLISTED` | ✔ |
-| An entry of the collection is **taken down** (`moderationBlock`) | — | any | ✘ that entry only, for everyone; a dispute opens for each buyer whose right covers it (§8.8). Rest unaffected | ⚠️ CDN still serves it — H3 |
+| An entry of the collection is **taken down** (`moderationBlock`) | — | any | ✘ that entry only, for everyone; a dispute opens for each buyer whose right covers it (§8.8). Rest unaffected | ✅ H3 (right = live membership until H2) |
+| The **collection itself** is taken down (`moderationBlock`) | — | any | ✘ collection page hidden; the collection stops granting access to its entries; one dispute per collection buyer. Entries bought individually are unaffected | ✅ H3 |
 | Collection refunded, then re-purchased at `G₂`             | — | `G₂`      | rights evaluated from `G₂` (items removed in between are not recovered) | design only |
 
 > **Key principle:** an entitlement is a right to access. For
@@ -1102,15 +1137,15 @@ entitlement ∪ entries of any entitled collection) and collections.
 | Creator unlists (→ `UNLISTED`)                              | ✔ | ✔ retained | ✔ |
 | Creator archives / soft-deletes (→ `ARCHIVED` / `DELETED`)  | ✔ | ✔ retained; visible in "My Purchases", streamable | ✔ |
 | Creator archives / soft-deletes                             | ✘ | ✘ hidden | ✔ |
-| Entry re-enters `IN_REVIEW` (report escalation)             | ✔ | ✔ retained, with a notice | ⚠️ UI 404 / CDN serves — H3 |
-| Creator edits title / thumbnail / preview (→ pending version) | ✔ | ✔ unchanged; entry stays `PUBLISHED`; buyer keeps seeing the approved version | ⚠️ entry → `IN_REVIEW`, buyer gets 404 — N9 |
-| Pending edit **rejected** (`CHANGES_REJECTED`)              | ✔ | ✔ unchanged, **no dispute** | ⚠️ entry → `REJECTED` — N9 |
+| Entry re-enters `IN_REVIEW` (report escalation)             | ✔ | ✔ retained, with a notice | ✅ H3 (`EntryStatusBanner`) |
+| Creator edits title / thumbnail / preview (→ pending version) | ✔ | ✔ unchanged; entry stays `PUBLISHED`; buyer keeps seeing the approved version | ✅ N9 |
+| Pending edit **rejected** (`CHANGES_REJECTED`)              | ✔ | ✔ unchanged, **no dispute** | ✅ N9 |
 | New version **approved** (D-14)                             | ✔ | ✔ buyer keeps their effective version; sees "new version available"; updates (and can undo once) **only by explicit action**; never charged | n/a — N8 |
 | New version of **one entry inside a purchased collection** (D-14 / S-07) | via collection | ✔ only that entry shows the notice; updating it changes nothing for the other entries; each entry has its own purchased / active / undo state | n/a — N8 |
 | Entry **added to a collection** after purchase, later re-versioned | via collection | ✔ purchased version = the one current when the entry **entered** the collection (`max(grantedAt, addedAt)`) | n/a — N8 |
-| Content **taken down** (`CONTENT_TAKEDOWN` → `moderationBlock`) | ✔ | ✘ **blocked, all versions** (D-16). Dispute opened (§8.8). Entitlement stays `ACTIVE` | ⚠️ UI 404 / CDN serves — H3 |
-| Content taken down                                          | ✘ | ✘ blocked | ⚠️ CDN serves free content — H3 |
-| Reinstated after takedown (→ `PUBLISHED`, block cleared)    | ✔ | ✔ access returns automatically, no entitlement change | — |
+| Content **taken down** (`CONTENT_TAKEDOWN` → `moderationBlock`) | ✔ | ✘ **blocked, all versions** (D-16). Dispute opened (§8.8). Entitlement stays `ACTIVE` | ✅ H3 |
+| Content taken down                                          | ✘ | ✘ blocked | ✅ H3 (CDN no longer serves free content under a block) |
+| Reinstated after takedown (→ `previousStatus`, block cleared)    | ✔ | ✔ access returns automatically, no entitlement change | ✅ H3 |
 | Creator changes price after purchase                        | ✔ | ✔ no effect — entitlement is price-independent | ✔ |
 | Creator changes wallet after purchase                       | ✔ | ✔ no effect — splits are frozen on the order | ✔ |
 | Tenant blocked by platform                                  | ✔ | ✔ library and playback keep working on `{sub}.earnlumens.org` in read-only mode (H1 / D-04) | ⚠️ falls to default tenant — H1 |
@@ -1141,22 +1176,27 @@ attachment` for non-inline types and the CDN streams the FULL asset.
 > buyer-controlled versions, the buyer no longer needs to "download before it
 > disappears". Terms (§13) still recommend keeping local copies.
 
-### 8.8 Moderation Blocks & Dispute Flow (🔜 H3 / D-09 / D-13 / D-15 / D-16)
+### 8.8 Moderation Blocks & Dispute Flow (✅ H3 / D-09 / D-13 / D-15 / D-16)
 
 #### Two kinds of rejection (D-13)
 
 | What is moderated | Outcome | Access | Dispute |
 |---|---|---|---|
-| A **pending edit** (`pendingVersion`, N9) — title, description, thumbnail, preview, resource text, new FULL file, collection items | **`CHANGES_REJECTED`** — slot cleared, `moderationFeedback` set, live document and `status` untouched | Buyers and public unchanged | **None** |
-| The **live content** — by report escalation (`HIGH` severity), a moderator's explicit "remove content", or a late discovery (stolen, illegal) | **`CONTENT_TAKEDOWN`** — `moderationBlock` set (+ `SUSPENDED` by admin-api), a `moderation_cases` document created | **Blocked for everyone, all versions** | **One `OPEN` dispute per affected purchase** |
+| A **pending edit** (`pendingVersion`, N9) — title, description, thumbnail, preview, resource text (🔜 new FULL file: H8; collection items: H2/N8) | **`CHANGES_REJECTED`** — slot cleared, `moderationFeedback` set, live document and `status` untouched | Buyers and public unchanged | **None** |
+| The **live content** — by report escalation (`HIGH` severity), a moderator's explicit "remove content", a human or automatic rejection of content that was live, or a late discovery (stolen, illegal) | **`CONTENT_TAKEDOWN`** — `moderationBlock` set (+ `SUSPENDED` on the explicit action), a `moderation_cases` document created | **Blocked for everyone, all versions** | **One `OPEN` dispute per affected purchase** |
 
 The scope is **inferred from the moderated object** (S-05): the moderator
-never fills a "scope" field. Removing live content is always a separate,
-explicit action with a justification. If the classifier finds an illegal /
+never fills a "scope" field. In code it is the `ModerationJob.scope`
+(`CONTENT` \| `PENDING_VERSION`) for the AI pipeline and two separate
+endpoints / queues for humans (`…/entries/{id}/approve|reject` vs
+`…/entries/{id}/pending-version/approve|reject`). Removing live content is
+always a separate, explicit action with a justification
+(`…/entries/{id}/takedown`). If the classifier finds an illegal /
 high-severity violation inside a pending edit, the edit is rejected **and** a
-`PREVENTIVE` block is placed on the live content until a human reviews it.
+`PREVENTIVE` block is placed on the live content until a human reviews it
+(`ModerationJobService.HIGH_SEVERITY_CATEGORIES`).
 
-#### Trigger (replaces the former status-based pseudocode)
+#### Trigger (✅ `ContentModerationService.openDisputes`)
 
 ```python
 def on_content_blocked(case):               # case: moderation_cases document
@@ -1165,7 +1205,9 @@ def on_content_blocked(case):               # case: moderation_cases document
         entry.moderationBlock = { caseId: case.id, reason: case.reason,
                                   by: case.actor, at: now() }
         db.entries.save(entry)
-        edge_cache.invalidate(entry_id)      # HLS entitlement cache (N6)
+        # Edge: the HLS entitlement cache key is a hash of (entryId + cookie) and
+        # cannot be purged per entry; its positive TTL is 5 min (cdn-worker), which
+        # bounds how long a hot segment keeps playing after a block (N6).
 
     # Affected purchases = UNION of both access paths (D-15 / R-19)
     affected = {}
@@ -1181,10 +1223,18 @@ def on_content_blocked(case):               # case: moderation_cases document
             for e in db.entitlements.find({ tenantId: case.tenantId, targetType: "COLLECTION",
                                             collectionId: coll._id, grantType: "PURCHASE",
                                             status: "ACTIVE" }):
+                # ⚠️ until H2 there is no removedAt: a listed item always covers the right
                 if any(r.removedAt is None or r.removedAt > e.grantedAt for r in recs):
                     affected.setdefault(e.id, (e, set())).[1].add(entry_id)
 
-    # ONE dispute per affected purchase, idempotent on (caseId, entitlementId)
+    # Collection-level block: every buyer of the collection, affected = all its items
+    for coll_id in case.collectionIds:
+        for e in db.entitlements.find({ targetType: "COLLECTION", collectionId: coll_id,
+                                        grantType: "PURCHASE", status: "ACTIVE" }):
+            affected.setdefault(e.id, (e, set())).[1].update(item ids of coll_id)
+
+    # ONE dispute per affected purchase, idempotent on (caseId, entitlementId):
+    # upsert with $setOnInsert only + unique index — never overwrites a resolution
     for e, entry_ids in affected.values():
         db.disputes.upsert(
             { tenantId: case.tenantId, moderationCaseId: case.id, entitlementId: e.id },
@@ -1196,35 +1246,39 @@ def on_content_blocked(case):               # case: moderation_cases document
     # Entitlements are NOT revoked. No refund. No automatic resolution.
 ```
 
-A sweep (same pattern as the payment watchdog) re-runs the trigger for any
-blocked entry whose buyers lack a dispute, so a crash mid-transition never
-leaves a buyer without follow-up (R-20).
+`ModerationCaseSweep` (every 5 min, distributed lock) re-runs the trigger
+for every unresolved case, so a crash mid-transition or a purchase completed
+after the block never leaves a buyer without follow-up (R-20).
 
 #### Resolution — administrator only (D-09)
 
-- The administrator lists disputes **by `moderationCaseId`** and resolves in
-  bulk or individually: `REFUNDED` (compensating payment off-platform; order
-  → `REFUNDED`, entitlement → `REVOKED`), `RESOLVED` (content reinstated:
-  `moderationBlock` cleared, access already back), `DISMISSED` (violation
-  confirmed, no refund).
-- **No code path ever moves a dispute out of `OPEN` or issues a refund by
-  itself.** Opening is automatic; resolving never is.
+- The administrator lists cases and their disputes (`GET
+  /api/moderation/cases`, `…/cases/{id}/disputes`) and resolves **in bulk by
+  case** (`POST …/cases/{id}/resolve`) or individually
+  (`…/disputes/{id}/resolve`): `RESOLVED` (content reinstated:
+  `moderationBlock` cleared, access already back) or `DISMISSED` (violation
+  confirmed, no refund). `REFUNDED` (compensating payment off-platform; order
+  → `REFUNDED`, entitlement → `REVOKED`) is 🔜: admin-api refuses it until
+  that flow exists, so a status write can never claim a refund that did not
+  happen.
+- **No code path in media-store-api ever moves a dispute out of `OPEN` or
+  issues a refund by itself.** Opening is automatic; resolving never is.
 - A buyer banned from the platform is **not** a dispute trigger (the trigger is
   the content, not the user); see N3 in the plan.
 
-> **Implementation status:** none of §8.8 is implemented. Today a `SUSPENDED` /
-> `REJECTED` entry simply disappears from the UI (404 for buyers) while the
-> CDN keeps serving it; administrators handle complaints manually. §8.8 is the
-> first P0 item of the resilience plan (H3 + N9).
+> **Implementation status:** ✅ blocks, cases, dispute trigger, sweep,
+> reinstatement and administrator resolution (`RESOLVED` / `DISMISSED`) are
+> implemented (H3 + N9). 🔜 `REFUNDED` resolution (H11), version-aware
+> resolution (N8) and the collection membership history used by path (b)
+> (H2).
 
-### 8.9 Free content (D-19)
+### 8.9 Free content (D-19) ✅
 
 Free content (`isPaid = false`) is publicly accessible **only** while the
 entry is `PUBLISHED` or `UNLISTED`. In `DRAFT`, `APPROVED`, `IN_REVIEW`,
-`REJECTED`, `ARCHIVED` or `DELETED` only the creator can open or stream it;
-under `moderationBlock` nobody can. This is the UI rule today; ⚠️ the CDN
-currently serves free content in every status, including `SUSPENDED` — H3
-aligns it.
+`REJECTED`, `SUSPENDED`, `ARCHIVED` or `DELETED` only the creator can open or
+stream it; under `moderationBlock` nobody can. Enforced by
+`ContentAccessPolicy` on both the UI and the CDN (H3).
 
 ---
 
@@ -1268,7 +1322,7 @@ db.assets.find({ tenantId: T, entryId: entryId })
 
 Two queries. Asset results give the UI the preview + full asset metadata.
 
-### 9.4 Entitlement Check (Worker flow) — target (`ContentAccessPolicy`, 🔜 H3 / H2 / H8 / N8)
+### 9.4 Entitlement Check (Worker flow) — `ContentAccessPolicy` (✅ H3; 🔜 H2 / H8 / N8 for steps 6 and 8)
 
 ```js
 PUBLIC_VISIBLE = ["PUBLISHED", "UNLISTED"]
@@ -1313,10 +1367,13 @@ assetId = v ? v.assetId : latestReadyFull(T, entryId).id   // never a query that
 return { r2Key, contentType, contentDisposition, hlsPrefix: v ? v.hlsR2Prefix : entry.hlsR2Prefix }
 ```
 
-⚠️ **Today** (`MediaEntitlementService.checkEntitlement`): no step 2; step 4
-is unconditional; step 6 consults `PUBLISHED` collections only and has no
-`removedAt` records; the three denials are one 403; step 8 uses the
-single-result query that throws with two READY FULL assets.
+✅ **Implemented (H3)** in `MediaEntitlementService.check` →
+`ContentAccessPolicy.evaluate`: steps 1–5 and 7 exactly as written; the
+three denials are distinct and returned as `403 {"error":"Forbidden",
+"reason": BLOCKED|HIDDEN|LOCKED}`. ⚠️ Step 6 consults `PUBLISHED`
+collections only and has no `removedAt` records (H2); step 8 serves
+`currentVersion` with the single-result query that throws with two READY
+FULL assets (H8 / N8).
 
 ### 9.5 User's Library ("My Purchases")
 
@@ -1335,7 +1392,8 @@ collectionIds = results.filter(e => e.targetType == "COLLECTION").map(e => e.col
 entries     = db.entries.find({ tenantId: T, _id: { $in: entryIds } })
 collections = db.collections.find({ tenantId: T, _id: { $in: collectionIds } })
 
-// 4. Per-entry access state for the UI (🔜 H3 / N8) — version flags are per entry,
+// 4. Per-entry access state for the UI (🔜 in the library list — the detail page already
+//    returns `status` / `viewerAccess` / 451 since H3; version flags are N8) — per entry,
 //    also for entries reached through a collection
 entries.forEach(entry => {
   entry.accessState  = entry.moderationBlock ? "BLOCKED"          // greyed out, dispute reference
@@ -1521,9 +1579,10 @@ execution and acceptance criteria live there; this table is the map.
 | ~~1~~ | ~~Core indexes exist only as annotations; unique definitions on `orders`/`entitlements` are wrong (§5, §6)~~ — ✅ closed by **H9** (`CoreIndexMigration`, corrected annotations, real-mongod test) | `*Entity`, `CoreIndexMigration` | **H9** | No |
 | ~~2~~ | ~~`prepare` treats `TIP` orders as purchases (§5.3)~~ — ✅ closed by **H10** (`targetType` in the previous-order lookups, real-mongod + `prepare`-level tests) | `OrderRepository`, `OrderMongoRepository`, `OrderRepositoryImpl`, `PaymentService.prepare` | **H10** | No |
 | 3 | Re-purchase after `REVOKED` silently fails (§6) | `PaymentService.createEntitlement` → upsert | **H11** / S-06 | No |
-| 4 | CDN ignores entry status; UI hides buyers in `IN_REVIEW`/`REJECTED`/`SUSPENDED`; free content served in any status; three denials collapsed into one | new `ContentAccessPolicy` used by `MediaEntitlementService` + `PublicEntryService` | **H3** (D-01, D-19, S-03) | Resolved (D-19) |
-| 5 | No `moderationBlock`, `moderation_cases`, `disputes`; takedown = status change | entities + new collections + admin-api moderation | **H3** (D-09, D-13, D-15, D-16) | Resolved |
-| 6 | Edits on published entries overwrite the live document and send it to `IN_REVIEW` | `EntryUploadService`, `CollectionService`, `ModerationJobService` → `pendingVersion` | **N9** (S-05) | No |
+| ~~4~~ | ~~CDN ignores entry status; UI hides buyers in `IN_REVIEW`/`REJECTED`/`SUSPENDED`; free content served in any status; three denials collapsed into one~~ — ✅ closed by **H3** (`ContentAccessPolicy` shared by `MediaEntitlementService` and `PublicEntryService`; `ContentAccessPolicyTest` + `PublicEntryServiceAccessTest` parity matrix) | | **H3** | — |
+| ~~5~~ | ~~No `moderationBlock`, `moderation_cases`, `disputes`; takedown = status change~~ — ✅ closed by **H3** (`ContentModerationService`, `ModerationIndexMigration`, `ModerationCaseSweep`, internal surface for admin-api, admin-ui "Edits & takedowns") | | **H3** | — |
+| ~~6~~ | ~~Edits on published entries overwrite the live document and send it to `IN_REVIEW`~~ — ✅ closed by **N9** for entries (`ContentVersionService`, `ModerationScope`, pending-edit queue). ⚠️ Collection edits (title / description / cover / items) still write live and are **not re-moderated** (pre-existing); `Collection.pendingVersion` deferred to the H2 / N8 block because it depends on the membership history and `changeSummary` | `CollectionService` | **H2 / N8** | No |
+| 6b | admin-api used to persist its partial `EntryDocument` / `CollectionAdminDocument` with `save()`, which **replaced the whole document** and silently dropped every field those models do not declare (`paymentSplits`, `spaceIds`, `hlsR2Prefix`, `thumbnailVariantsPrefix`, `contentFingerprint`, `remix*`, …) on every approve / reject / suspend | admin-api `ModerationService` | ✅ closed by **H3** (all writes go through `/api/internal/moderation/**`; `ModerationServiceTest` asserts no local `save`). ✅ Measured in Atlas on 2026-10-22 (read-only, plan R-34 / rev. 19): no document in `entries`, `collections` or `users` was last written by admin-api (`_class` check), the single human-approved entry was re-saved complete by media-store-api a minute later, no field loss detectable — no repair needed | No |
 | 7 | Second `FULL` upload on a sold entry: no re-moderation, and two READY FULL assets ⇒ 5xx in six call-sites | `AssetRepository` ("latest"), `EntryUploadService` (409 gate) | **H8** | No |
 | 8 | No versions; buyer always sees the live document | `Entry.versions[]/currentVersion`, new `version_choices`, `ContentVersionService` | **N8** (D-14, S-01, S-02, S-07) | Resolved |
 | 9 | Collection access requires `PUBLISHED`; removed items are lost; hard delete with buyers allowed | `MediaEntitlementService`, `PublicEntryService`, `CollectionService` (`items[].addedAt/removedAt`) | **H2** (D-11, D-20, S-04) | Resolved (D-20) |
@@ -1560,7 +1619,7 @@ on-chain change (D-03).
 | **Versions chosen per (user, entry), purchased version computed (D-14 / S-07)** | A collection buyer holds N entries that evolve independently and an entry can be reached by several rights. One tiny `version_choices` document per entry **only when the buyer updates**, and a purchased version derived from immutable dates, is the smallest representation that is unambiguous for both paths. |
 | **Access is decided by two facts, not a status matrix (S-03)** | `status` = public visibility; `moderationBlock` = blocked for everyone. Everything else is derivable. One nullable sub-document instead of a persisted enum. |
 | **Rejection scope inferred from the moderated object (D-13 / S-05)** | Rejecting a pending edit never touches rights; removing live content always does and opens disputes. No "scope" field for moderators to get wrong. |
-| **Pending edits are staged, never applied live (N9)** | A published entry stays `PUBLISHED` while an edit is reviewed; a rejected edit changes nothing visible. One slot, no edit history. |
+| **Pending edits are staged, never applied live (N9)** ✅ | A published entry stays `PUBLISHED` while an edit is reviewed; a rejected edit changes nothing visible. One slot, no edit history. Pricing / wallet / reseller fields are not moderated content and apply live. |
 | **Minimal buyer-controlled versions (D-14)** — three pointers, no file copies, no backfill, no GC in P0 | The buyer keeps what they paid for and decides when to update; the platform pays neither for a full VCS nor for a new deletion path over sold content. |
 | **Takedown blocks all versions (D-16)** | A past approval is not a guarantee of legitimacy; per-version blocking would add ambiguity and an evasion path. |
 | **Disputes are opened automatically, resolved only by an administrator (D-09 / D-15)** | Every affected purchase gets follow-up without inflating admin work: one dispute per purchase, grouped by `moderationCaseId`. Refunds are never automatic — Stellar payments cannot be reversed; compensation is an administrative act. |
@@ -1591,7 +1650,7 @@ on-chain change (D-03).
 - [x] **H9** — real Atlas indexes recorded (plan §10.0: none of the core indexes existed); `CoreIndexMigration`; non-unique order indexes; partial unique entitlement indexes; aligned annotations; `CoreIndexMigrationIntegrationTest` (embedded real mongod, no Docker)
 - [x] **H10** — `targetType` filter in previous-order lookups (`OrderRepository` → `OrderMongoRepository` → `OrderRepositoryImpl` → `PaymentService.prepare`); `PaymentServicePrepareTipIsolationTest` (tip-then-buy, pending-tip-then-buy, purchase regressions) + `OrderRepositoryImplIntegrationTest` (embedded real mongod)
 - [ ] **N10** — this document's factual sync (done in this revision; keep it true)
-- [ ] **H3 + N9** — `ContentAccessPolicy` (§8.3) in CDN and UI; `moderationBlock`; `moderation_cases`; `disputes` trigger with union of access paths; `pendingVersion` staging; free-content rule (D-19); edge-cache invalidation; buyer-facing denial messages
+- [x] **H3 + N9** — `ContentAccessPolicy` (§8.3) in CDN and UI; `moderationBlock` on entries and collections; `moderation_cases`; `disputes` trigger with union of access paths + `ModerationCaseSweep`; `pendingVersion` staging with `ModerationScope`, approval → `versions[]` / `currentVersion`; free-content rule (D-19); internal moderation surface for admin-api (approve / reject / takedown / reinstate / pending-version, cases, disputes) replacing admin-api's whole-document saves; admin-ui "Edits & takedowns" page + Reinstate; storefront 451 notice, status banner, Studio chips; edge entitlement TTL 30 → 5 min. 🔜 left for later blocks: `Collection.pendingVersion` (H2/N8), `REFUNDED` resolution (H11), union-by-right-date in path (b) (H2)
 - [ ] **H8 + N8** — repository "latest READY FULL"; 409 gate on FULL outside the versioned path; `versions[]` / `currentVersion`; `version_choices` collection + unique index; per-entry update / undo; computed purchased version; change summary; "absent = v1"; no GC
 - [ ] **H2 + H11** — `items[].addedAt/removedAt` membership history (no backfill); union-by-right-date in CDN, UI and "My Purchases"; collection access in any status; 409 on hard delete with buyers; `createEntitlement` upsert
 - [ ] **H1**, **N3** — tenant read-only mode; restricted session for sanctioned buyers
@@ -1705,6 +1764,10 @@ intermediary.
 | `EntitlementStatus` | `ACTIVE` ✅ · `REVOKED` (admin refund, design) · `EXPIRED` ⏸ deferred (D-18)      | Entitlement        |
 | `FavoriteItemType`  | `ENTRY, COLLECTION`                                                              | Favorite           |
 | `ModerationDecision`| `APPROVE, REJECT, MANUAL_QUEUE` (scope is inferred from the moderated object, §8.8) | ModerationJob   |
+| `ModerationScope` ✅ (N9) | `CONTENT, PENDING_VERSION` (null on legacy jobs = `CONTENT`) | ModerationJob |
+| `ModerationCaseKind` ✅ (H3) | `TAKEDOWN, PREVENTIVE` | ModerationCase |
+| `ModerationCaseResolution` ✅ (H3) | `REINSTATED, UPHELD` | ModerationCase |
+| `DisputeStatus` ✅ (H3) | `OPEN, REFUNDED, RESOLVED, DISMISSED` | Dispute |
 | `ModerationJobStatus` / `TranscodingJobStatus` | `PENDING, DISPATCHED, PROCESSING, COMPLETED, FAILED, DEAD`   | jobs               |
 | `ThumbnailJobStatus`| `PENDING, DISPATCHED, PROCESSING, COMPLETED, SKIPPED, FAILED, DEAD`              | ThumbnailJob       |
 | `ThumbnailJobKind`  | `THUMBNAIL, PREVIEW, COVER`                                                      | ThumbnailJob       |
@@ -1714,7 +1777,6 @@ intermediary.
 | `RatingProofType`   | `PURCHASE, FREE_VIEW`                                                            | Rating             |
 | `FranchiseStatus` (admin-api) | `ACTIVE, DISABLED`                                                     | Franchise          |
 
-Planned (🔜): `moderation_cases.kind` = `TAKEDOWN \| PREVENTIVE`;
-`moderation_cases.resolution` = `REINSTATED \| UPHELD`; `disputes.status` =
-`OPEN \| REFUNDED \| RESOLVED \| DISMISSED`; `versions[].changeSummary.parts`
-= `FILE \| TITLE \| DESCRIPTION \| THUMBNAIL \| PREVIEW \| RESOURCE_TEXT`.
+`versions[].changeSummary` / `pendingVersion.changeSummary` (✅ N9, plain
+string list): `TITLE \| DESCRIPTION \| RESOURCE_TEXT \| TAGS \| THUMBNAIL \|
+PREVIEW`; 🔜 `FILE` arrives with the versioned FULL replacement (H8 / N8).

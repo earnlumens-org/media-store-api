@@ -25,6 +25,8 @@ import org.earnlumens.mediastore.domain.media.model.PriceCurrency;
 import org.earnlumens.mediastore.domain.media.model.SplitRole;
 import org.earnlumens.mediastore.domain.media.model.ModerationJob;
 import org.earnlumens.mediastore.domain.media.model.ModerationJobStatus;
+import org.earnlumens.mediastore.domain.media.model.ModerationScope;
+import org.earnlumens.mediastore.domain.media.model.PendingVersion;
 import org.earnlumens.mediastore.domain.media.model.TranscodingJobStatus;
 import org.earnlumens.mediastore.domain.media.model.UploadSession;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
@@ -176,6 +178,7 @@ public class EntryUploadService {
     private final org.earnlumens.mediastore.application.payment.StellarTransactionService stellarTransactionService;
     private final ContentFingerprintService contentFingerprintService;
     private final OriginalAttributionService originalAttributionService;
+    private final ContentVersionService contentVersionService;
     private final int dailyEntryLimit;
     private final int maxConcurrentReview;
 
@@ -195,6 +198,7 @@ public class EntryUploadService {
             org.earnlumens.mediastore.application.payment.StellarTransactionService stellarTransactionService,
             ContentFingerprintService contentFingerprintService,
             OriginalAttributionService originalAttributionService,
+            ContentVersionService contentVersionService,
             @Value("${mediastore.abuse.daily-entry-limit:20}") int dailyEntryLimit,
             @Value("${mediastore.abuse.max-concurrent-review:10}") int maxConcurrentReview
     ) {
@@ -213,6 +217,7 @@ public class EntryUploadService {
         this.stellarTransactionService = stellarTransactionService;
         this.contentFingerprintService = contentFingerprintService;
         this.originalAttributionService = originalAttributionService;
+        this.contentVersionService = contentVersionService;
         this.dailyEntryLimit = dailyEntryLimit;
         this.maxConcurrentReview = maxConcurrentReview;
     }
@@ -421,6 +426,9 @@ public class EntryUploadService {
             logger.warn("initUpload: user {} does not own entry {}", userId, request.entryId());
             return Optional.empty();
         }
+        if (entry.isBlocked()) {
+            throw new IllegalArgumentException("CONTENT_BLOCKED");
+        }
 
         MediaKind kind = MediaKind.valueOf(request.kind());
         String sanitizedFileName = sanitizeFileName(request.fileName());
@@ -505,6 +513,9 @@ public class EntryUploadService {
         if (!userId.equals(entry.getUserId())) {
             logger.warn("finalizeUpload: user {} does not own entry {}", userId, request.entryId());
             return Optional.empty();
+        }
+        if (entry.isBlocked()) {
+            throw new IllegalArgumentException("CONTENT_BLOCKED");
         }
 
         MediaKind kind = MediaKind.valueOf(request.kind());
@@ -621,6 +632,32 @@ public class EntryUploadService {
 
         // NOTE: Transcoding for VIDEO assets is deferred until AFTER moderation approval.
         // ModerationJobService.createTranscodingJobForEntry() handles this.
+
+        // ── N9: a new thumbnail / preview on a published entry is STAGED ──
+        // The live keys (what buyers and visitors see) are untouched until
+        // the slot is approved; the entry stays in its status. The asset row
+        // itself was created above — assets are append-only.
+        boolean stagedVisual = (kind == MediaKind.THUMBNAIL || kind == MediaKind.PREVIEW)
+                && ContentVersionService.usesPendingVersion(entry);
+        if (stagedVisual) {
+            PendingVersion slot = contentVersionService.slotFor(entry);
+            if (kind == MediaKind.THUMBNAIL) {
+                slot.setThumbnailR2Key(r2Key);
+            } else {
+                slot.setPreviewR2Key(r2Key);
+            }
+            boolean hasPending = contentVersionService.finalizeStaging(entry, slot);
+            entry.setUpdatedAt(java.time.LocalDateTime.now());
+            entryRepository.save(entry);
+            if (hasPending) {
+                supersedeActiveModerationJob(tenantId, entry,
+                        "Superseded by new " + kind.name().toLowerCase() + " upload");
+                createModerationJob(tenantId, entry, ModerationScope.PENDING_VERSION);
+            }
+            logger.info("finalizeUpload: staged {} change for entry={} (status={}, pending={})",
+                    kind, request.entryId(), entry.getStatus(), hasPending);
+            return Optional.of(new FinalizeUploadResponse(saved.getId(), saved.getStatus().name()));
+        }
 
         // If a THUMBNAIL was finalized, denormalize its R2 key onto the entry for fast reads
         if (kind == MediaKind.THUMBNAIL) {
@@ -834,11 +871,47 @@ public class EntryUploadService {
             logger.warn("updateEntryMetadata: user {} does not own entry {}", userId, entryId);
             return false;
         }
+        if (entry.isBlocked()) {
+            throw new IllegalArgumentException("CONTENT_BLOCKED");
+        }
 
         // ── Block edits while transcoding to avoid races between worker output and entry state ──
         if (isTranscodingInProgress(tenantId, entry)) {
             logger.warn("updateEntryMetadata: blocked, transcoding in progress for entry={}", entryId);
             throw new IllegalArgumentException("TRANSCODING_IN_PROGRESS");
+        }
+
+        // ── N9: content edits of a published entry are STAGED, never written live ──
+        // Title / description / resource text go to the single pendingVersion
+        // slot and are re-moderated there; the entry stays in its status and
+        // buyers / visitors keep seeing the approved content. Commercial
+        // fields (price, wallet, reseller, royalty) are not moderated content
+        // and apply directly, as they never were part of what the classifier
+        // inspects. DRAFT / APPROVED / REJECTED / IN_REVIEW entries (nothing
+        // sold yet) keep writing the live document as before.
+        boolean staged = ContentVersionService.usesPendingVersion(entry);
+        if (staged) {
+            PendingVersion slot = contentVersionService.slotFor(entry);
+            if (request.title() != null) {
+                slot.setTitle(request.title());
+            }
+            if (request.description() != null) {
+                slot.setDescription(request.description());
+            }
+            if (request.resourceContent() != null) {
+                slot.setResourceContent(request.resourceContent());
+            }
+            boolean hasPending = contentVersionService.finalizeStaging(entry, slot);
+            applyCommercialFields(entry, request);
+            entry.setUpdatedAt(java.time.LocalDateTime.now());
+            entryRepository.save(entry);
+            if (hasPending) {
+                supersedeActiveModerationJob(tenantId, entry, "Superseded by a newer edit");
+                createModerationJob(tenantId, entry, ModerationScope.PENDING_VERSION);
+            }
+            logger.info("updateEntryMetadata: staged edit for entry={} (status={}, pending={})",
+                    entryId, entry.getStatus(), hasPending);
+            return true;
         }
 
         if (request.title() != null) {
@@ -847,6 +920,52 @@ public class EntryUploadService {
         if (request.description() != null) {
             entry.setDescription(request.description());
         }
+        applyCommercialFields(entry, request);
+
+        // contentLanguage is intentionally NOT user-editable here.
+        // Initial value comes from upload (user-declared default) and is
+        // overridden later by the moderation pipeline (source of truth).
+
+        if (request.resourceContent() != null) {
+            entry.setResourceContent(request.resourceContent());
+        }
+
+        // spaceIds are intentionally NOT editable here: space publication goes
+        // exclusively through the publishing-block queue (PublishingQueueService).
+
+        // ── Auto-moderation: any edit on a non-DRAFT entry triggers re-review ──
+        boolean requiresReReview = entry.getStatus() != EntryStatus.DRAFT
+                && entry.getStatus() != EntryStatus.IN_REVIEW
+                && entry.getStatus() != EntryStatus.ARCHIVED
+                && entry.getStatus() != EntryStatus.DELETED;
+
+        if (requiresReReview) {
+            EntryStatus previousStatus = entry.getStatus();
+            entry.getStatusHistory().add(
+                    new org.earnlumens.mediastore.domain.media.model.StatusChangeRecord(
+                            previousStatus, EntryStatus.IN_REVIEW, null, "metadata edited"));
+            entry.setStatus(EntryStatus.IN_REVIEW);
+            logger.info("updateEntryMetadata: auto-transition {} → IN_REVIEW for entry={}",
+                    previousStatus, entryId);
+        }
+
+        entry.setUpdatedAt(java.time.LocalDateTime.now());
+        entryRepository.save(entry);
+
+        // Create moderation job after save so the job sees the updated content
+        if (requiresReReview) {
+            createModerationJob(tenantId, entry);
+        }
+
+        logger.info("updateEntryMetadata: entryId={}, title={}", entryId, entry.getTitle());
+        return true;
+    }
+
+    /**
+     * Pricing, wallet, reseller and royalty settings. Shared by the live and
+     * the staged edit paths: these fields are not moderated content.
+     */
+    private void applyCommercialFields(Entry entry, UpdateEntryMetadataRequest request) {
         if (request.isPaid() != null) {
             entry.setPaid(request.isPaid());
             if (Boolean.TRUE.equals(request.isPaid())) {
@@ -906,46 +1025,8 @@ public class EntryUploadService {
             entry.setResellerEnabled(false);
         }
 
-        // contentLanguage is intentionally NOT user-editable here.
-        // Initial value comes from upload (user-declared default) and is
-        // overridden later by the moderation pipeline (source of truth).
-
-        if (request.resourceContent() != null) {
-            entry.setResourceContent(request.resourceContent());
-        }
-
         // Original First royalty (5–50, never zero). null = keep current.
         applyRemixRoyaltySettings(entry, request.remixRoyaltyPercent());
-
-        // spaceIds are intentionally NOT editable here: space publication goes
-        // exclusively through the publishing-block queue (PublishingQueueService).
-
-        // ── Auto-moderation: any edit on a non-DRAFT entry triggers re-review ──
-        boolean requiresReReview = entry.getStatus() != EntryStatus.DRAFT
-                && entry.getStatus() != EntryStatus.IN_REVIEW
-                && entry.getStatus() != EntryStatus.ARCHIVED
-                && entry.getStatus() != EntryStatus.DELETED;
-
-        if (requiresReReview) {
-            EntryStatus previousStatus = entry.getStatus();
-            entry.getStatusHistory().add(
-                    new org.earnlumens.mediastore.domain.media.model.StatusChangeRecord(
-                            previousStatus, EntryStatus.IN_REVIEW, null, "metadata edited"));
-            entry.setStatus(EntryStatus.IN_REVIEW);
-            logger.info("updateEntryMetadata: auto-transition {} → IN_REVIEW for entry={}",
-                    previousStatus, entryId);
-        }
-
-        entry.setUpdatedAt(java.time.LocalDateTime.now());
-        entryRepository.save(entry);
-
-        // Create moderation job after save so the job sees the updated content
-        if (requiresReReview) {
-            createModerationJob(tenantId, entry);
-        }
-
-        logger.info("updateEntryMetadata: entryId={}, title={}", entryId, entry.getTitle());
-        return true;
     }
 
     public boolean updateEntryStatus(String tenantId, String userId, String entryId, UpdateEntryStatusRequest request) {
@@ -962,6 +1043,17 @@ public class EntryUploadService {
         }
 
         EntryStatus newStatus = EntryStatus.valueOf(request.status());
+
+        // ── H3: a moderation block is lifted only by a moderator ──
+        // While blocked, the creator cannot move the entry anywhere (neither
+        // back to PUBLISHED — it would reappear in feeds while the detail and
+        // the CDN deny it — nor through a resubmission that an automatic
+        // approval could turn into a silent reinstatement).
+        if (entry.isBlocked()) {
+            logger.warn("updateEntryStatus: entry {} is under a moderation block (case={}); transition to {} refused",
+                    entryId, entry.getModerationBlock().getCaseId(), newStatus);
+            throw new IllegalArgumentException("CONTENT_BLOCKED");
+        }
 
         // Validate allowed transitions
         if (!isValidStatusTransition(entry.getStatus(), newStatus)) {
@@ -1040,12 +1132,39 @@ public class EntryUploadService {
      * The moderation pipeline will run BEFORE any transcoding happens.
      */
     private void createModerationJob(String tenantId, Entry entry) {
+        createModerationJob(tenantId, entry, ModerationScope.CONTENT);
+    }
+
+    /**
+     * Cancels the active moderation job of the entry, if any. Used when a
+     * newer edit supersedes the content the job was dispatched with.
+     */
+    private void supersedeActiveModerationJob(String tenantId, Entry entry, String reason) {
+        moderationJobService.findActiveByTenantIdAndEntryId(tenantId, entry.getId())
+                .ifPresent(activeJob -> moderationJobService.cancelJob(activeJob, reason));
+    }
+
+    /**
+     * Creates a moderation job. For {@link ModerationScope#PENDING_VERSION}
+     * the textual / visual fields are read from the merged view (slot over
+     * live), so the classifier reviews exactly what would be published; the
+     * FULL source is always the live asset (N9 never replaces the file).
+     */
+    private void createModerationJob(String tenantId, Entry entry, ModerationScope scope) {
         // Skip if there's already an active moderation job
         if (moderationJobService.findActiveByTenantIdAndEntryId(tenantId, entry.getId()).isPresent()) {
             logger.debug("createModerationJob: skipping — active moderation job exists for entry={}",
                     entry.getId());
             return;
         }
+
+        boolean pending = scope == ModerationScope.PENDING_VERSION;
+        String title = pending ? ContentVersionService.effectiveTitle(entry) : entry.getTitle();
+        String description = pending ? ContentVersionService.effectiveDescription(entry) : entry.getDescription();
+        String resourceContent = pending ? ContentVersionService.effectiveResourceContent(entry) : entry.getResourceContent();
+        List<String> tags = pending ? ContentVersionService.effectiveTags(entry) : entry.getTags();
+        String thumbnailR2Key = pending ? ContentVersionService.effectiveThumbnailR2Key(entry) : entry.getThumbnailR2Key();
+        String previewR2Key = pending ? ContentVersionService.effectivePreviewR2Key(entry) : entry.getPreviewR2Key();
 
         // Find the source R2 key — for VIDEO/AUDIO/IMAGE it's the FULL asset
         String sourceR2Key = null;
@@ -1077,30 +1196,36 @@ public class EntryUploadService {
         ModerationJob job = new ModerationJob();
         job.setTenantId(tenantId);
         job.setEntryId(entry.getId());
+        job.setScope(scope);
         job.setSourceR2Key(sourceR2Key);
         job.setSourceContentType(sourceContentType);
         job.setSourceFileName(sourceFileName);
-        job.setThumbnailR2Key(entry.getThumbnailR2Key());
-        job.setPreviewR2Key(entry.getPreviewR2Key());
+        job.setThumbnailR2Key(thumbnailR2Key);
+        job.setPreviewR2Key(previewR2Key);
         job.setEntryType(entry.getType());
-        job.setEntryTitle(entry.getTitle());
-        job.setEntryDescription(entry.getDescription());
+        job.setEntryTitle(title);
+        job.setEntryDescription(description);
         // Join tags list into comma-separated string for the worker
-        if (entry.getTags() != null && !entry.getTags().isEmpty()) {
-            job.setEntryTags(String.join(", ", entry.getTags()));
+        if (tags != null && !tags.isEmpty()) {
+            job.setEntryTags(String.join(", ", tags));
         }
         // Pass resourceContent for RESOURCE entries so Gemini can analyze the full text body
         if (entry.getType() == org.earnlumens.mediastore.domain.media.model.EntryType.RESOURCE
-                && entry.getResourceContent() != null) {
-            job.setResourceContent(entry.getResourceContent());
+                && resourceContent != null) {
+            job.setResourceContent(resourceContent);
         }
         job.setStatus(ModerationJobStatus.PENDING);
         job.setRetryCount(0);
         job.setMaxRetries(moderationJobService.getMaxRetries());
-        moderationJobService.createJob(job);
+        ModerationJob created = moderationJobService.createJob(job);
 
-        logger.info("createModerationJob: created moderation job for entry={}, type={}",
-                entry.getId(), entry.getType());
+        if (pending && entry.getPendingVersion() != null && created != null) {
+            entry.getPendingVersion().setModerationJobId(created.getId());
+            entryRepository.save(entry);
+        }
+
+        logger.info("createModerationJob: created moderation job for entry={}, type={}, scope={}",
+                entry.getId(), entry.getType(), scope);
     }
 
     /**
@@ -1379,7 +1504,10 @@ public class EntryUploadService {
                     doc.getString("resourceContent"),
                     doc.getString("thumbnailVariantsPrefix"),
                     doc.getString("previewVariantsPrefix"),
-                    doc.getString("coverVariantsPrefix")
+                    doc.getString("coverVariantsPrefix"),
+                    doc.get("pendingVersion") != null,
+                    pendingChangesOf(doc),
+                    doc.get("moderationBlock") != null
             );
         }).toList();
 
@@ -1391,6 +1519,14 @@ public class EntryUploadService {
         if (value == null) return null;
         if (value instanceof Number n) return BigDecimal.valueOf(n.doubleValue());
         try { return new BigDecimal(value.toString()); } catch (NumberFormatException e) { return null; }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> pendingChangesOf(org.bson.Document doc) {
+        Object pending = doc.get("pendingVersion");
+        if (!(pending instanceof org.bson.Document p)) return List.of();
+        Object parts = p.get("changeSummary");
+        return parts instanceof List<?> l ? (List<String>) l : List.of();
     }
 
     /**
@@ -1456,7 +1592,10 @@ public class EntryUploadService {
                 entry.isResellerEnabled(),
                 entry.getResellerCommissionPercent(),
                 entry.isRemix(),
-                entry.getRemixRoyaltyPercent()
+                entry.getRemixRoyaltyPercent(),
+                entry.getPendingVersion() != null,
+                entry.getPendingVersion() != null ? entry.getPendingVersion().getChangeSummary() : List.of(),
+                entry.isBlocked()
         );
     }
 

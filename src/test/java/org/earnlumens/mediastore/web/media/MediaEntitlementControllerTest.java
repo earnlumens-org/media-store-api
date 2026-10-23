@@ -102,37 +102,44 @@ class MediaEntitlementControllerTest {
         );
     }
 
+    private MediaEntitlementService.Check allowed() {
+        return new MediaEntitlementService.Check(
+                org.earnlumens.mediastore.application.media.AccessDecision.ALLOWED, Optional.of(allowedResponse()));
+    }
+
+    private MediaEntitlementService.Check denied() {
+        return new MediaEntitlementService.Check(
+                org.earnlumens.mediastore.application.media.AccessDecision.DENIED_LOCKED, Optional.empty());
+    }
+
     // ─── 1) No cookie → service called with null userId ─────
 
     @Test
     void noCookie_freeContent_returns200() throws Exception {
-        when(mediaEntitlementService.checkEntitlement(TENANT_ID, null, ENTRY_ID))
-                .thenReturn(Optional.of(allowedResponse()));
+        when(mediaEntitlementService.check(TENANT_ID, null, ENTRY_ID)).thenReturn(allowed());
 
         mockMvc.perform(get("/api/media/entitlements/{entryId}", ENTRY_ID))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.allowed").value(true));
 
-        verify(mediaEntitlementService).checkEntitlement(TENANT_ID, null, ENTRY_ID);
+        verify(mediaEntitlementService).check(TENANT_ID, null, ENTRY_ID);
     }
 
     @Test
     void noCookie_paidContent_returns403() throws Exception {
-        when(mediaEntitlementService.checkEntitlement(TENANT_ID, null, ENTRY_ID))
-                .thenReturn(Optional.empty());
+        when(mediaEntitlementService.check(TENANT_ID, null, ENTRY_ID)).thenReturn(denied());
 
         mockMvc.perform(get("/api/media/entitlements/{entryId}", ENTRY_ID))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error").value("Forbidden"));
 
-        verify(mediaEntitlementService).checkEntitlement(TENANT_ID, null, ENTRY_ID);
+        verify(mediaEntitlementService).check(TENANT_ID, null, ENTRY_ID);
     }
 
     @Test
     void invalidCookie_freeContent_returns200() throws Exception {
         when(jwtUtils.validateJwtToken("bad.token")).thenReturn(false);
-        when(mediaEntitlementService.checkEntitlement(TENANT_ID, null, ENTRY_ID))
-                .thenReturn(Optional.of(allowedResponse()));
+        when(mediaEntitlementService.check(TENANT_ID, null, ENTRY_ID)).thenReturn(allowed());
 
         mockMvc.perform(get("/api/media/entitlements/{entryId}", ENTRY_ID)
                         .cookie(new Cookie(COOKIE_NAME, "bad.token")))
@@ -140,7 +147,7 @@ class MediaEntitlementControllerTest {
                 .andExpect(jsonPath("$.allowed").value(true));
 
         verify(jwtUtils).validateJwtToken("bad.token");
-        verify(mediaEntitlementService).checkEntitlement(TENANT_ID, null, ENTRY_ID);
+        verify(mediaEntitlementService).check(TENANT_ID, null, ENTRY_ID);
     }
 
     // ─── 2) Valid cookie, not owner, no entitlement → 403 ─────
@@ -148,15 +155,14 @@ class MediaEntitlementControllerTest {
     @Test
     void validCookie_notOwner_noEntitlement_returns403() throws Exception {
         configureValidToken();
-        when(mediaEntitlementService.checkEntitlement(TENANT_ID, USER_ID, ENTRY_ID))
-                .thenReturn(Optional.empty());
+        when(mediaEntitlementService.check(TENANT_ID, USER_ID, ENTRY_ID)).thenReturn(denied());
 
         mockMvc.perform(get("/api/media/entitlements/{entryId}", ENTRY_ID)
                         .cookie(new Cookie(COOKIE_NAME, VALID_TOKEN)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error").value("Forbidden"));
 
-        verify(mediaEntitlementService).checkEntitlement(TENANT_ID, USER_ID, ENTRY_ID);
+        verify(mediaEntitlementService).check(TENANT_ID, USER_ID, ENTRY_ID);
     }
 
     // ─── 3) Valid cookie, user is owner → 200 allowed ─────────
@@ -164,8 +170,7 @@ class MediaEntitlementControllerTest {
     @Test
     void validCookie_owner_returns200() throws Exception {
         configureValidToken();
-        when(mediaEntitlementService.checkEntitlement(TENANT_ID, USER_ID, ENTRY_ID))
-                .thenReturn(Optional.of(allowedResponse()));
+        when(mediaEntitlementService.check(TENANT_ID, USER_ID, ENTRY_ID)).thenReturn(allowed());
 
         mockMvc.perform(get("/api/media/entitlements/{entryId}", ENTRY_ID)
                         .cookie(new Cookie(COOKIE_NAME, VALID_TOKEN)))
@@ -176,7 +181,7 @@ class MediaEntitlementControllerTest {
                 .andExpect(jsonPath("$.contentDisposition").value("inline; filename=\"video.mp4\""))
                 .andExpect(jsonPath("$.fileName").value("video.mp4"));
 
-        verify(mediaEntitlementService).checkEntitlement(TENANT_ID, USER_ID, ENTRY_ID);
+        verify(mediaEntitlementService).check(TENANT_ID, USER_ID, ENTRY_ID);
     }
 
     // ─── 4) Valid cookie, ACTIVE entitlement → 200 allowed ────
@@ -184,15 +189,14 @@ class MediaEntitlementControllerTest {
     @Test
     void validCookie_activeEntitlement_returns200() throws Exception {
         configureValidToken();
-        when(mediaEntitlementService.checkEntitlement(TENANT_ID, USER_ID, ENTRY_ID))
-                .thenReturn(Optional.of(allowedResponse()));
+        when(mediaEntitlementService.check(TENANT_ID, USER_ID, ENTRY_ID)).thenReturn(allowed());
 
         mockMvc.perform(get("/api/media/entitlements/{entryId}", ENTRY_ID)
                         .cookie(new Cookie(COOKIE_NAME, VALID_TOKEN)))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.allowed").value(true));
 
-        verify(mediaEntitlementService).checkEntitlement(TENANT_ID, USER_ID, ENTRY_ID);
+        verify(mediaEntitlementService).check(TENANT_ID, USER_ID, ENTRY_ID);
     }
 
     // ─── 5) Tenant mismatch → 403 ────────────────────────────
@@ -204,8 +208,7 @@ class MediaEntitlementControllerTest {
         when(tenantResolver.resolve(any())).thenReturn(otherTenant);
 
         // Service finds no entry for the mismatched tenant → empty
-        when(mediaEntitlementService.checkEntitlement(otherTenant, USER_ID, ENTRY_ID))
-                .thenReturn(Optional.empty());
+        when(mediaEntitlementService.check(otherTenant, USER_ID, ENTRY_ID)).thenReturn(denied());
 
         mockMvc.perform(get("/api/media/entitlements/{entryId}", ENTRY_ID)
                         .cookie(new Cookie(COOKIE_NAME, VALID_TOKEN)))
@@ -213,8 +216,8 @@ class MediaEntitlementControllerTest {
                 .andExpect(jsonPath("$.error").value("Forbidden"));
 
         // Verify the resolved tenant was passed through (not the entry's tenant)
-        verify(mediaEntitlementService).checkEntitlement(eq(otherTenant), eq(USER_ID), eq(ENTRY_ID));
-        verify(mediaEntitlementService, never()).checkEntitlement(eq(TENANT_ID), anyString(), anyString());
+        verify(mediaEntitlementService).check(eq(otherTenant), eq(USER_ID), eq(ENTRY_ID));
+        verify(mediaEntitlementService, never()).check(eq(TENANT_ID), anyString(), anyString());
     }
 
     // ─── Edge: wrong cookie name is ignored → null userId ────
@@ -222,14 +225,13 @@ class MediaEntitlementControllerTest {
     @Test
     void wrongCookieName_paidContent_returns403() throws Exception {
         configureValidToken();
-        when(mediaEntitlementService.checkEntitlement(TENANT_ID, null, ENTRY_ID))
-                .thenReturn(Optional.empty());
+        when(mediaEntitlementService.check(TENANT_ID, null, ENTRY_ID)).thenReturn(denied());
 
         mockMvc.perform(get("/api/media/entitlements/{entryId}", ENTRY_ID)
                         .cookie(new Cookie("wrong_cookie", VALID_TOKEN)))
                 .andExpect(status().isForbidden())
                 .andExpect(jsonPath("$.error").value("Forbidden"));
 
-        verify(mediaEntitlementService).checkEntitlement(TENANT_ID, null, ENTRY_ID);
+        verify(mediaEntitlementService).check(TENANT_ID, null, ENTRY_ID);
     }
 }

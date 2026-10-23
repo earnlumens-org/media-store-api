@@ -46,6 +46,8 @@ public record CollectionDetailResponse(
             boolean locked,
             boolean unlocked,
             /** R2 prefix for thumbnail variants of this entry. */
-            String thumbnailVariantsPrefix
+            String thumbnailVariantsPrefix,
+            /** Entry is under a moderation block (H3): not accessible to anyone until reinstated. */
+            boolean blocked
     ) {}
 }

@@ -4,6 +4,7 @@ import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.model.ModerationDecision;
 import org.earnlumens.mediastore.domain.media.model.ModerationJob;
 import org.earnlumens.mediastore.domain.media.model.ModerationJobStatus;
+import org.earnlumens.mediastore.domain.media.model.ModerationScope;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.ModerationJobEntity;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
@@ -15,12 +16,24 @@ public interface ModerationJobMapper {
     @Mapping(target = "status", source = "status", qualifiedByName = "stringToModerationJobStatus")
     @Mapping(target = "entryType", source = "entryType", qualifiedByName = "stringToEntryType")
     @Mapping(target = "decision", source = "decision", qualifiedByName = "stringToModerationDecision")
+    @Mapping(target = "scope", source = "scope", qualifiedByName = "stringToModerationScope")
     ModerationJob toModel(ModerationJobEntity entity);
 
     @Mapping(target = "status", source = "status", qualifiedByName = "moderationJobStatusToString")
     @Mapping(target = "entryType", source = "entryType", qualifiedByName = "entryTypeToString")
     @Mapping(target = "decision", source = "decision", qualifiedByName = "moderationDecisionToString")
+    @Mapping(target = "scope", source = "scope", qualifiedByName = "moderationScopeToString")
     ModerationJobEntity toEntity(ModerationJob model);
+
+    @Named("stringToModerationScope")
+    default ModerationScope stringToModerationScope(String value) {
+        return value == null ? null : ModerationScope.valueOf(value);
+    }
+
+    @Named("moderationScopeToString")
+    default String moderationScopeToString(ModerationScope value) {
+        return value == null ? null : value.name();
+    }
 
     @Named("stringToModerationJobStatus")
     default ModerationJobStatus stringToModerationJobStatus(String value) {

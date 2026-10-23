@@ -69,6 +69,7 @@ class TranscodingGateTest {
                 stellarTransactionServiceMock(),
                 mock(ContentFingerprintService.class),
                 mock(OriginalAttributionService.class),
+                mock(ContentVersionService.class),
                 /* dailyEntryLimit  */ 20,
                 /* maxConcurrentReview */ 10
         );

@@ -74,6 +74,13 @@ class TenantIsolationArchTest {
             // Batch lookup keyed by orderId (globally unique); used by the payment
             // reconciliation watchdog to detect COMPLETED orders without entitlement
             "EntitlementRepository#findOrderIdsWithEntitlements",
+            // Platform-level moderation case sweep (H3 / R-20) re-runs the dispute
+            // trigger for unresolved cases across all tenants; each case carries
+            // its own tenantId and every downstream query is scoped by it
+            "ModerationCaseRepository#findAllUnresolved",
+            // Upsert keyed by the Dispute aggregate, whose tenantId is part of the
+            // unique key (tenantId, moderationCaseId, entitlementId)
+            "DisputeRepository#openIfAbsent",
             // The U3 Stellar Ambassador badge is deliberately GLOBAL: granted only from
             // the main tenant but effective on every tenant, so the active-badge check
             // must NOT be scoped by tenantId (see BadgeType.U3 javadoc)

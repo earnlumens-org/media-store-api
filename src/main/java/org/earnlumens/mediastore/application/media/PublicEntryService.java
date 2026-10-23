@@ -6,13 +6,15 @@ import org.earnlumens.mediastore.domain.media.dto.response.PublicEntryResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PublicFeedItemResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PublicFeedPageResponse;
 import org.earnlumens.mediastore.domain.media.model.AssetStatus;
-import org.earnlumens.mediastore.domain.media.model.Entry;
+import org.earnlumens.mediastore.domain.media.model.DisputeStatus;
 import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
+import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
 import org.earnlumens.mediastore.domain.media.model.MediaKind;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
+import org.earnlumens.mediastore.domain.media.repository.DisputeRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
 import org.bson.Document;
@@ -38,47 +40,95 @@ public class PublicEntryService {
     private final AssetRepository assetRepository;
     private final EntitlementRepository entitlementRepository;
     private final CollectionRepository collectionRepository;
+    private final ContentAccessPolicy accessPolicy;
+    private final DisputeRepository disputeRepository;
 
     public PublicEntryService(EntryRepository entryRepository, AssetRepository assetRepository,
                               EntitlementRepository entitlementRepository,
-                              CollectionRepository collectionRepository) {
+                              CollectionRepository collectionRepository,
+                              ContentAccessPolicy accessPolicy, DisputeRepository disputeRepository) {
         this.entryRepository = entryRepository;
         this.assetRepository = assetRepository;
         this.entitlementRepository = entitlementRepository;
         this.collectionRepository = collectionRepository;
+        this.accessPolicy = accessPolicy;
+        this.disputeRepository = disputeRepository;
     }
 
     /**
-     * Returns a single entry by ID for the given tenant.
-     * <p>
-     * Visibility rules:
-     * <ul>
-     *   <li>{@code PUBLISHED} / {@code UNLISTED} — visible to everyone (anonymous included).</li>
-     *   <li>{@code ARCHIVED} — visible only to the owner or to users who have an
-     *       ACTIVE entry- or collection-level entitlement (i.e. they paid for it
-     *       before it was archived). This keeps purchased content reachable even
-     *       after the creator hides it from the public listings.</li>
-     *   <li>Any other status (DRAFT / IN_REVIEW / REJECTED) — empty.</li>
-     * </ul>
+     * Returns a single entry by ID for the given tenant, or the reason it
+     * cannot be shown. Visibility is decided by {@link ContentAccessPolicy}
+     * — the same rule the CDN applies (H3): a moderation block hides the
+     * entry from everyone; the owner always sees it; free content is public
+     * only in {@code PUBLISHED} / {@code UNLISTED} (D-19); a buyer with a
+     * confirmed purchase keeps the page in any status (archived, deleted,
+     * in re-review …). Paid content that is public but not purchased is
+     * still shown — the page is the paywall.
      *
      * @param tenantId the tenant identifier
      * @param entryId  the entry identifier
      * @param viewerUserId optional OAuth user ID of the requester; {@code null} if anonymous
      */
-    public Optional<PublicEntryResponse> getPublishedEntryById(String tenantId, String entryId, String viewerUserId) {
-        return entryRepository.findByTenantIdAndId(tenantId, entryId)
-                .filter(entry -> isVisibleToViewer(tenantId, entry, viewerUserId))
-                .map(entry -> {
-                    // Atomically increment view count (fire-and-forget)
-                    entryRepository.incrementViewCount(tenantId, entryId);
+    public Lookup lookupEntry(String tenantId, String entryId, String viewerUserId) {
+        Optional<Entry> optEntry = entryRepository.findByTenantIdAndId(tenantId, entryId);
+        if (optEntry.isEmpty()) {
+            return Lookup.denied(AccessDecision.DENIED_HIDDEN);
+        }
+        Entry entry = optEntry.get();
+        ContentAccessPolicy.Result result = accessPolicy.evaluate(tenantId, entry, viewerUserId);
 
-                    // For detail view: include FULL asset metadata if available
-                    AssetInfo assetInfo = assetRepository
-                            .findByTenantIdAndEntryIdAndKindAndStatus(tenantId, entryId, MediaKind.FULL, AssetStatus.READY)
-                            .map(asset -> new AssetInfo(asset.getFileName(), asset.getFileSizeBytes(), asset.getContentType(), asset.getScannedAt()))
-                            .orElse(null);
-                    return toPublicResponse(entry, assetInfo);
-                });
+        // The detail page doubles as the paywall: a public, paid, unpurchased
+        // entry is shown (locked). Every other denial hides the page.
+        if (!result.allowed() && result.decision() != AccessDecision.DENIED_LOCKED) {
+            if (result.decision() == AccessDecision.DENIED_BLOCKED) {
+                return Lookup.blocked(openDisputeFor(tenantId, entryId, viewerUserId));
+            }
+            return Lookup.denied(result.decision());
+        }
+
+        // Atomically increment view count (fire-and-forget)
+        entryRepository.incrementViewCount(tenantId, entryId);
+
+        // For detail view: include FULL asset metadata if available
+        AssetInfo assetInfo = assetRepository
+                .findByTenantIdAndEntryIdAndKindAndStatus(tenantId, entryId, MediaKind.FULL, AssetStatus.READY)
+                .map(asset -> new AssetInfo(asset.getFileName(), asset.getFileSizeBytes(), asset.getContentType(), asset.getScannedAt()))
+                .orElse(null);
+        String viewerAccess = result.owner() ? "OWNER" : result.entitled() ? "ENTITLED" : "PUBLIC";
+        return Lookup.found(toPublicResponse(entry, assetInfo, viewerAccess));
+    }
+
+    /**
+     * Result of {@link #lookupEntry}: the page, or why it is not shown. For a
+     * takedown, {@code disputeId} references the viewer's OPEN dispute on this
+     * entry (if any) so the UI can point the buyer to it.
+     */
+    public record Lookup(Optional<PublicEntryResponse> entry, AccessDecision denial, String disputeId) {
+        static Lookup found(PublicEntryResponse r) { return new Lookup(Optional.of(r), null, null); }
+        static Lookup denied(AccessDecision d) { return new Lookup(Optional.empty(), d, null); }
+        static Lookup blocked(String disputeId) {
+            return new Lookup(Optional.empty(), AccessDecision.DENIED_BLOCKED, disputeId);
+        }
+        public boolean blocked() { return denial == AccessDecision.DENIED_BLOCKED; }
+    }
+
+    private String openDisputeFor(String tenantId, String entryId, String viewerUserId) {
+        if (viewerUserId == null) {
+            return null;
+        }
+        return disputeRepository.findByTenantIdAndUserIdAndStatus(tenantId, viewerUserId, DisputeStatus.OPEN)
+                .stream()
+                .filter(d -> d.getAffectedEntryIds().contains(entryId))
+                .map(d -> d.getId())
+                .findFirst()
+                .orElse(null);
+    }
+
+    /**
+     * Returns a single entry by ID for the given tenant (see {@link #lookupEntry}).
+     */
+    public Optional<PublicEntryResponse> getPublishedEntryById(String tenantId, String entryId, String viewerUserId) {
+        return lookupEntry(tenantId, entryId, viewerUserId).entry();
     }
 
     /**
@@ -86,53 +136,6 @@ public class PublicEntryService {
      */
     public Optional<PublicEntryResponse> getPublishedEntryById(String tenantId, String entryId) {
         return getPublishedEntryById(tenantId, entryId, null);
-    }
-
-    private boolean isVisibleToViewer(String tenantId, Entry entry, String viewerUserId) {
-        EntryStatus status = entry.getStatus();
-        if (status == EntryStatus.PUBLISHED || status == EntryStatus.UNLISTED) {
-            return true;
-        }
-        if (status != EntryStatus.ARCHIVED && status != EntryStatus.DELETED) {
-            return false;
-        }
-        // ARCHIVED / DELETED: keep accessible for owner and prior buyers so a
-        // creator hiding or soft-deleting an item does not strand customers
-        // who already paid for it.
-        if (viewerUserId == null) {
-            return false;
-        }
-        if (viewerUserId.equals(entry.getUserId())) {
-            return true;
-        }
-        // Free archived entries stay hidden from the public — only owner sees them.
-        if (!entry.isPaid()) {
-            return false;
-        }
-        boolean entryEntitled = entitlementRepository
-                .existsByTenantIdAndUserIdAndEntryIdAndStatus(
-                        tenantId, viewerUserId, entry.getId(), EntitlementStatus.ACTIVE);
-        if (entryEntitled) {
-            return true;
-        }
-        // Check collection-level entitlement (collection purchase that included this entry).
-        var parentCollections = collectionRepository.findByTenantIdAndStatusAndItemsEntryId(
-                tenantId,
-                org.earnlumens.mediastore.domain.media.model.CollectionStatus.PUBLISHED,
-                entry.getId());
-        if (parentCollections.isEmpty()) {
-            return false;
-        }
-        List<String> paidCollIds = parentCollections.stream()
-                .filter(org.earnlumens.mediastore.domain.media.model.Collection::isPaid)
-                .map(org.earnlumens.mediastore.domain.media.model.Collection::getId)
-                .toList();
-        if (paidCollIds.isEmpty()) {
-            return false;
-        }
-        Set<String> entitledCollIds = entitlementRepository.findEntitledCollectionIds(
-                tenantId, viewerUserId, paidCollIds, EntitlementStatus.ACTIVE);
-        return !entitledCollIds.isEmpty();
     }
 
     /**
@@ -195,6 +198,10 @@ public class PublicEntryService {
     }
 
     private PublicEntryResponse toPublicResponse(Entry entry, AssetInfo assetInfo) {
+        return toPublicResponse(entry, assetInfo, "PUBLIC");
+    }
+
+    private PublicEntryResponse toPublicResponse(Entry entry, AssetInfo assetInfo, String viewerAccess) {
         String publishedAt = entry.getPublishedAt() != null
                 ? entry.getPublishedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
                 : null;
@@ -236,7 +243,9 @@ public class PublicEntryService {
                 entry.isRemix(),
                 entry.isRemix() ? entry.getOriginalEntryId() : null,
                 entry.isRemix() ? entry.getOriginalAuthorUsername() : null,
-                entry.getRemixRoyaltyPercent()
+                entry.getRemixRoyaltyPercent(),
+                entry.getStatus() != null ? entry.getStatus().name() : null,
+                viewerAccess
         );
     }
 

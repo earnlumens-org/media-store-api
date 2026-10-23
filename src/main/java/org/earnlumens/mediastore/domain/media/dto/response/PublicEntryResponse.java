@@ -51,5 +51,16 @@ public record PublicEntryResponse(
         /** Username of the original creator (only when {@link #remix} is true). */
         String originalAuthorUsername,
         /** Royalty percent the original creator earns on remix sales of THIS entry (5–50). */
-        BigDecimal remixRoyaltyPercent
+        BigDecimal remixRoyaltyPercent,
+        /**
+         * Entry status (PUBLISHED, UNLISTED, IN_REVIEW, ARCHIVED, …). Lets the
+         * buyer-facing UI show the right notice ("in review", "archived by the
+         * creator") instead of a generic page (H3 action 7).
+         */
+        String status,
+        /**
+         * How the viewer got here: {@code OWNER}, {@code PUBLIC} or
+         * {@code ENTITLED} (purchased, directly or via a collection).
+         */
+        String viewerAccess
 ) {}

@@ -58,5 +58,17 @@ public interface EntitlementRepository {
      */
     Set<String> findOrderIdsWithEntitlements(java.util.Collection<String> orderIds);
 
+    /**
+     * Every ACTIVE PURCHASE entitlement of {@code targetType = ENTRY} on the
+     * given entry — path (a) of the dispute trigger (DATA-MODEL.md §8.8).
+     */
+    List<Entitlement> findActivePurchasesByEntryId(String tenantId, String entryId);
+
+    /**
+     * Every ACTIVE PURCHASE entitlement of {@code targetType = COLLECTION} on
+     * any of the given collections — path (b) of the dispute trigger.
+     */
+    List<Entitlement> findActivePurchasesByCollectionIds(String tenantId, List<String> collectionIds);
+
     Entitlement save(Entitlement entitlement);
 }

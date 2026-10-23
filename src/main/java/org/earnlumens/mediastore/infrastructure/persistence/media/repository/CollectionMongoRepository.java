@@ -26,5 +26,7 @@ public interface CollectionMongoRepository extends MongoRepository<CollectionEnt
     List<CollectionEntity> findByTenantIdAndStatusAndItems_EntryId(
             String tenantId, String status, String entryId);
 
+    List<CollectionEntity> findByTenantIdAndItems_EntryId(String tenantId, String entryId);
+
     void deleteByTenantIdAndId(String tenantId, String id);
 }

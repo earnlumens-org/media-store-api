@@ -2,7 +2,6 @@ package org.earnlumens.mediastore.web.media;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.earnlumens.mediastore.application.media.MediaEntitlementService;
-import org.earnlumens.mediastore.domain.media.dto.response.MediaEntitlementResponse;
 import org.earnlumens.mediastore.infrastructure.tenant.TenantResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,7 +15,6 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
-import java.util.Optional;
 
 /**
  * Entitlement check endpoint called by the Cloudflare CDN Worker.
@@ -64,17 +62,21 @@ public class MediaEntitlementController {
         // 2. Resolve tenant from Host header
         String tenantId = tenantResolver.resolve(request);
 
-        // 3. Check entitlement (source of truth)
-        //    allowed = (entry.tenantId == tenantId)
-        //              AND (entry.ownerId == userId OR !entry.isPaid OR Entitlement ACTIVE)
-        Optional<MediaEntitlementResponse> result =
-                mediaEntitlementService.checkEntitlement(tenantId, userId, entryId);
+        // 3. Check entitlement (source of truth: ContentAccessPolicy, shared
+        //    with the public detail page — H3). Every denial is a 403 for the
+        //    edge; the reason is exposed so the worker/UI can tell a takedown
+        //    (BLOCKED) from a paywall (LOCKED) or a hidden entry (HIDDEN).
+        MediaEntitlementService.Check check =
+                mediaEntitlementService.check(tenantId, userId, entryId);
 
-        if (result.isEmpty()) {
-            logger.debug("Media entitlement denied: tenantId={}, userId={}, entryId={}", tenantId, userId, entryId);
-            return ResponseEntity.status(403).body(Map.of("error", "Forbidden"));
+        if (check.response().isEmpty()) {
+            logger.debug("Media entitlement denied ({}): tenantId={}, userId={}, entryId={}",
+                    check.decision(), tenantId, userId, entryId);
+            return ResponseEntity.status(403).body(Map.of(
+                    "error", "Forbidden",
+                    "reason", check.decision().name()));
         }
 
-        return ResponseEntity.ok(result.get());
+        return ResponseEntity.ok(check.response().get());
     }
 }

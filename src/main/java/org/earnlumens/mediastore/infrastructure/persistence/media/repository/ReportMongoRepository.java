@@ -21,6 +21,8 @@ public interface ReportMongoRepository extends MongoRepository<ReportEntity, Str
     /** Count distinct reports for an entry. */
     long countByTenantIdAndEntryId(String tenantId, String entryId);
 
+    long countByTenantIdAndEntryIdAndSeverity(String tenantId, String entryId, String severity);
+
     /** Count total reports ever filed by this user. */
     long countByTenantIdAndReporterUserId(String tenantId, String reporterUserId);
 

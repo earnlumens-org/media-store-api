@@ -3,6 +3,7 @@ package org.earnlumens.mediastore.infrastructure.persistence.media.mapper;
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
+import org.earnlumens.mediastore.domain.media.model.EntryVersion;
 import org.earnlumens.mediastore.domain.media.model.MediaVisibility;
 import org.earnlumens.mediastore.domain.media.model.PaymentSplit;
 import org.earnlumens.mediastore.domain.media.model.PriceCurrency;
@@ -10,6 +11,7 @@ import org.earnlumens.mediastore.domain.media.model.PricingMode;
 import org.earnlumens.mediastore.domain.media.model.SplitRole;
 import org.earnlumens.mediastore.domain.media.model.StatusChangeRecord;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.EntryEntity;
+import org.earnlumens.mediastore.infrastructure.persistence.media.entity.EntryVersionEmbeddable;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.PaymentSplitEntity;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.StatusChangeRecordEntity;
 import org.mapstruct.Mapper;
@@ -41,7 +43,17 @@ public interface EntryMapper {
     @Mapping(target = "statusHistory", source = "statusHistory", qualifiedByName = "statusHistoryToEntities")
     @Mapping(target = "authorUsernameLower", source = "authorUsername", qualifiedByName = "toLowerCase")
     @Mapping(target = "titleLower", source = "title", qualifiedByName = "toLowerCase")
+    @Mapping(target = "versions", source = "versions", qualifiedByName = "versionsToEntities")
     EntryEntity toEntity(Entry model);
+
+    EntryVersionEmbeddable toVersionEntity(EntryVersion version);
+
+    /** "Absent = v1" (S-01): an entry without approved edits carries no {@code versions} field at all. */
+    @Named("versionsToEntities")
+    default List<EntryVersionEmbeddable> versionsToEntities(List<EntryVersion> versions) {
+        if (versions == null || versions.isEmpty()) return null;
+        return versions.stream().map(this::toVersionEntity).toList();
+    }
 
     @Named("toLowerCase")
     default String toLowerCase(String value) {

@@ -32,6 +32,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 
 /**
@@ -49,6 +50,7 @@ class ModerationJobServiceTest {
     private ModerationDispatchPort dispatchPort;
     private TranscodingJobService transcodingJobService;
     private ThumbnailJobService thumbnailJobService;
+    private ContentModerationService contentModerationService;
     private Executor dispatchExecutor;
     private ModerationJobService service;
 
@@ -61,13 +63,16 @@ class ModerationJobServiceTest {
         dispatchPort = mock(ModerationDispatchPort.class);
         transcodingJobService = mock(TranscodingJobService.class);
         thumbnailJobService = mock(ThumbnailJobService.class);
+        contentModerationService = mock(ContentModerationService.class);
         dispatchExecutor = Executors.newFixedThreadPool(2);
         config = new ModerationConfig();
         config.setMaxRetries(2);
         config.setHeartbeatTimeoutSeconds(120);
         config.setStaleBatchSize(10);
         config.setDispatchBatchSize(5);
-        service = new ModerationJobService(jobRepository, entryRepository, collectionRepository, assetRepository, config, dispatchPort, transcodingJobService, thumbnailJobService, dispatchExecutor);
+        service = new ModerationJobService(jobRepository, entryRepository, collectionRepository, assetRepository, config, dispatchPort, transcodingJobService, thumbnailJobService,
+                new ContentVersionService(entryRepository, assetRepository, thumbnailJobService),
+                contentModerationService, dispatchExecutor);
 
         when(jobRepository.save(any(ModerationJob.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
@@ -449,5 +454,151 @@ class ModerationJobServiceTest {
         assertEquals(2, service.getMaxRetries());
         config.setMaxRetries(5);
         assertEquals(5, service.getMaxRetries());
+    }
+
+    // ─── Scope-aware decisions (N9 / S-05 / D-13) ──────────────
+
+    @Nested
+    class ScopeInference {
+
+        private Entry publishedWithPendingEdit() {
+            Entry entry = testEntry(EntryType.IMAGE);
+            entry.setStatus(EntryStatus.PUBLISHED);
+            entry.setTitle("Approved title");
+            var slot = new org.earnlumens.mediastore.domain.media.model.PendingVersion();
+            slot.setTitle("Edited title");
+            slot.setChangeSummary(new java.util.ArrayList<>(List.of("TITLE")));
+            slot.setModerationJobId("mod-1");
+            entry.setPendingVersion(slot);
+            return entry;
+        }
+
+        private ModerationJob pendingVersionJob() {
+            ModerationJob job = staleJob(ModerationJobStatus.PROCESSING, 0, 2);
+            job.setScope(org.earnlumens.mediastore.domain.media.model.ModerationScope.PENDING_VERSION);
+            return job;
+        }
+
+        @Test
+        void approvePendingVersion_projectsSlotAndKeepsStatus() {
+            ModerationJob job = pendingVersionJob();
+            Entry entry = publishedWithPendingEdit();
+            when(jobRepository.findByTenantIdAndId(TENANT, "mod-1")).thenReturn(Optional.of(job));
+            when(entryRepository.findByTenantIdAndId(TENANT, "entry-1")).thenReturn(Optional.of(entry));
+            when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
+            when(assetRepository.findByTenantIdAndEntryId(TENANT, "entry-1")).thenReturn(List.of());
+
+            service.completeJob(TENANT, "mod-1", "APPROVE", 0.9, List.of("NONE"), "ok", "GEMINI", null);
+
+            assertEquals(EntryStatus.PUBLISHED, entry.getStatus());
+            assertEquals("Edited title", entry.getTitle());
+            assertNull(entry.getPendingVersion());
+            assertEquals(2, entry.currentVersionOrOne());
+            // Content-scope side effects must not run for a pending edit
+            verify(transcodingJobService, never()).createJob(any());
+            verifyNoInteractions(contentModerationService);
+        }
+
+        @Test
+        void rejectPendingVersion_changesNothingVisibleAndOpensNoDispute() {
+            ModerationJob job = pendingVersionJob();
+            Entry entry = publishedWithPendingEdit();
+            when(jobRepository.findByTenantIdAndId(TENANT, "mod-1")).thenReturn(Optional.of(job));
+            when(entryRepository.findByTenantIdAndId(TENANT, "entry-1")).thenReturn(Optional.of(entry));
+            when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            service.completeJob(TENANT, "mod-1", "REJECT", 0.9, List.of("SPAM"), "Spammy title", "GEMINI", null);
+
+            assertEquals(EntryStatus.PUBLISHED, entry.getStatus());
+            assertEquals("Approved title", entry.getTitle());
+            assertNull(entry.getPendingVersion());
+            assertEquals("Spammy title", entry.getModerationFeedback());
+            assertFalse(entry.isBlocked());
+            verifyNoInteractions(contentModerationService);
+        }
+
+        @Test
+        void rejectPendingVersion_withHighSeverityCategory_preventivelyBlocksLiveContent() {
+            ModerationJob job = pendingVersionJob();
+            Entry entry = publishedWithPendingEdit();
+            when(jobRepository.findByTenantIdAndId(TENANT, "mod-1")).thenReturn(Optional.of(job));
+            when(entryRepository.findByTenantIdAndId(TENANT, "entry-1")).thenReturn(Optional.of(entry));
+            when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            service.completeJob(TENANT, "mod-1", "REJECT", 0.99, List.of("SCAM"), "Phishing link", "GEMINI", null);
+
+            assertNull(entry.getPendingVersion());
+            assertEquals("Approved title", entry.getTitle());
+            verify(contentModerationService).preventiveBlockEntry(eq(TENANT), eq(entry), anyString(), eq("EarnLumens"));
+        }
+
+        @Test
+        void pendingVersionJob_ignoredWhenSlotBelongsToANewerJob() {
+            ModerationJob job = pendingVersionJob();
+            Entry entry = publishedWithPendingEdit();
+            entry.getPendingVersion().setModerationJobId("mod-2");
+            when(jobRepository.findByTenantIdAndId(TENANT, "mod-1")).thenReturn(Optional.of(job));
+            when(entryRepository.findByTenantIdAndId(TENANT, "entry-1")).thenReturn(Optional.of(entry));
+
+            service.completeJob(TENANT, "mod-1", "APPROVE", 0.9, List.of("NONE"), "ok", "GEMINI", null);
+
+            assertEquals("Approved title", entry.getTitle());
+            assertNotNull(entry.getPendingVersion());
+            verify(entryRepository, never()).save(any());
+        }
+
+        @Test
+        void rejectLiveContentThatWasPublished_isATakedownWithBlock() {
+            ModerationJob job = staleJob(ModerationJobStatus.PROCESSING, 0, 2);
+            Entry entry = testEntry(EntryType.VIDEO);
+            entry.setStatus(EntryStatus.IN_REVIEW);
+            entry.setPreviousStatus(EntryStatus.PUBLISHED);
+            when(jobRepository.findByTenantIdAndId(TENANT, "mod-1")).thenReturn(Optional.of(job));
+            when(entryRepository.findByTenantIdAndId(TENANT, "entry-1")).thenReturn(Optional.of(entry));
+            when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            service.completeJob(TENANT, "mod-1", "REJECT", 0.98, List.of("NSFW"), "NSFW", "NUDENET", null);
+
+            assertEquals(EntryStatus.REJECTED, entry.getStatus());
+            verify(contentModerationService).blockRejectedLiveEntry(eq(TENANT), eq(entry), eq("NSFW"), eq("EarnLumens"));
+        }
+
+        @Test
+        void rejectFirstSubmission_isPlainRejectWithoutBlock() {
+            ModerationJob job = staleJob(ModerationJobStatus.PROCESSING, 0, 2);
+            Entry entry = testEntry(EntryType.VIDEO); // IN_REVIEW, never published
+            when(jobRepository.findByTenantIdAndId(TENANT, "mod-1")).thenReturn(Optional.of(job));
+            when(entryRepository.findByTenantIdAndId(TENANT, "entry-1")).thenReturn(Optional.of(entry));
+            when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            service.completeJob(TENANT, "mod-1", "REJECT", 0.98, List.of("NSFW"), "NSFW", "NUDENET", null);
+
+            assertEquals(EntryStatus.REJECTED, entry.getStatus());
+            verifyNoInteractions(contentModerationService);
+        }
+
+        @Test
+        void approveBlockedContent_neverLiftsTheBlock() {
+            ModerationJob job = staleJob(ModerationJobStatus.PROCESSING, 0, 2);
+            Entry entry = testEntry(EntryType.IMAGE);
+            entry.setModerationBlock(new org.earnlumens.mediastore.domain.media.model.ModerationBlock(
+                    "case", "illegal", "mod", java.time.LocalDateTime.now()));
+            when(jobRepository.findByTenantIdAndId(TENANT, "mod-1")).thenReturn(Optional.of(job));
+            when(entryRepository.findByTenantIdAndId(TENANT, "entry-1")).thenReturn(Optional.of(entry));
+
+            service.completeJob(TENANT, "mod-1", "APPROVE", 0.9, List.of("NONE"), "ok", "GEMINI", null);
+
+            assertEquals(EntryStatus.IN_REVIEW, entry.getStatus());
+            assertTrue(entry.isBlocked());
+            verify(entryRepository, never()).save(any());
+        }
+
+        @Test
+        void highSeverityCategoryDetection() {
+            assertTrue(ModerationJobService.hasHighSeverityCategory(List.of("nsfw", "scam")));
+            assertTrue(ModerationJobService.hasHighSeverityCategory(List.of("SELF_HARM")));
+            assertFalse(ModerationJobService.hasHighSeverityCategory(List.of("NSFW", "SPAM", "LOW_QUALITY")));
+            assertFalse(ModerationJobService.hasHighSeverityCategory(null));
+        }
     }
 }

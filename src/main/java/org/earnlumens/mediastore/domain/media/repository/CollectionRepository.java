@@ -31,6 +31,12 @@ public interface CollectionRepository {
             String tenantId, CollectionStatus status, String entryId);
 
     /**
+     * Collections in ANY status whose {@code items[]} reference the entry
+     * (dispute trigger, DATA-MODEL.md §8.8 path (b)).
+     */
+    List<Collection> findByTenantIdAndItemsEntryId(String tenantId, String entryId);
+
+    /**
      * Bulk-updates authorUsername, authorUsernameLower and authorAvatarUrl on all
      * collections belonging to a user within a tenant. Called when a user's profile
      * info changes (e.g. username change on X/Twitter), mirroring the equivalent

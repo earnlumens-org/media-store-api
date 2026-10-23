@@ -119,8 +119,8 @@ class CrossTenantIsolationTest {
                 });
 
         entitlementService = new MediaEntitlementService(
-                entryRepository, entitlementRepository, assetRepository, collectionRepository,
-                mock(OrderRepository.class));
+                entryRepository, assetRepository,
+                new ContentAccessPolicy(entitlementRepository, collectionRepository, mock(OrderRepository.class)));
 
         uploadService = new EntryUploadService(
                 entryRepository,
@@ -138,6 +138,7 @@ class CrossTenantIsolationTest {
                 stellarTransactionServiceMock(),
                 mock(ContentFingerprintService.class),
                 mock(OriginalAttributionService.class),
+                mock(ContentVersionService.class),
                 /* dailyEntryLimit  */ 20,
                 /* maxConcurrentReview */ 10
         );
