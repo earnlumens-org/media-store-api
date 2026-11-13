@@ -84,12 +84,39 @@ public class Collection {
     public void setSellerWallet(String sellerWallet) { this.sellerWallet = sellerWallet; }
     public List<PaymentSplit> getPaymentSplits() { return paymentSplits; }
     public void setPaymentSplits(List<PaymentSplit> paymentSplits) { this.paymentSplits = paymentSplits; }
+    /** Every membership record, including removed ones (H2 / D-20). Use {@link #activeItems()} for the public listing. */
     public List<CollectionItem> getItems() { return items; }
     public void setItems(List<CollectionItem> items) {
-        if (items != null && items.size() > MAX_ITEMS) {
+        if (items != null && items.stream().filter(CollectionItem::isActive).count() > MAX_ITEMS) {
             throw new IllegalArgumentException("Collection cannot exceed " + MAX_ITEMS + " items");
         }
         this.items = items;
+    }
+
+    /** Records currently listed ({@code removedAt == null}), in position order. */
+    public List<CollectionItem> activeItems() {
+        if (items == null) return List.of();
+        return items.stream()
+                .filter(CollectionItem::isActive)
+                .sorted(java.util.Comparator.comparingInt(CollectionItem::positionOrMax))
+                .toList();
+    }
+
+    public int activeItemCount() {
+        return items == null ? 0 : (int) items.stream().filter(CollectionItem::isActive).count();
+    }
+
+    /**
+     * Records a right granted at {@code grantedAt} covers (D-20): active ones
+     * plus those removed at or after the right started. Removed records that
+     * are covered follow the active ones.
+     */
+    public List<CollectionItem> itemsCoveredBy(LocalDateTime grantedAt) {
+        if (items == null) return List.of();
+        return items.stream()
+                .filter(i -> i.coversRightSince(grantedAt))
+                .sorted(java.util.Comparator.comparingInt(CollectionItem::positionOrMax))
+                .toList();
     }
     public String getContentLanguage() { return contentLanguage; }
     public void setContentLanguage(String contentLanguage) { this.contentLanguage = contentLanguage; }

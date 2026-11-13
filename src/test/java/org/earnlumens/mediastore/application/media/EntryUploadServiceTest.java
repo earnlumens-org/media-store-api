@@ -822,4 +822,119 @@ class EntryUploadServiceTest {
         assertNull(entry.getPendingVersion());
         verify(moderationJobService, never()).createJob(any());
     }
+
+    // ─── H8 gate: the FULL file is immutable once the entry left DRAFT ───
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = EntryStatus.class,
+            names = {"IN_REVIEW", "APPROVED", "PUBLISHED", "UNLISTED", "SUSPENDED", "ARCHIVED", "DELETED"})
+    void h8_initUploadFull_outsideDraft_is409_andCreatesNothing(EntryStatus status) {
+        Entry e = draftEntry();
+        e.setStatus(status);
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(e));
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> service.initUpload(
+                TENANT, USER_ID, new InitUploadRequest(ENTRY_ID, "video.mp4", "video/mp4", "FULL", 1024L)));
+
+        assertEquals(EntryUploadService.FULL_ASSET_LOCKED, ex.getMessage());
+        verifyNoInteractions(r2PresignedUrlService, r2StorageService);
+        verify(uploadSessionRepository, never()).save(any());
+        verify(assetRepository, never()).save(any());
+    }
+
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = EntryStatus.class, names = {"DRAFT", "REJECTED"})
+    void h8_initUploadFull_inDraftOrRejected_neverPublished_stillWorks(EntryStatus status) {
+        Entry e = draftEntry();
+        e.setStatus(status);
+        e.setPublishedAt(null);
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(e));
+        when(r2PresignedUrlService.generatePresignedPutUrl(anyString(), eq("video/mp4"), any()))
+                .thenReturn("https://r2.example.com/presigned");
+
+        assertTrue(service.initUpload(TENANT, USER_ID,
+                new InitUploadRequest(ENTRY_ID, "video.mp4", "video/mp4", "FULL", 1024L)).isPresent());
+    }
+
+    /**
+     * L2 closes the H8 gap: a sold entry that moderation sends back to
+     * {@code REJECTED}, or that the creator re-drafts from
+     * {@code SUSPENDED/ARCHIVED/DELETED}, must not be able to swap the file
+     * buyers paid for. {@code publishedAt} is the "was ever on sale" marker.
+     */
+    @org.junit.jupiter.params.ParameterizedTest
+    @org.junit.jupiter.params.provider.EnumSource(value = EntryStatus.class, names = {"DRAFT", "REJECTED"})
+    void h8_initUploadFull_inDraftOrRejected_butOncePublished_is409(EntryStatus status) {
+        Entry e = draftEntry();
+        e.setStatus(status);
+        e.setPublishedAt(java.time.LocalDateTime.now().minusDays(3));
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(e));
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> service.initUpload(
+                TENANT, USER_ID, new InitUploadRequest(ENTRY_ID, "video.mp4", "video/mp4", "FULL", 1024L)));
+
+        assertEquals(EntryUploadService.FULL_ASSET_LOCKED, ex.getMessage());
+        verifyNoInteractions(r2PresignedUrlService, r2StorageService);
+        verify(uploadSessionRepository, never()).save(any());
+        verify(assetRepository, never()).save(any());
+    }
+
+    @Test
+    void h8_finalizeUploadFull_onRejectedOncePublished_is409_deletesObject() {
+        Entry e = draftEntry();
+        e.setStatus(EntryStatus.REJECTED);
+        e.setPublishedAt(java.time.LocalDateTime.now().minusDays(3));
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(e));
+        stubSession("upload-id", "private/media/entry-abc/full/uuid-img.jpg",
+                "image/jpeg", "img.jpg", "FULL", 1024L);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> service.finalizeUpload(
+                TENANT, USER_ID, new FinalizeUploadRequest(
+                        "upload-id", ENTRY_ID, "private/media/entry-abc/full/uuid-img.jpg",
+                        "image/jpeg", "img.jpg", 1024L, "FULL", 800, 600, null, null, null, null)));
+
+        assertEquals(EntryUploadService.FULL_ASSET_LOCKED, ex.getMessage());
+        verify(r2StorageService).deleteObject("private/media/entry-abc/full/uuid-img.jpg");
+        verify(assetRepository, never()).save(any());
+    }
+
+    @Test
+    void h8_initUploadThumbnail_onRejectedOncePublished_isUnaffected() {
+        Entry e = draftEntry();
+        e.setStatus(EntryStatus.REJECTED);
+        e.setPublishedAt(java.time.LocalDateTime.now().minusDays(3));
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(e));
+        when(r2PresignedUrlService.generatePresignedPutUrl(anyString(), eq("image/png"), any()))
+                .thenReturn("https://r2.example.com/presigned");
+
+        assertTrue(service.initUpload(TENANT, USER_ID,
+                new InitUploadRequest(ENTRY_ID, "thumb.png", "image/png", "THUMBNAIL", 256L)).isPresent());
+    }
+
+    @Test
+    void h8_initUploadThumbnail_onPublished_isUnaffected() {
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(publishedEntry()));
+        when(r2PresignedUrlService.generatePresignedPutUrl(anyString(), eq("image/png"), any()))
+                .thenReturn("https://r2.example.com/presigned");
+
+        assertTrue(service.initUpload(TENANT, USER_ID,
+                new InitUploadRequest(ENTRY_ID, "thumb.png", "image/png", "THUMBNAIL", 256L)).isPresent());
+    }
+
+    @Test
+    void h8_finalizeUploadFull_onPublished_is409_deletesObject_andSavesNoAsset() {
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(publishedEntry()));
+        stubSession("upload-id", "private/media/entry-abc/full/uuid-img.jpg",
+                "image/jpeg", "img.jpg", "FULL", 1024L);
+
+        IllegalStateException ex = assertThrows(IllegalStateException.class, () -> service.finalizeUpload(
+                TENANT, USER_ID, new FinalizeUploadRequest(
+                        "upload-id", ENTRY_ID, "private/media/entry-abc/full/uuid-img.jpg",
+                        "image/jpeg", "img.jpg", 1024L, "FULL", 800, 600, null, null, null, null)));
+
+        assertEquals(EntryUploadService.FULL_ASSET_LOCKED, ex.getMessage());
+        verify(r2StorageService).deleteObject("private/media/entry-abc/full/uuid-img.jpg");
+        verify(assetRepository, never()).save(any());
+        verify(entryRepository, never()).save(any());
+    }
 }

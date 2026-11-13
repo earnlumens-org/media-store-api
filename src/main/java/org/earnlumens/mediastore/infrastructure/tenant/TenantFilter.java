@@ -41,11 +41,12 @@ public class TenantFilter extends OncePerRequestFilter {
                                     FilterChain filterChain)
             throws ServletException, IOException {
         try {
-            String tenantId = tenantResolver.resolve(request);
-            if (tenantId == null) {
-                // Unknown/non-servable custom domain (custom-domain-upgrade 3.1).
-                // Short-circuit with a generic 404 so no downstream code ever
-                // runs without a tenant — and never against the default tenant.
+            TenantResolver.ResolvedTenant resolved = tenantResolver.resolveTenant(request);
+            if (resolved == null) {
+                // Unknown subdomain or non-servable custom domain (H1 action 2,
+                // custom-domain-upgrade 3.1). Short-circuit with a generic 404
+                // so no downstream code ever runs without a tenant — and never
+                // against the default tenant.
                 logger.debug("No tenant for host={}, path={} — responding 404",
                         request.getServerName(), request.getRequestURI());
                 response.setStatus(HttpServletResponse.SC_NOT_FOUND);
@@ -53,8 +54,21 @@ public class TenantFilter extends OncePerRequestFilter {
                 response.getWriter().write("{\"error\":\"tenant_not_found\"}");
                 return;
             }
-            TenantContext.set(tenantId);
-            logger.trace("TenantContext set: tenant={}, path={}", tenantId, request.getRequestURI());
+            TenantContext.set(resolved.tenantId());
+            if (resolved.suspended()) {
+                // BLOCKED tenant: read-only mode (H1). Reads and session
+                // plumbing go through; every operation is refused here.
+                TenantContext.setSuspended(true);
+                if (!TenantSuspensionPolicy.isAllowed(request.getMethod(), request.getRequestURI())) {
+                    logger.info("Tenant {} suspended — refusing {} {}",
+                            resolved.tenantId(), request.getMethod(), request.getRequestURI());
+                    response.setStatus(TenantSuspensionPolicy.STATUS);
+                    response.setContentType("application/json");
+                    response.getWriter().write("{\"error\":\"" + TenantSuspensionPolicy.ERROR_CODE + "\"}");
+                    return;
+                }
+            }
+            logger.trace("TenantContext set: tenant={}, path={}", resolved.tenantId(), request.getRequestURI());
             filterChain.doFilter(request, response);
         } finally {
             TenantContext.clear();

@@ -11,6 +11,7 @@ import org.earnlumens.mediastore.domain.media.model.CollectionItem;
 import org.earnlumens.mediastore.domain.media.model.Entitlement;
 import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
+import org.earnlumens.mediastore.domain.media.model.EntryVersion;
 import org.earnlumens.mediastore.domain.media.model.TargetType;
 import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
@@ -23,11 +24,13 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 
@@ -106,10 +109,18 @@ public class PurchaseListService {
             List<String> collIds = new ArrayList<>(collEntitlementByCollId.keySet());
             List<Collection> collections = collectionRepository.findByTenantIdAndIdIn(tenantId, collIds);
 
+            // Items the buyer's right covers (D-20): active records plus those
+            // removed at or after grantedAt. A blocked collection grants nothing.
+            Map<String, List<CollectionItem>> coveredByColl = new LinkedHashMap<>();
+            for (Collection c : collections) {
+                Entitlement ent = collEntitlementByCollId.get(c.getId());
+                coveredByColl.put(c.getId(), c.isBlocked() || ent == null
+                        ? List.of() : c.itemsCoveredBy(ent.getGrantedAt()));
+            }
+
             // Find entry IDs not yet loaded
-            List<String> expandedEntryIds = collections.stream()
-                    .filter(c -> c.getItems() != null)
-                    .flatMap(c -> c.getItems().stream().map(CollectionItem::getEntryId))
+            List<String> expandedEntryIds = coveredByColl.values().stream()
+                    .flatMap(items -> items.stream().map(CollectionItem::getEntryId))
                     .filter(id -> id != null && !entriesById.containsKey(id))
                     .distinct()
                     .toList();
@@ -119,14 +130,13 @@ public class PurchaseListService {
                         .forEach(e -> entriesById.put(e.getId(), e));
             }
 
-            // Create response items for each entry in each purchased collection
+            // Create response items for each entry the right covers in each purchased collection
             for (Collection coll : collections) {
                 Entitlement ent = collEntitlementByCollId.get(coll.getId());
-                if (coll.getItems() == null) continue;
-                for (CollectionItem item : coll.getItems()) {
+                for (CollectionItem item : coveredByColl.get(coll.getId())) {
                     Entry entry = entriesById.get(item.getEntryId());
                     if (entry != null) {
-                        collectionExpandedItems.add(toResponse(entry, ent));
+                        collectionExpandedItems.add(toResponse(entry, ent, item.rightStartFor(ent.getGrantedAt())));
                     }
                 }
             }
@@ -135,7 +145,7 @@ public class PurchaseListService {
         // 5. Build direct entry items
         List<PurchasedEntryResponse> directItems = entryEntitlements.stream()
                 .filter(ent -> entriesById.containsKey(ent.getEntryId()))
-                .map(ent -> toResponse(entriesById.get(ent.getEntryId()), ent))
+                .map(ent -> toResponse(entriesById.get(ent.getEntryId()), ent, ent.getGrantedAt()))
                 .toList();
 
         // 6. Merge, deduplicate by entry ID (direct purchases take precedence)
@@ -155,26 +165,48 @@ public class PurchaseListService {
                 entitlementPage.getTotalPages());
     }
 
-    private PurchasedEntryResponse toResponse(Entry entry, Entitlement entitlement) {
+    /**
+     * @param rightStart when the buyer's right to this entry began (direct
+     *                   {@code grantedAt}, or {@code max(grantedAt, addedAt)}
+     *                   via a collection) — selects the purchased version (N8-lite)
+     */
+    private PurchasedEntryResponse toResponse(Entry entry, Entitlement entitlement, LocalDateTime rightStart) {
+        EntryVersion purchased = ContentVersionService.purchasedVersion(entry, rightStart);
+        String title = entry.getTitle();
+        String description = entry.getDescription();
+        String thumbnailR2Key = entry.getThumbnailR2Key();
+        String previewR2Key = entry.getPreviewR2Key();
+        List<String> tags = entry.getTags();
+        String thumbnailVariantsPrefix = entry.getThumbnailVariantsPrefix();
+        String previewVariantsPrefix = entry.getPreviewVariantsPrefix();
+        if (purchased != null) {
+            title = purchased.getTitle();
+            description = purchased.getDescription();
+            thumbnailR2Key = purchased.getThumbnailR2Key();
+            previewR2Key = purchased.getPreviewR2Key();
+            tags = purchased.getTags();
+            if (!Objects.equals(thumbnailR2Key, entry.getThumbnailR2Key())) thumbnailVariantsPrefix = null;
+            if (!Objects.equals(previewR2Key, entry.getPreviewR2Key())) previewVariantsPrefix = null;
+        }
         return new PurchasedEntryResponse(
                 entry.getId(),
                 entry.getType() != null ? entry.getType().name().toLowerCase() : "resource",
-                entry.getTitle(),
-                entry.getDescription(),
+                title,
+                description,
                 entry.getAuthorUsername(),
                 entry.getAuthorAvatarUrl(),
                 entry.getPublishedAt() != null ? entry.getPublishedAt().format(ISO_FORMATTER) : null,
-                entry.getThumbnailR2Key(),
-                entry.getPreviewR2Key(),
+                thumbnailR2Key,
+                previewR2Key,
                 entry.getDurationSec(),
                 entry.isPaid(),
                 entry.getPriceXlm(),
-                entry.getTags(),
+                tags,
                 entitlement.getGrantedAt() != null
                         ? entitlement.getGrantedAt().format(ISO_FORMATTER)
                         : null,
-                entry.getThumbnailVariantsPrefix(),
-                entry.getPreviewVariantsPrefix()
+                thumbnailVariantsPrefix,
+                previewVariantsPrefix
         );
     }
 
@@ -220,7 +252,7 @@ public class PurchaseListService {
                             coll.getAuthorAvatarUrl(),
                             coll.isPaid(),
                             coll.getPriceXlm(),
-                            coll.getItems() != null ? coll.getItems().size() : 0,
+                            coll.isBlocked() ? 0 : coll.itemsCoveredBy(ent.getGrantedAt()).size(),
                             coll.getContentLanguage(),
                             ent.getGrantedAt() != null
                                     ? ent.getGrantedAt().format(ISO_FORMATTER)
@@ -242,14 +274,23 @@ public class PurchaseListService {
 
     /**
      * Returns a unified, paginated feed of purchased entries + collections.
-     * All items are unlocked (user owns them).
+     * All items are unlocked (user owns them). Entry cards show the metadata
+     * of the <b>purchased version</b> (N8-lite), like the detail page, the
+     * library and the CDN: only entries whose document carries
+     * {@code versions[]} are re-read, so the common case stays a single
+     * aggregation.
      */
     public PublicFeedPageResponse getUnifiedPurchases(String tenantId, String userId,
                                                        String type, String search, String sort,
                                                        int page, int size) {
-        // 1. Get ALL entitled entry IDs and collection IDs
-        Set<String> entryIds = entitlementRepository.findAllEntitledEntryIds(
+        // 1. Get ALL entitled entries (with grantedAt) and collection IDs
+        List<Entitlement> entryEntitlements = entitlementRepository.findAllEntryEntitlements(
                 tenantId, userId, EntitlementStatus.ACTIVE);
+        Map<String, LocalDateTime> grantedAtByEntry = new LinkedHashMap<>();
+        for (Entitlement ent : entryEntitlements) {
+            grantedAtByEntry.putIfAbsent(ent.getEntryId(), ent.getGrantedAt());
+        }
+        Set<String> entryIds = grantedAtByEntry.keySet();
         Set<String> collectionIds = entitlementRepository.findAllEntitledCollectionIds(
                 tenantId, userId, EntitlementStatus.ACTIVE);
 
@@ -265,32 +306,79 @@ public class PurchaseListService {
                 tenantId, entryIds, collectionIds, type, search);
         int totalPages = size > 0 ? (int) Math.ceil((double) total / size) : 0;
 
-        // 3. Map docs — all purchased items are unlocked
+        // 3. Purchased version overlay (N8-lite): only for entries with versions[]
+        Map<String, EntryVersion> purchasedByEntry = resolvePurchasedVersions(tenantId, docs, grantedAtByEntry);
+
+        // 4. Map docs — all purchased items are unlocked
         List<PublicFeedItemResponse> content = docs.stream()
-                .map(this::mapPurchasedDoc)
+                .map(doc -> mapPurchasedDoc(doc, purchasedByEntry))
                 .toList();
 
         return new PublicFeedPageResponse(content, page, size, total, totalPages);
     }
 
-    private PublicFeedItemResponse mapPurchasedDoc(Document doc) {
+    /**
+     * For the entry cards on this page whose document has {@code versions[]},
+     * loads the entries and computes the version the buyer's right points at
+     * ({@link ContentVersionService#purchasedVersion}). Entries without
+     * versions or whose purchased version is the current one map to nothing
+     * (the aggregation already carries the live = purchased metadata).
+     */
+    private Map<String, EntryVersion> resolvePurchasedVersions(String tenantId, List<Document> docs,
+                                                               Map<String, LocalDateTime> grantedAtByEntry) {
+        List<String> versionedEntryIds = docs.stream()
+                .filter(d -> "entry".equals(d.getString("kind")))
+                .filter(d -> d.get("versionCount") instanceof Number n && n.intValue() > 0)
+                .map(d -> d.get("_id") != null ? d.get("_id").toString() : null)
+                .filter(id -> id != null && grantedAtByEntry.containsKey(id))
+                .toList();
+        if (versionedEntryIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<String, EntryVersion> result = new LinkedHashMap<>();
+        for (Entry entry : entryRepository.findByTenantIdAndIdIn(tenantId, versionedEntryIds)) {
+            EntryVersion purchased = ContentVersionService.purchasedVersion(entry, grantedAtByEntry.get(entry.getId()));
+            if (purchased != null) {
+                result.put(entry.getId(), purchased);
+            }
+        }
+        return result;
+    }
+
+    private PublicFeedItemResponse mapPurchasedDoc(Document doc, Map<String, EntryVersion> purchasedByEntry) {
         String id = doc.get("_id") != null ? doc.get("_id").toString() : null;
         String kind = doc.getString("kind");
         String type = doc.getString("type") != null ? doc.getString("type").toLowerCase() : "resource";
         boolean isPaid = doc.getBoolean("isPaid", false);
 
+        String title = doc.getString("title");
+        String description = doc.getString("description");
+        String thumbnailR2Key = doc.getString("thumbnailR2Key");
+        String thumbnailVariantsPrefix = doc.getString("thumbnailVariantsPrefix");
+        String previewVariantsPrefix = doc.getString("previewVariantsPrefix");
+        EntryVersion purchased = id == null ? null : purchasedByEntry.get(id);
+        if (purchased != null) {
+            title = purchased.getTitle();
+            description = purchased.getDescription();
+            // Variants are derived from the live keys; drop them when the
+            // purchased key differs so the card falls back to the original.
+            if (!Objects.equals(purchased.getThumbnailR2Key(), thumbnailR2Key)) thumbnailVariantsPrefix = null;
+            if (!Objects.equals(purchased.getPreviewR2Key(), doc.getString("previewR2Key"))) previewVariantsPrefix = null;
+            thumbnailR2Key = purchased.getThumbnailR2Key();
+        }
+
         return new PublicFeedItemResponse(
                 id,
                 kind,
                 type,
-                doc.getString("title"),
-                doc.getString("description"),
+                title,
+                description,
                 doc.getString("authorUsername"),
                 doc.getString("authorAvatarUrl"),
                 doc.getString("authorBadge"),
                 doc.get("publishedAt") instanceof java.util.Date d ? d.toInstant().toString() :
                     (doc.get("publishedAt") instanceof String s ? s : null),
-                doc.getString("thumbnailR2Key"),
+                thumbnailR2Key,
                 doc.getString("coverR2Key"),
                 doc.getInteger("durationSec"),
                 doc.get("viewCount") instanceof Number n ? n.longValue() : 0L,
@@ -301,8 +389,8 @@ public class PurchaseListService {
                 doc.getInteger("itemCount", 0),
                 false,  // locked: never locked (user owns it)
                 isPaid,  // unlocked: true for paid items (user bought it)
-                doc.getString("thumbnailVariantsPrefix"),
-                doc.getString("previewVariantsPrefix"),
+                thumbnailVariantsPrefix,
+                previewVariantsPrefix,
                 doc.getString("coverVariantsPrefix"),
                 doc.getBoolean("remix", false)
         );

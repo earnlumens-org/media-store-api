@@ -43,4 +43,6 @@ public interface EntitlementMongoRepository extends MongoRepository<EntitlementE
 
     List<EntitlementEntity> findByTenantIdAndTargetTypeAndCollectionIdInAndGrantTypeAndStatus(
             String tenantId, String targetType, List<String> collectionIds, String grantType, String status);
+
+    boolean existsByTenantIdAndCollectionId(String tenantId, String collectionId);
 }

@@ -32,6 +32,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.regex.Pattern;
 import java.util.ArrayList;
@@ -57,6 +59,7 @@ public class CollectionService {
     private final UserBadgeService userBadgeService;
     private final ModerationJobService moderationJobService;
     private final org.earnlumens.mediastore.application.payment.StellarTransactionService stellarTransactionService;
+    private final ContentAccessPolicy accessPolicy;
 
     public CollectionService(CollectionRepository collectionRepository,
                              EntryRepository entryRepository,
@@ -65,7 +68,8 @@ public class CollectionService {
                              R2PresignedUrlService r2PresignedUrlService,
                              UserBadgeService userBadgeService,
                              ModerationJobService moderationJobService,
-                             org.earnlumens.mediastore.application.payment.StellarTransactionService stellarTransactionService) {
+                             org.earnlumens.mediastore.application.payment.StellarTransactionService stellarTransactionService,
+                             ContentAccessPolicy accessPolicy) {
         this.collectionRepository = collectionRepository;
         this.entryRepository = entryRepository;
         this.entitlementRepository = entitlementRepository;
@@ -74,6 +78,7 @@ public class CollectionService {
         this.userBadgeService = userBadgeService;
         this.moderationJobService = moderationJobService;
         this.stellarTransactionService = stellarTransactionService;
+        this.accessPolicy = accessPolicy;
     }
 
     // ── CRUD ──
@@ -226,8 +231,8 @@ public class CollectionService {
             validatePaidCollectionPrice(collection);
         }
 
-        // Validate all items reference published entries
-        List<String> itemEntryIds = collection.getItems().stream()
+        // Validate all active items reference published entries
+        List<String> itemEntryIds = collection.activeItems().stream()
                 .map(CollectionItem::getEntryId).toList();
         if (!itemEntryIds.isEmpty()) {
             List<Entry> entries = entryRepository.findByTenantIdAndIdIn(tenantId, itemEntryIds);
@@ -345,6 +350,9 @@ public class CollectionService {
         return true;
     }
 
+    /** Error code of the 409 returned when a collection with buyers is hard-deleted (H2). */
+    public static final String COLLECTION_HAS_BUYERS = "COLLECTION_HAS_BUYERS";
+
     public boolean deleteCollection(String tenantId, String userId, String collectionId) {
         Optional<Collection> opt = collectionRepository.findByTenantIdAndId(tenantId, collectionId);
         if (opt.isEmpty() || !opt.get().getUserId().equals(userId)) {
@@ -356,6 +364,11 @@ public class CollectionService {
                 && collection.getStatus() != CollectionStatus.REJECTED) {
             throw new IllegalArgumentException("Only DRAFT or REJECTED collections can be deleted");
         }
+        // A collection somebody paid for is never hard-deleted: the entitlement
+        // would point at nothing (H2 action 3). Soft delete remains available.
+        if (entitlementRepository.existsByTenantIdAndCollectionId(tenantId, collectionId)) {
+            throw new IllegalStateException(COLLECTION_HAS_BUYERS);
+        }
 
         collectionRepository.deleteByTenantIdAndId(tenantId, collectionId);
         logger.info("Deleted collection id={}", collectionId);
@@ -363,6 +376,10 @@ public class CollectionService {
     }
 
     // ── Item Management ──
+    // Membership records are never deleted (H2 / D-20 / S-04): adding appends
+    // {entryId, position, addedAt}; removing stamps removedAt and clears the
+    // position; reordering touches active records only. Nothing here writes
+    // an entitlement — the buyer's right is evaluated from these dates.
 
     public boolean addItem(String tenantId, String userId, String collectionId, String entryId) {
         Optional<Collection> opt = collectionRepository.findByTenantIdAndId(tenantId, collectionId);
@@ -380,14 +397,15 @@ public class CollectionService {
         Collection collection = opt.get();
         List<CollectionItem> items = new ArrayList<>(collection.getItems());
 
-        // Prevent duplicates
-        boolean alreadyPresent = items.stream().anyMatch(i -> i.getEntryId().equals(entryId));
+        // Prevent duplicates among active records (a removed record is history, not a duplicate)
+        boolean alreadyPresent = items.stream().anyMatch(i -> i.isActive() && i.getEntryId().equals(entryId));
         if (alreadyPresent) {
             return true; // idempotent
         }
 
-        int nextPosition = items.stream().mapToInt(CollectionItem::getPosition).max().orElse(-1) + 1;
-        items.add(new CollectionItem(entryId, nextPosition));
+        int nextPosition = items.stream().filter(CollectionItem::isActive)
+                .mapToInt(CollectionItem::positionOrMax).max().orElse(-1) + 1;
+        items.add(new CollectionItem(entryId, nextPosition, LocalDateTime.now(ZoneOffset.UTC)));
         collection.setItems(items);
         collectionRepository.save(collection);
         return true;
@@ -401,15 +419,20 @@ public class CollectionService {
 
         Collection collection = opt.get();
         List<CollectionItem> items = new ArrayList<>(collection.getItems());
-        boolean removed = items.removeIf(i -> i.getEntryId().equals(entryId));
+        LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+        boolean removed = false;
+        for (CollectionItem i : items) {
+            if (i.isActive() && i.getEntryId().equals(entryId)) {
+                i.setRemovedAt(now);
+                i.setPosition(null);
+                removed = true;
+            }
+        }
         if (!removed) {
             return false;
         }
 
-        // Re-index positions
-        for (int i = 0; i < items.size(); i++) {
-            items.get(i).setPosition(i);
-        }
+        reindexActive(items);
         collection.setItems(items);
         collectionRepository.save(collection);
         return true;
@@ -422,21 +445,37 @@ public class CollectionService {
         }
 
         Collection collection = opt.get();
-        Set<String> currentEntryIds = collection.getItems().stream()
+        List<CollectionItem> active = collection.activeItems();
+        Set<String> currentEntryIds = active.stream()
                 .map(CollectionItem::getEntryId).collect(Collectors.toSet());
 
-        // Verify all entryIds are in the current items
-        if (!currentEntryIds.equals(Set.copyOf(entryIds))) {
+        // Verify all entryIds are exactly the current active items
+        if (entryIds.size() != currentEntryIds.size() || !currentEntryIds.equals(Set.copyOf(entryIds))) {
             throw new IllegalArgumentException("Provided entryIds don't match current collection items");
         }
 
-        List<CollectionItem> reordered = new ArrayList<>();
+        Map<String, Integer> newPosition = new java.util.HashMap<>();
         for (int i = 0; i < entryIds.size(); i++) {
-            reordered.add(new CollectionItem(entryIds.get(i), i));
+            newPosition.put(entryIds.get(i), i);
         }
-        collection.setItems(reordered);
+        List<CollectionItem> items = new ArrayList<>(collection.getItems());
+        for (CollectionItem i : items) {
+            if (i.isActive()) {
+                i.setPosition(newPosition.get(i.getEntryId()));
+            }
+        }
+        collection.setItems(items);
         collectionRepository.save(collection);
         return true;
+    }
+
+    /** Re-numbers the positions of the active records in their current order; removed records are untouched. */
+    private static void reindexActive(List<CollectionItem> items) {
+        int p = 0;
+        for (CollectionItem i : items.stream().filter(CollectionItem::isActive)
+                .sorted(java.util.Comparator.comparingInt(CollectionItem::positionOrMax)).toList()) {
+            i.setPosition(p++);
+        }
     }
 
     // ── Queries ──
@@ -476,7 +515,14 @@ public class CollectionService {
                 collectionPage.getTotalElements(), collectionPage.getTotalPages());
     }
 
-    /** Public collection detail with hydrated entries and per-entry access status */
+    /**
+     * Collection detail with hydrated entries and per-entry access status.
+     * Visibility follows {@link ContentAccessPolicy#evaluateCollection}: a
+     * moderation block hides it from everyone; the owner always sees it; the
+     * public sees it while {@code PUBLISHED}; a buyer with a confirmed purchase
+     * opens it in <b>any</b> status (H2) and additionally sees the items the
+     * creator removed after the purchase, which the buyer retains (D-20).
+     */
     public Optional<CollectionDetailResponse> getCollectionDetail(String tenantId, String collectionId, String userId) {
         Optional<Collection> opt = collectionRepository.findByTenantIdAndId(tenantId, collectionId);
         if (opt.isEmpty()) {
@@ -484,35 +530,28 @@ public class CollectionService {
         }
 
         Collection collection = opt.get();
-        boolean isOwner = userId != null && userId.equals(collection.getUserId());
+        ContentAccessPolicy.Result access = accessPolicy.evaluateCollection(tenantId, collection, userId);
+        boolean isOwner = access.owner();
+        boolean hasCollEntitlement = access.entitled();
 
-        // H3: a moderation block hides the collection from everyone, owner included
-        if (collection.isBlocked()) {
+        // Blocked (H3) or hidden from this viewer: a public, paid, unpurchased
+        // collection is still shown (the page is the paywall).
+        if (!access.allowed() && access.decision() != AccessDecision.DENIED_LOCKED) {
             return Optional.empty();
         }
 
-        // Non-owner can only see published collections
-        if (!isOwner && collection.getStatus() != CollectionStatus.PUBLISHED) {
-            return Optional.empty();
-        }
-
-        // Compute locked/unlocked for the collection itself
-        boolean hasCollEntitlement = false;
-        if (collection.isPaid() && !isOwner && userId != null) {
-            hasCollEntitlement = entitlementRepository
-                    .existsByTenantIdAndUserIdAndTargetTypeAndCollectionIdAndStatus(
-                            tenantId, userId,
-                            org.earnlumens.mediastore.domain.media.model.TargetType.COLLECTION,
-                            collectionId, EntitlementStatus.ACTIVE);
-        }
         final boolean collLocked = collection.isPaid() && !isOwner && !hasCollEntitlement;
         final boolean collUnlocked = collection.isPaid() && !isOwner && hasCollEntitlement;
 
-        // Hydrate entries
-        List<CollectionItem> sortedItems = collection.getItems().stream()
-                .sorted((a, b) -> Integer.compare(a.getPosition(), b.getPosition()))
-                .toList();
-        List<String> entryIds = sortedItems.stream().map(CollectionItem::getEntryId).toList();
+        // Items to show: active records for everyone; a buyer also gets the
+        // records removed at or after their right started (retained, D-20).
+        List<CollectionItem> activeItems = collection.activeItems();
+        List<CollectionItem> retainedItems = hasCollEntitlement
+                ? collection.itemsCoveredBy(access.rightStart()).stream().filter(i -> !i.isActive()).toList()
+                : List.of();
+        List<String> entryIds = new ArrayList<>();
+        activeItems.forEach(i -> entryIds.add(i.getEntryId()));
+        retainedItems.forEach(i -> { if (!entryIds.contains(i.getEntryId())) entryIds.add(i.getEntryId()); });
 
         Map<String, Entry> entriesById = entryIds.isEmpty() ? Map.of()
                 : entryRepository.findByTenantIdAndIdIn(tenantId, entryIds).stream()
@@ -530,39 +569,45 @@ public class CollectionService {
         }
 
         Set<String> finalEntitledEntryIds = entitledEntryIds;
-        List<CollectionDetailResponse.CollectionEntryItem> entryItems = sortedItems.stream()
-                .filter(item -> entriesById.containsKey(item.getEntryId()))
-                .filter(item -> isOwner || entriesById.get(item.getEntryId()).getStatus() == EntryStatus.PUBLISHED)
-                .map(item -> {
-                    Entry entry = entriesById.get(item.getEntryId());
-                    boolean entryLocked;
-                    boolean entryUnlocked;
-                    if (!entry.isPaid() || isOwner || collUnlocked) {
-                        entryLocked = false;
-                        entryUnlocked = entry.isPaid();
-                    } else {
-                        entryUnlocked = finalEntitledEntryIds.contains(entry.getId());
-                        entryLocked = !entryUnlocked;
-                    }
-
-                    return new CollectionDetailResponse.CollectionEntryItem(
-                            entry.getId(),
-                            item.getPosition(),
-                            entry.getType() != null ? entry.getType().name().toLowerCase() : "resource",
-                            entry.getTitle(),
-                            entry.getDescription(),
-                            entry.getAuthorUsername(),
-                            entry.getThumbnailR2Key(),
-                            entry.getDurationSec(),
-                            entry.isPaid(),
-                            entry.getPriceXlm(),
-                            entryLocked,
-                            entryUnlocked,
-                            entry.getThumbnailVariantsPrefix(),
-                            entry.isBlocked()
-                    );
-                })
-                .toList();
+        java.util.function.Function<CollectionItem, CollectionDetailResponse.CollectionEntryItem> toItem = item -> {
+            Entry entry = entriesById.get(item.getEntryId());
+            boolean entryLocked;
+            boolean entryUnlocked;
+            if (!entry.isPaid() || isOwner || collUnlocked) {
+                entryLocked = false;
+                entryUnlocked = entry.isPaid();
+            } else {
+                entryUnlocked = finalEntitledEntryIds.contains(entry.getId());
+                entryLocked = !entryUnlocked;
+            }
+            return new CollectionDetailResponse.CollectionEntryItem(
+                    entry.getId(),
+                    item.getPosition() != null ? item.getPosition() : -1,
+                    entry.getType() != null ? entry.getType().name().toLowerCase() : "resource",
+                    entry.getTitle(),
+                    entry.getDescription(),
+                    entry.getAuthorUsername(),
+                    entry.getThumbnailR2Key(),
+                    entry.getDurationSec(),
+                    entry.isPaid(),
+                    entry.getPriceXlm(),
+                    entryLocked,
+                    entryUnlocked,
+                    entry.getThumbnailVariantsPrefix(),
+                    entry.isBlocked(),
+                    !item.isActive()
+            );
+        };
+        // The owner sees every active item; others only PUBLISHED entries —
+        // except a buyer, who keeps their items in any entry status (H3).
+        java.util.function.Predicate<CollectionItem> visible = item -> {
+            Entry e = entriesById.get(item.getEntryId());
+            return e != null && (isOwner || hasCollEntitlement || e.getStatus() == EntryStatus.PUBLISHED);
+        };
+        List<CollectionDetailResponse.CollectionEntryItem> entryItems = activeItems.stream()
+                .filter(visible).map(toItem).toList();
+        List<CollectionDetailResponse.CollectionEntryItem> retainedEntryItems = retainedItems.stream()
+                .filter(visible).map(toItem).toList();
 
         return Optional.of(new CollectionDetailResponse(
                 collection.getId(),
@@ -580,13 +625,14 @@ public class CollectionService {
                 collection.getPriceXlm(),
                 collection.getPriceUsd(),
                 collection.getPriceCurrency() != null ? collection.getPriceCurrency().name() : null,
-                collection.getItems().size(),
+                collection.activeItemCount(),
                 collLocked,
                 collUnlocked,
                 isOwner,
                 collection.getContentLanguage(),
                 entryItems,
-                collection.getCoverVariantsPrefix()
+                collection.getCoverVariantsPrefix(),
+                retainedEntryItems
         ));
     }
 
@@ -603,6 +649,8 @@ public class CollectionService {
                         tenantId, CollectionStatus.PUBLISHED, entryId)
                 .stream()
                 .filter(Collection::isPaid)
+                // the query also matches removed membership records; only live ones are purchasable
+                .filter(c -> c.activeItems().stream().anyMatch(i -> entryId.equals(i.getEntryId())))
                 .map(c -> toResponse(c, true, false))
                 .toList();
     }
@@ -694,7 +742,7 @@ public class CollectionService {
                 collection.getPriceXlm(),
                 collection.getPriceUsd(),
                 collection.getPriceCurrency() != null ? collection.getPriceCurrency().name() : null,
-                collection.getItems() != null ? collection.getItems().size() : 0,
+                collection.activeItemCount(),
                 locked,
                 unlocked,
                 collection.getContentLanguage(),

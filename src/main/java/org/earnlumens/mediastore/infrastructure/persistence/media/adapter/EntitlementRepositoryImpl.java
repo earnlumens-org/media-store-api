@@ -8,8 +8,14 @@ import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.infrastructure.persistence.media.entity.EntitlementEntity;
 import org.earnlumens.mediastore.infrastructure.persistence.media.mapper.EntitlementMapper;
 import org.earnlumens.mediastore.infrastructure.persistence.media.repository.EntitlementMongoRepository;
+import com.mongodb.client.result.UpdateResult;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.data.mongodb.core.query.Criteria;
+import org.springframework.data.mongodb.core.query.Query;
+import org.springframework.data.mongodb.core.query.Update;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -22,11 +28,14 @@ public class EntitlementRepositoryImpl implements EntitlementRepository {
 
     private final EntitlementMongoRepository entitlementMongoRepository;
     private final EntitlementMapper entitlementMapper;
+    private final MongoTemplate mongoTemplate;
 
     public EntitlementRepositoryImpl(EntitlementMongoRepository entitlementMongoRepository,
-                                     EntitlementMapper entitlementMapper) {
+                                     EntitlementMapper entitlementMapper,
+                                     MongoTemplate mongoTemplate) {
         this.entitlementMongoRepository = entitlementMongoRepository;
         this.entitlementMapper = entitlementMapper;
+        this.mongoTemplate = mongoTemplate;
     }
 
     @Override
@@ -130,6 +139,81 @@ public class EntitlementRepositoryImpl implements EntitlementRepository {
                 .map(EntitlementEntity::getCollectionId)
                 .filter(id -> id != null)
                 .collect(Collectors.toSet());
+    }
+
+    @Override
+    public List<Entitlement> findAllCollectionEntitlements(String tenantId, String userId, EntitlementStatus status) {
+        return entitlementMongoRepository
+                .findByTenantIdAndUserIdAndTargetTypeAndStatus(tenantId, userId, TargetType.COLLECTION.name(), status.name())
+                .stream()
+                .filter(e -> e.getCollectionId() != null)
+                .map(entitlementMapper::toModel)
+                .toList();
+    }
+
+    @Override
+    public List<Entitlement> findAllEntryEntitlements(String tenantId, String userId, EntitlementStatus status) {
+        return entitlementMongoRepository
+                .findByTenantIdAndUserIdAndTargetTypeAndStatus(tenantId, userId, TargetType.ENTRY.name(), status.name())
+                .stream()
+                .filter(e -> e.getEntryId() != null)
+                .map(entitlementMapper::toModel)
+                .toList();
+    }
+
+    @Override
+    public boolean existsByTenantIdAndCollectionId(String tenantId, String collectionId) {
+        return entitlementMongoRepository.existsByTenantIdAndCollectionId(tenantId, collectionId);
+    }
+
+    @Override
+    public UpsertOutcome upsertPurchase(Entitlement entitlement) {
+        TargetType targetType = entitlement.getTargetType() != null ? entitlement.getTargetType() : TargetType.ENTRY;
+        Criteria key = Criteria.where("tenantId").is(entitlement.getTenantId())
+                .and("userId").is(entitlement.getUserId())
+                .and("targetType").is(targetType.name());
+        if (targetType == TargetType.COLLECTION) {
+            key = key.and("collectionId").is(entitlement.getCollectionId());
+        } else {
+            key = key.and("entryId").is(entitlement.getEntryId());
+        }
+
+        // 1. Re-purchase after a refund: reactivate the same document (H11).
+        Query revoked = Query.query(key).addCriteria(
+                Criteria.where("status").is(EntitlementStatus.REVOKED.name()));
+        Update reactivate = new Update()
+                .set("status", EntitlementStatus.ACTIVE.name())
+                .set("orderId", entitlement.getOrderId())
+                .set("grantedAt", entitlement.getGrantedAt())
+                .set("franchiseId", entitlement.getFranchiseId())
+                .unset("expiresAt");
+        if (mongoTemplate.updateFirst(revoked, reactivate, EntitlementEntity.class).getModifiedCount() > 0) {
+            return UpsertOutcome.REACTIVATED;
+        }
+
+        // 2. First purchase: insert only if absent; an existing ACTIVE document
+        //    is left exactly as it is (R-30).
+        EntitlementEntity entity = entitlementMapper.toEntity(entitlement);
+        Update insertOnly = new Update()
+                .setOnInsert("tenantId", entity.getTenantId())
+                .setOnInsert("userId", entity.getUserId())
+                .setOnInsert("targetType", targetType.name())
+                .setOnInsert("entryId", entity.getEntryId())
+                .setOnInsert("collectionId", entity.getCollectionId())
+                .setOnInsert("franchiseId", entity.getFranchiseId())
+                .setOnInsert("grantType", entity.getGrantType())
+                .setOnInsert("orderId", entity.getOrderId())
+                .setOnInsert("status", EntitlementStatus.ACTIVE.name())
+                .setOnInsert("grantedAt", entity.getGrantedAt())
+                .setOnInsert("_class", EntitlementEntity.class.getName());
+        try {
+            UpdateResult result = mongoTemplate.upsert(Query.query(key), insertOnly, EntitlementEntity.class);
+            return result.getUpsertedId() != null ? UpsertOutcome.CREATED : UpsertOutcome.UNCHANGED;
+        } catch (DuplicateKeyException concurrentInsert) {
+            // Two upserts of the same right raced on the unique index: the other
+            // one inserted it, so this right already exists exactly as intended.
+            return UpsertOutcome.UNCHANGED;
+        }
     }
 
     @Override

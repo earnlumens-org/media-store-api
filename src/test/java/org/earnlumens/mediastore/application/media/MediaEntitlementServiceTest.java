@@ -404,4 +404,92 @@ class MediaEntitlementServiceTest {
         assertTrue(result.isEmpty());
         verifyNoInteractions(entitlementRepository);
     }
+
+    // ─── N8-lite: the buyer is served the version they acquired ────
+
+    private static final java.time.LocalDateTime T0 = java.time.LocalDateTime.of(2026, 1, 1, 0, 0);
+
+    private Entry versionedVideo() {
+        Entry e = paidEntry();
+        e.setHlsReady(true);
+        e.setHlsR2Prefix("public/media/entry-abc/hls-v2");
+        EntryVersion v1 = new EntryVersion();
+        v1.setVersion(1); v1.setApprovedAt(T0); v1.setAssetId("asset-v1"); v1.setHlsR2Prefix("public/media/entry-abc/hls-v1");
+        EntryVersion v2 = new EntryVersion();
+        v2.setVersion(2); v2.setApprovedAt(T0.plusDays(10)); v2.setAssetId("asset-v2"); v2.setHlsR2Prefix("public/media/entry-abc/hls-v2");
+        e.setVersions(new java.util.ArrayList<>(List.of(v1, v2)));
+        e.setCurrentVersion(2);
+        return e;
+    }
+
+    private Asset full(String id, String r2Key, java.time.LocalDateTime createdAt) {
+        Asset a = fullAsset();
+        a.setId(id);
+        a.setR2Key(r2Key);
+        a.setCreatedAt(createdAt);
+        return a;
+    }
+
+    private void stubVersionedAssets() {
+        Asset v1 = full("asset-v1", "private/media/entry-abc/full/v1.mp4", T0.minusDays(1));
+        Asset v2 = full("asset-v2", "private/media/entry-abc/full/v2.mp4", T0.plusDays(9));
+        when(assetRepository.findByTenantIdAndEntryId(TENANT, ENTRY_ID)).thenReturn(List.of(v1, v2));
+        when(assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(TENANT, ENTRY_ID, MediaKind.FULL, AssetStatus.READY))
+                .thenReturn(Optional.of(v2)); // "latest READY FULL" (H8)
+    }
+
+    @Test
+    void n8_buyerOfV1_getsV1AssetAndHls_whileOwnerGetsV2() {
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(versionedVideo()));
+        stubActivePurchaseEntitlement(BUYER_ID);
+        entitlementRepository.findByTenantIdAndUserIdAndEntryIdAndStatus(TENANT, BUYER_ID, ENTRY_ID, EntitlementStatus.ACTIVE)
+                .get().setGrantedAt(T0.plusDays(5));
+        stubVersionedAssets();
+
+        MediaEntitlementResponse buyer = service.checkEntitlement(TENANT, BUYER_ID, ENTRY_ID).orElseThrow();
+        assertEquals("private/media/entry-abc/full/v1.mp4", buyer.r2Key());
+        assertEquals("public/media/entry-abc/hls-v1", buyer.hlsR2Prefix());
+
+        MediaEntitlementResponse owner = service.checkEntitlement(TENANT, OWNER_ID, ENTRY_ID).orElseThrow();
+        assertEquals("private/media/entry-abc/full/v2.mp4", owner.r2Key());
+        assertEquals("public/media/entry-abc/hls-v2", owner.hlsR2Prefix());
+    }
+
+    @Test
+    void n8_buyerAfterV2_getsLiveV2() {
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(versionedVideo()));
+        stubActivePurchaseEntitlement(BUYER_ID);
+        entitlementRepository.findByTenantIdAndUserIdAndEntryIdAndStatus(TENANT, BUYER_ID, ENTRY_ID, EntitlementStatus.ACTIVE)
+                .get().setGrantedAt(T0.plusDays(15));
+        stubVersionedAssets();
+
+        MediaEntitlementResponse buyer = service.checkEntitlement(TENANT, BUYER_ID, ENTRY_ID).orElseThrow();
+        assertEquals("private/media/entry-abc/full/v2.mp4", buyer.r2Key());
+    }
+
+    @Test
+    void n8_versionPointerWithoutReadyAsset_fallsBackToLatestReadyFull() {
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(versionedVideo()));
+        stubActivePurchaseEntitlement(BUYER_ID);
+        entitlementRepository.findByTenantIdAndUserIdAndEntryIdAndStatus(TENANT, BUYER_ID, ENTRY_ID, EntitlementStatus.ACTIVE)
+                .get().setGrantedAt(T0.plusDays(5));
+        Asset v2 = full("asset-v2", "private/media/entry-abc/full/v2.mp4", T0.plusDays(9));
+        when(assetRepository.findByTenantIdAndEntryId(TENANT, ENTRY_ID)).thenReturn(List.of(v2)); // v1 asset gone
+        when(assetRepository.findByTenantIdAndEntryIdAndKindAndStatus(TENANT, ENTRY_ID, MediaKind.FULL, AssetStatus.READY))
+                .thenReturn(Optional.of(v2));
+
+        MediaEntitlementResponse buyer = service.checkEntitlement(TENANT, BUYER_ID, ENTRY_ID).orElseThrow();
+        assertEquals("private/media/entry-abc/full/v2.mp4", buyer.r2Key());
+        assertEquals("public/media/entry-abc/hls-v1", buyer.hlsR2Prefix()); // version's own prefix still wins
+    }
+
+    @Test
+    void n8_unversionedEntry_neverListsAssets_s01() {
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(paidEntry()));
+        stubActivePurchaseEntitlement(BUYER_ID);
+        configureFullAsset();
+
+        assertTrue(service.checkEntitlement(TENANT, BUYER_ID, ENTRY_ID).isPresent());
+        verify(assetRepository, never()).findByTenantIdAndEntryId(any(), any());
+    }
 }

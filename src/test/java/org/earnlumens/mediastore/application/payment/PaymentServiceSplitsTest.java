@@ -22,8 +22,11 @@ import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for {@link PaymentService#buildFullSplits(String, java.util.List)}
- * covering the three-way (PLATFORM + TENANT + SELLER) payment split math and
- * the safe two-way fallback when the tenant has no doc or is blocked.
+ * covering the three-way (PLATFORM + TENANT + SELLER) payment split math, the
+ * safe two-way fallback when the tenant has no doc or is blocked, and the H7
+ * fail-closed rule: a configured tenant commission without a payable wallet
+ * refuses the sale ({@code TENANT_PAYOUT_UNCONFIGURED}) instead of silently
+ * dropping the split — for purchases, tips and publishing payments alike.
  */
 class PaymentServiceSplitsTest {
 
@@ -116,16 +119,139 @@ class PaymentServiceSplitsTest {
     }
 
     @Test
-    void tenantDocWithNullWallet_isTwoWaySplit() {
+    void tenantFeeWithoutWallet_failsClosed_TENANT_PAYOUT_UNCONFIGURED() {
+        // H7: a mandatory payee that cannot be paid stops the sale instead of
+        // silently handing the tenant's commission to the seller.
         when(tenantConfigService.findActiveBySubdomain("alice"))
                 .thenReturn(Optional.of(tenant("alice", "10.00", "5.00", null)));
 
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> invoke("alice", sellerOnly()));
+        assertEquals(PaymentService.TENANT_PAYOUT_UNCONFIGURED, ex.getMessage());
+    }
+
+    @Test
+    void tenantFeeWithBlankWallet_failsClosed() {
+        when(tenantConfigService.findActiveBySubdomain("alice"))
+                .thenReturn(Optional.of(tenant("alice", "10.00", "5.00", "   ")));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> invoke("alice", sellerOnly()));
+        assertEquals(PaymentService.TENANT_PAYOUT_UNCONFIGURED, ex.getMessage());
+    }
+
+    @Test
+    void zeroTenantFeeWithoutWallet_isStillTwoWaySplit() {
+        // Regression: no commission configured ⇒ nothing mandatory is unpaid.
+        when(tenantConfigService.findActiveBySubdomain("alice"))
+                .thenReturn(Optional.of(tenant("alice", "10.00", "0.00", null)));
+
         List<PaymentSplit> result = invoke("alice", sellerOnly());
 
-        // TENANT split is skipped because no wallet is configured.
         assertEquals(2, result.size());
         assertEquals(SplitRole.PLATFORM, result.get(0).getRole());
         assertEquals(SplitRole.SELLER, result.get(1).getRole());
+        assertTrue(sumTo100(result));
+    }
+
+    // ── Publishing splits (publish fee / FastPass), H7 ────────────────────────
+
+    private List<PaymentSplit> publishing(String tenantId) {
+        return ReflectionTestUtils.invokeMethod(service, "buildPublishingSplits", tenantId);
+    }
+
+    @Test
+    void publishing_mainTenant_is100PercentPlatform() {
+        List<PaymentSplit> result = publishing("earnlumens");
+
+        assertEquals(1, result.size());
+        assertEquals(SplitRole.PLATFORM, result.get(0).getRole());
+        assertEquals(new BigDecimal("100.00"), result.get(0).getPercent());
+    }
+
+    @Test
+    void publishing_secondaryTenantWithWallet_isPlatformPlusTenant() {
+        when(tenantConfigService.findActiveBySubdomain("alice"))
+                .thenReturn(Optional.of(tenant("alice", "10.00", "0.00", TENANT_WALLET)));
+
+        List<PaymentSplit> result = publishing("alice");
+
+        assertEquals(2, result.size());
+        assertEquals(SplitRole.PLATFORM, result.get(0).getRole());
+        assertEquals(new BigDecimal("10.00"), result.get(0).getPercent());
+        assertEquals(SplitRole.TENANT, result.get(1).getRole());
+        assertEquals(TENANT_WALLET, result.get(1).getWallet());
+        assertEquals(new BigDecimal("90.00"), result.get(1).getPercent());
+        assertTrue(sumTo100(result));
+    }
+
+    @Test
+    void publishing_secondaryTenantWithoutWallet_failsClosed() {
+        // Before H7 this silently became 100 % platform.
+        when(tenantConfigService.findActiveBySubdomain("alice"))
+                .thenReturn(Optional.of(tenant("alice", "10.00", "0.00", null)));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> publishing("alice"));
+        assertEquals(PaymentService.TENANT_PAYOUT_UNCONFIGURED, ex.getMessage());
+    }
+
+    @Test
+    void publishing_secondaryTenantWithoutDoc_failsClosed() {
+        when(tenantConfigService.findActiveBySubdomain("ghost")).thenReturn(Optional.empty());
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> publishing("ghost"));
+        assertEquals(PaymentService.TENANT_PAYOUT_UNCONFIGURED, ex.getMessage());
+    }
+
+    @Test
+    void publishing_secondaryTenantPaidToPlatformWallet_is100PercentPlatform() {
+        when(tenantConfigService.findActiveBySubdomain("alice"))
+                .thenReturn(Optional.of(tenant("alice", "10.00", "0.00", PLATFORM_WALLET)));
+
+        List<PaymentSplit> result = publishing("alice");
+
+        assertEquals(1, result.size());
+        assertEquals(SplitRole.PLATFORM, result.get(0).getRole());
+        assertEquals(new BigDecimal("100.00"), result.get(0).getPercent());
+    }
+
+    // ── Pre-sign wallet check names the tenant payout explicitly (H7) ────────
+
+    @Test
+    void inactiveTenantWallet_isReportedAs_TENANT_PAYOUT_UNCONFIGURED() {
+        org.earnlumens.mediastore.application.payment.StellarTransactionService stellar =
+                mock(org.earnlumens.mediastore.application.payment.StellarTransactionService.class);
+        when(stellar.isAccountActiveCached(PLATFORM_WALLET)).thenReturn(true);
+        when(stellar.isAccountActiveCached(TENANT_WALLET)).thenReturn(false);
+        ReflectionTestUtils.setField(service, "stellarTxService", stellar);
+        List<PaymentSplit> splits = List.of(
+                new PaymentSplit(PLATFORM_WALLET, SplitRole.PLATFORM, new BigDecimal("10.00")),
+                new PaymentSplit(TENANT_WALLET, SplitRole.TENANT, new BigDecimal("5.00")),
+                new PaymentSplit(SELLER_WALLET, SplitRole.SELLER, new BigDecimal("85.00")));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> ReflectionTestUtils.invokeMethod(service, "validateSplitWalletsActive",
+                        splits, "alice", "PURCHASE", "entry-1"));
+        assertEquals(PaymentService.TENANT_PAYOUT_UNCONFIGURED, ex.getMessage());
+    }
+
+    @Test
+    void inactiveSellerWallet_isStill_SPLIT_WALLET_NOT_ACTIVE() {
+        org.earnlumens.mediastore.application.payment.StellarTransactionService stellar =
+                mock(org.earnlumens.mediastore.application.payment.StellarTransactionService.class);
+        when(stellar.isAccountActiveCached(PLATFORM_WALLET)).thenReturn(true);
+        when(stellar.isAccountActiveCached(SELLER_WALLET)).thenReturn(false);
+        ReflectionTestUtils.setField(service, "stellarTxService", stellar);
+        List<PaymentSplit> splits = List.of(
+                new PaymentSplit(PLATFORM_WALLET, SplitRole.PLATFORM, new BigDecimal("10.00")),
+                new PaymentSplit(SELLER_WALLET, SplitRole.SELLER, new BigDecimal("90.00")));
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class,
+                () -> ReflectionTestUtils.invokeMethod(service, "validateSplitWalletsActive",
+                        splits, "alice", "PURCHASE", "entry-1"));
+        assertEquals("SPLIT_WALLET_NOT_ACTIVE", ex.getMessage());
     }
 
     @Test

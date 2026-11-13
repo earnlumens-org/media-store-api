@@ -76,6 +76,11 @@ class ModerationJobServiceTest {
 
         when(jobRepository.save(any(ModerationJob.class)))
                 .thenAnswer(inv -> inv.getArgument(0));
+        // Default: this caller wins the completion claim (L2 idempotency) and
+        // the moderated entry still exists (L2 orphan handling).
+        when(jobRepository.claimCompletion(anyString(), anyString())).thenReturn(true);
+        when(entryRepository.findByTenantIdAndId(TENANT, "entry-1"))
+                .thenReturn(Optional.of(testEntry(EntryType.VIDEO)));
     }
 
     private ModerationJob pendingJob() {
@@ -275,6 +280,90 @@ class ModerationJobServiceTest {
             assertEquals(2, recovered);
             assertEquals(ModerationJobStatus.PENDING, retryable.getStatus());
             assertEquals(ModerationJobStatus.DEAD, dead.getStatus());
+        }
+
+        // ── L2: orphan jobs (rev. 19 anomaly) ──
+
+        @Test
+        void staleJob_withoutHeartbeat_whoseEntryWasDeleted_isClosedNotRetried() {
+            ModerationJob orphan = staleJob(ModerationJobStatus.PROCESSING, 0, 2);
+            orphan.setLastHeartbeat(null);
+            when(entryRepository.findByTenantIdAndId(TENANT, "entry-1")).thenReturn(Optional.empty());
+            when(jobRepository.findAllStaleJobs(any(), anyInt())).thenReturn(List.of(orphan));
+
+            int recovered = service.recoverStaleJobs();
+
+            assertEquals(1, recovered);
+            assertEquals(ModerationJobStatus.DEAD, orphan.getStatus());
+            assertEquals(0, orphan.getRetryCount(), "an orphan is never re-dispatched");
+            assertNotNull(orphan.getCompletedAt());
+            assertTrue(orphan.getErrorMessage().contains("no longer exists"));
+            verify(dispatchPort, never()).dispatch(any());
+        }
+
+        @Test
+        void staleCollectionJob_whoseCollectionWasDeleted_isClosed() {
+            ModerationJob orphan = staleJob(ModerationJobStatus.DISPATCHED, 0, 2);
+            orphan.setEntryType(EntryType.COLLECTION);
+            orphan.setEntryId("coll-1");
+            when(collectionRepository.findByTenantIdAndId(TENANT, "coll-1")).thenReturn(Optional.empty());
+            when(jobRepository.findAllStaleJobs(any(), anyInt())).thenReturn(List.of(orphan));
+
+            service.recoverStaleJobs();
+
+            assertEquals(ModerationJobStatus.DEAD, orphan.getStatus());
+            assertTrue(orphan.getErrorMessage().contains("collection no longer exists"));
+        }
+
+        @Test
+        void staleJob_whoseEntryStillExists_isRetriedAsBefore() {
+            ModerationJob job = staleJob(ModerationJobStatus.PROCESSING, 0, 2);
+            job.setLastHeartbeat(null);
+            when(jobRepository.findAllStaleJobs(any(), anyInt())).thenReturn(List.of(job));
+
+            service.recoverStaleJobs();
+
+            assertEquals(ModerationJobStatus.PENDING, job.getStatus());
+            assertEquals(1, job.getRetryCount());
+        }
+    }
+
+    // ─── completeJob idempotency under concurrent callbacks (L2) ───
+
+    @Nested
+    class CompleteJobClaim {
+
+        @Test
+        void losingTheCompletionClaim_appliesNothing() {
+            ModerationJob job = staleJob(ModerationJobStatus.PROCESSING, 0, 2);
+            Entry entry = testEntry(EntryType.IMAGE);
+            when(jobRepository.findByTenantIdAndId(TENANT, "mod-1")).thenReturn(Optional.of(job));
+            when(entryRepository.findByTenantIdAndId(TENANT, "entry-1")).thenReturn(Optional.of(entry));
+            when(jobRepository.claimCompletion(TENANT, "mod-1")).thenReturn(false);
+
+            Optional<ModerationJob> result = service.completeJob(
+                    TENANT, "mod-1", "APPROVE", 0.95,
+                    List.of("NONE"), "Content approved", "GEMINI", null);
+
+            assertTrue(result.isPresent());
+            assertEquals(EntryStatus.IN_REVIEW, entry.getStatus(), "the duplicate callback must not touch the entry");
+            verify(jobRepository, never()).save(any());
+            verify(entryRepository, never()).save(any());
+            verify(transcodingJobService, never()).createJob(any());
+        }
+
+        @Test
+        void winningTheCompletionClaim_appliesTheDecisionOnce() {
+            ModerationJob job = staleJob(ModerationJobStatus.PROCESSING, 0, 2);
+            Entry entry = testEntry(EntryType.IMAGE);
+            when(jobRepository.findByTenantIdAndId(TENANT, "mod-1")).thenReturn(Optional.of(job));
+            when(entryRepository.findByTenantIdAndId(TENANT, "entry-1")).thenReturn(Optional.of(entry));
+            when(entryRepository.save(any(Entry.class))).thenAnswer(inv -> inv.getArgument(0));
+
+            service.completeJob(TENANT, "mod-1", "APPROVE", 0.95, List.of("NONE"), "ok", "GEMINI", null);
+
+            verify(jobRepository).claimCompletion(TENANT, "mod-1");
+            assertEquals(EntryStatus.APPROVED, entry.getStatus());
         }
     }
 

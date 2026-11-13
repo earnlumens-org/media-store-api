@@ -52,7 +52,9 @@ class FavoriteServiceTest {
         entryRepository = mock(EntryRepository.class);
         collectionRepository = mock(CollectionRepository.class);
         entitlementRepository = mock(EntitlementRepository.class);
-        service = new FavoriteService(favoriteRepository, entryRepository, collectionRepository, entitlementRepository);
+        service = new FavoriteService(favoriteRepository, entryRepository, collectionRepository, entitlementRepository,
+                new ContentAccessPolicy(entitlementRepository, collectionRepository,
+                        mock(org.earnlumens.mediastore.domain.media.repository.OrderRepository.class)));
     }
 
     // ── Helpers ───────────────────────────────────────────────

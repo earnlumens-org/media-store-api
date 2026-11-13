@@ -121,10 +121,12 @@ public class PublicTenantController {
             return new HostContext(HostKind.PLATFORM, hostname, null, null);
         }
 
-        var tenantOpt = tenantConfigService.findActiveBySubdomain(subdomain);
+        var tenantOpt = tenantConfigService.findBySubdomain(subdomain);
         if (tenantOpt.isEmpty()) {
             return new HostContext(HostKind.NOT_FOUND, hostname, subdomain, null);
         }
+        // A BLOCKED tenant still classifies as SUBDOMAIN: read-only mode (H1)
+        // keeps the storefront reachable so buyers find their library.
         return new HostContext(HostKind.SUBDOMAIN, hostname, subdomain, tenantOpt.get());
     }
 
@@ -157,6 +159,11 @@ public class PublicTenantController {
                 // switch (brandText is blanked when hidden). Same chain as the
                 // manifest so the install banner and the installed app agree.
                 body.put("appName", appNameFor(ctx));
+                if (ctx.tenant() != null && ctx.tenant().isBlocked()) {
+                    // Read-only mode (H1): the SPA shows "store suspended, your
+                    // library is still available" and hides purchase CTAs.
+                    body.put("suspended", true);
+                }
             }
         }
         // PWA install CTA policy: offered on the platform apex and on custom

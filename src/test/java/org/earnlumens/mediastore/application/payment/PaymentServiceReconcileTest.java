@@ -50,6 +50,8 @@ class PaymentServiceReconcileTest {
     void setUp() {
         orderRepository = mock(OrderRepository.class);
         entitlementRepository = mock(EntitlementRepository.class);
+        when(entitlementRepository.upsertPurchase(any(Entitlement.class)))
+                .thenReturn(EntitlementRepository.UpsertOutcome.CREATED);
         stellarTxService = mock(StellarTransactionService.class);
         service = new PaymentService(
                 null, null, orderRepository, entitlementRepository,
@@ -103,7 +105,7 @@ class PaymentServiceReconcileTest {
         ReconcileOutcome outcome = service.reconcileOrder(stuck);
 
         assertEquals(ReconcileOutcome.COMPLETED, outcome);
-        verify(entitlementRepository).save(any(Entitlement.class));
+        verify(entitlementRepository).upsertPurchase(any(Entitlement.class));
         verify(orderRepository).expirePendingOrdersForUserExcept(TENANT, USER, ORDER_ID);
     }
 
@@ -117,7 +119,7 @@ class PaymentServiceReconcileTest {
                 .thenReturn(Optional.of(order(OrderStatus.COMPLETED, openWindow())));
 
         assertEquals(ReconcileOutcome.COMPLETED, service.reconcileOrder(failed));
-        verify(entitlementRepository).save(any(Entitlement.class));
+        verify(entitlementRepository).upsertPurchase(any(Entitlement.class));
     }
 
     @Test
@@ -130,7 +132,7 @@ class PaymentServiceReconcileTest {
 
         assertEquals(ReconcileOutcome.FINALIZED_NOT_ON_CHAIN, outcome);
         verify(orderRepository).tryTransitionStatus(TENANT, ORDER_ID, OrderStatus.PROCESSING, OrderStatus.EXPIRED);
-        verify(entitlementRepository, never()).save(any());
+        verify(entitlementRepository, never()).upsertPurchase(any());
     }
 
     @Test
@@ -143,7 +145,7 @@ class PaymentServiceReconcileTest {
                 .thenReturn(Optional.of(order(OrderStatus.COMPLETED, closedWindow())));
 
         assertEquals(ReconcileOutcome.COMPLETED, service.reconcileOrder(stuck));
-        verify(entitlementRepository).save(any(Entitlement.class));
+        verify(entitlementRepository).upsertPurchase(any(Entitlement.class));
     }
 
     @Test
@@ -156,7 +158,7 @@ class PaymentServiceReconcileTest {
                 .thenReturn(Optional.of(order(OrderStatus.PROCESSING, closedWindow())));
 
         assertEquals(ReconcileOutcome.IN_FLIGHT, service.reconcileOrder(stuck));
-        verify(entitlementRepository, never()).save(any());
+        verify(entitlementRepository, never()).upsertPurchase(any());
     }
 
     @Test
@@ -166,7 +168,7 @@ class PaymentServiceReconcileTest {
 
         assertEquals(ReconcileOutcome.IN_FLIGHT, service.reconcileOrder(stuck));
         verify(orderRepository, never()).tryTransitionStatus(any(), any(), any(), any());
-        verify(entitlementRepository, never()).save(any());
+        verify(entitlementRepository, never()).upsertPurchase(any());
     }
 
     @Test
@@ -201,7 +203,7 @@ class PaymentServiceReconcileTest {
 
         IllegalStateException e = assertThrows(IllegalStateException.class, () -> invokeProcess(completed));
         assertEquals("Content already purchased", e.getMessage());
-        verify(entitlementRepository, never()).save(any());
+        verify(entitlementRepository, never()).upsertPurchase(any());
     }
 
     @Test
@@ -211,7 +213,7 @@ class PaymentServiceReconcileTest {
                 .thenReturn(Set.of());
 
         assertThrows(IllegalStateException.class, () -> invokeProcess(completed));
-        verify(entitlementRepository).save(any(Entitlement.class));
+        verify(entitlementRepository).upsertPurchase(any(Entitlement.class));
     }
 
     @Test
@@ -252,7 +254,7 @@ class PaymentServiceReconcileTest {
 
         IllegalStateException e = assertThrows(IllegalStateException.class, () -> invokeProcess(processing));
         assertEquals("Content already purchased", e.getMessage());
-        verify(entitlementRepository).save(any(Entitlement.class));
+        verify(entitlementRepository).upsertPurchase(any(Entitlement.class));
     }
 
     @Test
@@ -284,7 +286,7 @@ class PaymentServiceReconcileTest {
 
         IllegalStateException e = assertThrows(IllegalStateException.class, () -> invokeProcess(failed));
         assertEquals("Content already purchased", e.getMessage());
-        verify(entitlementRepository).save(any(Entitlement.class));
+        verify(entitlementRepository).upsertPurchase(any(Entitlement.class));
     }
 
     @Test

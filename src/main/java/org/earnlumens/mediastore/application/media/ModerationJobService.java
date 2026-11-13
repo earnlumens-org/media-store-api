@@ -184,12 +184,27 @@ public class ModerationJobService {
     }
 
     void handleStaleJob(ModerationJob job) {
+        if (!targetExists(job)) {
+            // Orphan (rev. 19 anomaly): the entry/collection was deleted while
+            // the job was in flight. Retrying would only re-dispatch work for
+            // nothing; close it on the first sweep.
+            killJob(job, "Moderated " + (job.getEntryType() == EntryType.COLLECTION ? "collection" : "entry")
+                    + " no longer exists — orphan job closed by watchdog");
+            return;
+        }
         if (job.getRetryCount() < job.getMaxRetries()) {
             retryJob(job, "Stale heartbeat detected — worker presumed crashed");
         } else {
             killJob(job, "Max retries exhausted (" + job.getMaxRetries()
                     + ") — last status: " + job.getStatus());
         }
+    }
+
+    private boolean targetExists(ModerationJob job) {
+        if (job.getEntryId() == null) return false;
+        return job.getEntryType() == EntryType.COLLECTION
+                ? collectionRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId()).isPresent()
+                : entryRepository.findByTenantIdAndId(job.getTenantId(), job.getEntryId()).isPresent();
     }
 
     void retryJob(ModerationJob job, String reason) {
@@ -305,6 +320,13 @@ public class ModerationJobService {
             logger.info("moderation completeJob: ignoring callback for terminal/cancelled job id={} (status={})",
                     jobId, job.getStatus());
             return Optional.of(job);
+        }
+        // Atomic claim: two concurrent callbacks for the same job (worker
+        // retry racing the original) must apply the decision exactly once.
+        if (!jobRepository.claimCompletion(tenantId, jobId)) {
+            logger.info("moderation completeJob: lost completion race for job id={} — duplicate callback ignored",
+                    jobId);
+            return jobRepository.findByTenantIdAndId(tenantId, jobId).or(() -> Optional.of(job));
         }
 
         ModerationDecision moderationDecision;

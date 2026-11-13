@@ -2,6 +2,7 @@ package org.earnlumens.mediastore.application.payment;
 
 import org.earnlumens.mediastore.domain.media.model.Order;
 import org.earnlumens.mediastore.domain.media.model.OrderStatus;
+import org.earnlumens.mediastore.domain.media.model.TargetType;
 import org.earnlumens.mediastore.domain.media.repository.EntitlementRepository;
 import org.earnlumens.mediastore.domain.media.repository.OrderRepository;
 import org.earnlumens.mediastore.infrastructure.lock.DistributedLockService;
@@ -36,7 +37,13 @@ import java.util.Set;
  *       entitlement; never landed → recycle to EXPIRED.</li>
  *   <li><b>COMPLETED without entitlement</b> — server died (or Mongo failed)
  *       between completion and entitlement creation. Recreates the missing
- *       entitlement (idempotent: unique index treats duplicates as success).</li>
+ *       entitlement through the idempotent upsert (S-06). <b>No time window</b>
+ *       (H5): every cycle pages through COMPLETED orders oldest-first with a
+ *       {@code completedAt} cursor; when the end is reached the cursor wraps,
+ *       so the whole history is re-verified continuously and from the first
+ *       cycle after a restart. Each repair is logged at ERROR with the marker
+ *       {@value #ALERT_MARKER} (alert), together with the age of the oldest
+ *       unrepaired order seen (lag).</li>
  * </ol>
  *
  * <p>All state transitions inside {@link PaymentService#reconcileOrder(Order)}
@@ -52,13 +59,26 @@ public class PaymentReconciliationWatchdog {
     /** Max orders examined per scan per cycle (keeps Horizon traffic bounded). */
     private static final int BATCH_SIZE = 50;
 
+    /** Page size of the entitlement backfill (no Horizon traffic: Mongo only). */
+    static final int BACKFILL_PAGE_SIZE = BATCH_SIZE * 10;
+
+    /** Stable log marker for alerting on repaired entitlements (H5 criterion 3). */
+    public static final String ALERT_MARKER = "ENTITLEMENT_BACKFILL_REPAIRED";
+
+    /** Cursor start: before any order ever completed. */
+    private static final LocalDateTime EPOCH = LocalDateTime.of(1970, 1, 1, 0, 0);
+
     private final OrderRepository orderRepository;
     private final EntitlementRepository entitlementRepository;
     private final PaymentService paymentService;
     private final DistributedLockService lockService;
 
-    /** How far back to look for COMPLETED orders missing their entitlement. */
-    private final Duration completedLookback;
+    /**
+     * Backfill cursor: {@code completedAt} of the last order examined. In
+     * memory on purpose — a restart simply restarts the scan from the oldest
+     * order, which is the desired "run on startup" behaviour.
+     */
+    private volatile LocalDateTime backfillCursor = EPOCH;
 
     public PaymentReconciliationWatchdog(OrderRepository orderRepository,
                                          EntitlementRepository entitlementRepository,
@@ -70,7 +90,7 @@ public class PaymentReconciliationWatchdog {
         this.entitlementRepository = entitlementRepository;
         this.paymentService = paymentService;
         this.lockService = lockService;
-        this.completedLookback = Duration.ofHours(completedLookbackHours);
+        // Retained for configuration compatibility; the backfill no longer has a window (H5).
     }
 
     @Scheduled(fixedDelayString = "${mediastore.payments.watchdog-interval-ms:30000}",
@@ -137,35 +157,79 @@ public class PaymentReconciliationWatchdog {
         }
     }
 
-    /** Recreates entitlements for recently COMPLETED orders that lost theirs. */
+    /**
+     * One page of the window-less entitlement backfill (H5): COMPLETED orders
+     * after the cursor, oldest first. Idempotent (the upsert of S-06) and safe
+     * with several instances (each repair is a conditional write guarded by
+     * the H9 unique indexes). Runs on demand too — see {@link #backfillMissingEntitlements()}.
+     */
     private int repairMissingEntitlements() {
-        LocalDateTime cutoff = LocalDateTime.now(ZoneOffset.UTC).minus(completedLookback);
+        return backfillPage();
+    }
+
+    /**
+     * Runs the backfill over the <b>entire</b> history right now (operator /
+     * startup use), page after page until the scan wraps.
+     *
+     * @return entitlements repaired
+     */
+    public int backfillMissingEntitlements() {
+        backfillCursor = EPOCH;
+        int repaired = 0;
+        do {
+            repaired += backfillPage();
+        } while (!backfillCursor.equals(EPOCH));
+        return repaired;
+    }
+
+    private int backfillPage() {
+        LocalDateTime after = backfillCursor;
         List<Order> completed = orderRepository.findByStatusAndCompletedAtAfter(
-                OrderStatus.COMPLETED, cutoff, BATCH_SIZE * 10);
+                OrderStatus.COMPLETED, after, BACKFILL_PAGE_SIZE);
         if (completed.isEmpty()) {
+            backfillCursor = EPOCH;
             return 0;
         }
+        // Advance (or wrap when the history is exhausted) before repairing so a
+        // throwing page never stalls the cursor. A page that cannot advance
+        // (all orders share one completedAt) wraps as well rather than loop.
+        LocalDateTime last = completed.get(completed.size() - 1).getCompletedAt();
+        boolean exhausted = completed.size() < BACKFILL_PAGE_SIZE || last == null || !last.isAfter(after);
+        backfillCursor = exhausted ? EPOCH : last;
+
         Set<String> withEntitlement = entitlementRepository.findOrderIdsWithEntitlements(
                 completed.stream().map(Order::getId).toList());
         int repaired = 0;
+        LocalDateTime oldestMissing = null;
         for (Order order : completed) {
             if (withEntitlement.contains(order.getId())) {
                 continue;
             }
-            // Tips never have an entitlement by design — skip them so they are
-            // not reported (and "repaired") on every cycle.
-            if (order.getTargetType() == org.earnlumens.mediastore.domain.media.model.TargetType.TIP) {
+            // Tips and publishing fees never have an entitlement by design — skip
+            // them so they are not reported (and "repaired") on every cycle.
+            TargetType t = order.getTargetType();
+            if (t == TargetType.TIP || t == TargetType.PUBLISH_FEE || t == TargetType.PUBLISH_FAST_PASS) {
                 continue;
             }
+            if (oldestMissing == null && order.getCompletedAt() != null) {
+                oldestMissing = order.getCompletedAt();
+            }
             try {
-                logger.warn("COMPLETED order without entitlement detected — repairing: orderId={}, "
-                        + "userId={}, txHash={}", order.getId(), order.getUserId(), order.getStellarTxHash());
                 paymentService.ensureEntitlement(order);
                 repaired++;
+                logger.error("{} orderId={} userId={} targetType={} entryId={} collectionId={} completedAt={} txHash={}",
+                        ALERT_MARKER, order.getId(), order.getUserId(), t, order.getEntryId(),
+                        order.getCollectionId(), order.getCompletedAt(), order.getStellarTxHash());
             } catch (Exception e) {
                 logger.error("Failed to repair missing entitlement for order {}: {}",
                         order.getId(), e.getMessage(), e);
             }
+        }
+        if (repaired > 0) {
+            long lagSeconds = oldestMissing == null ? -1
+                    : Duration.between(oldestMissing, LocalDateTime.now(ZoneOffset.UTC)).getSeconds();
+            logger.error("{} summary repaired={} page={} oldestMissingCompletedAt={} lagSeconds={}",
+                    ALERT_MARKER, repaired, completed.size(), oldestMissing, lagSeconds);
         }
         return repaired;
     }

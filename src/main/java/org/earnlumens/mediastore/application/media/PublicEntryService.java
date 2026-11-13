@@ -5,12 +5,14 @@ import org.earnlumens.mediastore.domain.media.dto.response.PublicEntryPageRespon
 import org.earnlumens.mediastore.domain.media.dto.response.PublicEntryResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PublicFeedItemResponse;
 import org.earnlumens.mediastore.domain.media.dto.response.PublicFeedPageResponse;
+import org.earnlumens.mediastore.domain.media.model.Asset;
 import org.earnlumens.mediastore.domain.media.model.AssetStatus;
 import org.earnlumens.mediastore.domain.media.model.DisputeStatus;
 import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
+import org.earnlumens.mediastore.domain.media.model.EntryVersion;
 import org.earnlumens.mediastore.domain.media.model.MediaKind;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.CollectionRepository;
@@ -26,6 +28,7 @@ import java.math.BigDecimal;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -89,13 +92,28 @@ public class PublicEntryService {
         // Atomically increment view count (fire-and-forget)
         entryRepository.incrementViewCount(tenantId, entryId);
 
+        // N8-lite: a buyer sees the version they acquired (asset and metadata);
+        // owner, public and free viewers see currentVersion.
+        EntryVersion purchased = result.entitled()
+                ? ContentVersionService.purchasedVersion(entry, result.rightStart()) : null;
+
         // For detail view: include FULL asset metadata if available
-        AssetInfo assetInfo = assetRepository
-                .findByTenantIdAndEntryIdAndKindAndStatus(tenantId, entryId, MediaKind.FULL, AssetStatus.READY)
+        Optional<Asset> fullAsset = Optional.empty();
+        if (purchased != null && purchased.getAssetId() != null) {
+            fullAsset = assetRepository.findByTenantIdAndEntryId(tenantId, entryId).stream()
+                    .filter(a -> purchased.getAssetId().equals(a.getId()))
+                    .filter(a -> a.getKind() == MediaKind.FULL && a.getStatus() == AssetStatus.READY)
+                    .findFirst();
+        }
+        if (fullAsset.isEmpty()) {
+            fullAsset = assetRepository
+                    .findByTenantIdAndEntryIdAndKindAndStatus(tenantId, entryId, MediaKind.FULL, AssetStatus.READY);
+        }
+        AssetInfo assetInfo = fullAsset
                 .map(asset -> new AssetInfo(asset.getFileName(), asset.getFileSizeBytes(), asset.getContentType(), asset.getScannedAt()))
                 .orElse(null);
         String viewerAccess = result.owner() ? "OWNER" : result.entitled() ? "ENTITLED" : "PUBLIC";
-        return Lookup.found(toPublicResponse(entry, assetInfo, viewerAccess));
+        return Lookup.found(toPublicResponse(entry, assetInfo, viewerAccess, purchased));
     }
 
     /**
@@ -198,10 +216,18 @@ public class PublicEntryService {
     }
 
     private PublicEntryResponse toPublicResponse(Entry entry, AssetInfo assetInfo) {
-        return toPublicResponse(entry, assetInfo, "PUBLIC");
+        return toPublicResponse(entry, assetInfo, "PUBLIC", null);
     }
 
-    private PublicEntryResponse toPublicResponse(Entry entry, AssetInfo assetInfo, String viewerAccess) {
+    /**
+     * @param purchased the buyer's acquired version when it differs from the
+     *                  live document (N8-lite), else {@code null}. Its metadata
+     *                  replaces the live title / description / resource text /
+     *                  tags / thumbnail / preview; pre-generated variants are
+     *                  only kept when the key is unchanged.
+     */
+    private PublicEntryResponse toPublicResponse(Entry entry, AssetInfo assetInfo, String viewerAccess,
+                                                 EntryVersion purchased) {
         String publishedAt = entry.getPublishedAt() != null
                 ? entry.getPublishedAt().format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
                 : null;
@@ -209,23 +235,40 @@ public class PublicEntryService {
         // HLS is ready when the transcoding pipeline has completed for this entry
         boolean hlsReady = entry.isHlsReady();
 
+        String title = entry.getTitle();
+        String description = entry.getDescription();
         // resourceContent is returned for all entries; access control is enforced
         // by the frontend (entitlement check) and the CDN worker (media downloads).
         String resourceContent = entry.getResourceContent();
+        List<String> tags = entry.getTags();
+        String thumbnailR2Key = entry.getThumbnailR2Key();
+        String previewR2Key = entry.getPreviewR2Key();
+        String thumbnailVariantsPrefix = entry.getThumbnailVariantsPrefix();
+        String previewVariantsPrefix = entry.getPreviewVariantsPrefix();
+        if (purchased != null) {
+            title = purchased.getTitle();
+            description = purchased.getDescription();
+            resourceContent = purchased.getResourceContent();
+            tags = purchased.getTags();
+            thumbnailR2Key = purchased.getThumbnailR2Key();
+            previewR2Key = purchased.getPreviewR2Key();
+            if (!Objects.equals(thumbnailR2Key, entry.getThumbnailR2Key())) thumbnailVariantsPrefix = null;
+            if (!Objects.equals(previewR2Key, entry.getPreviewR2Key())) previewVariantsPrefix = null;
+        }
 
         return new PublicEntryResponse(
                 entry.getId(),
                 mapType(entry.getType()),
-                entry.getTitle(),
-                entry.getDescription(),
+                title,
+                description,
                 resourceContent,
                 entry.getUserId(),
                 entry.getAuthorUsername() != null ? entry.getAuthorUsername() : entry.getUserId(),
                 entry.getAuthorAvatarUrl(),
                 entry.getAuthorBadge(),
                 publishedAt,
-                entry.getThumbnailR2Key(),
-                entry.getPreviewR2Key(),
+                thumbnailR2Key,
+                previewR2Key,
                 entry.getDurationSec(),
                 entry.getViewCount(),
                 entry.isPaid(),
@@ -233,11 +276,11 @@ public class PublicEntryService {
                 entry.getPriceUsd(),
                 entry.getPriceCurrency() != null ? entry.getPriceCurrency().name() : null,
                 entry.getContentLanguage(),
-                entry.getTags(),
+                tags,
                 assetInfo,
                 hlsReady,
-                entry.getThumbnailVariantsPrefix(),
-                entry.getPreviewVariantsPrefix(),
+                thumbnailVariantsPrefix,
+                previewVariantsPrefix,
                 entry.isResellerEnabled(),
                 entry.getResellerCommissionPercent(),
                 entry.isRemix(),
@@ -418,23 +461,14 @@ public class PublicEntryService {
                 unlockedEntryIds = new java.util.HashSet<>(entitlementRepository.findEntitledEntryIds(
                         tenantId, userId, paidEntryIds, EntitlementStatus.ACTIVE));
 
-                // Also expand collection-level entitlements: entries inside purchased collections are unlocked
+                // Also expand collection-level entitlements: entries the buyer
+                // reaches via a purchased collection are unlocked (D-20 union rule)
                 Set<String> stillLocked = new java.util.HashSet<>(paidEntryIds);
                 stillLocked.removeAll(unlockedEntryIds);
                 if (!stillLocked.isEmpty()) {
-                    Set<String> userCollIds = entitlementRepository.findAllEntitledCollectionIds(
-                            tenantId, userId, EntitlementStatus.ACTIVE);
-                    if (!userCollIds.isEmpty()) {
-                        var userColls = collectionRepository.findByTenantIdAndIdIn(
-                                tenantId, new ArrayList<>(userCollIds));
-                        for (var c : userColls) {
-                            if (c.getItems() != null) {
-                                for (var item : c.getItems()) {
-                                    if (item.getEntryId() != null && stillLocked.contains(item.getEntryId())) {
-                                        unlockedEntryIds.add(item.getEntryId());
-                                    }
-                                }
-                            }
+                    for (String id : accessPolicy.entryIdsCoveredByCollections(tenantId, userId)) {
+                        if (stillLocked.contains(id)) {
+                            unlockedEntryIds.add(id);
                         }
                     }
                 }

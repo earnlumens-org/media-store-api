@@ -8,6 +8,7 @@ import org.earnlumens.mediastore.infrastructure.persistence.media.entity.OrderEn
 import org.earnlumens.mediastore.infrastructure.persistence.media.mapper.OrderMapper;
 import org.earnlumens.mediastore.infrastructure.persistence.media.repository.OrderMongoRepository;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.data.mongodb.core.FindAndModifyOptions;
 import org.springframework.data.mongodb.core.MongoTemplate;
 import org.springframework.data.mongodb.core.query.Criteria;
@@ -183,7 +184,10 @@ public class OrderRepositoryImpl implements OrderRepository {
 
     @Override
     public List<Order> findByStatusAndCompletedAtAfter(OrderStatus status, LocalDateTime cutoff, int limit) {
-        return orderMongoRepository.findByStatusAndCompletedAtAfter(status.name(), cutoff, PageRequest.of(0, limit))
+        // Ascending by completedAt: the entitlement backfill pages through the
+        // whole history with a cursor (H5), oldest first.
+        return orderMongoRepository.findByStatusAndCompletedAtAfter(status.name(), cutoff,
+                        PageRequest.of(0, limit, Sort.by(Sort.Direction.ASC, "completedAt")))
                 .stream()
                 .map(orderMapper::toModel)
                 .toList();

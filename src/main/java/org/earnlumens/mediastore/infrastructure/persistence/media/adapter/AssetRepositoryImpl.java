@@ -27,7 +27,8 @@ public class AssetRepositoryImpl implements AssetRepository {
     public Optional<Asset> findByTenantIdAndEntryIdAndKindAndStatus(
             String tenantId, String entryId, MediaKind kind, AssetStatus status) {
         return assetMongoRepository
-                .findByTenantIdAndEntryIdAndKindAndStatus(tenantId, entryId, kind.name(), status.name())
+                .findFirstByTenantIdAndEntryIdAndKindAndStatusOrderByCreatedAtDesc(
+                        tenantId, entryId, kind.name(), status.name())
                 .map(assetMapper::toModel);
     }
 

@@ -51,6 +51,36 @@ public interface EntitlementRepository {
     /** All collection IDs the user is entitled to (unpaginated, for purchased feed). */
     Set<String> findAllEntitledCollectionIds(String tenantId, String userId, EntitlementStatus status);
 
+    /** All ACTIVE collection entitlements of the user, with their {@code grantedAt} (union rule, D-20). */
+    List<Entitlement> findAllCollectionEntitlements(String tenantId, String userId, EntitlementStatus status);
+
+    /** All ACTIVE direct entry entitlements of the user, with their {@code grantedAt} (purchased version, N8-lite). */
+    List<Entitlement> findAllEntryEntitlements(String tenantId, String userId, EntitlementStatus status);
+
+    /**
+     * True when any entitlement — in any status — references the collection.
+     * Guards the hard delete (H2: a collection with buyers cannot be deleted).
+     */
+    boolean existsByTenantIdAndCollectionId(String tenantId, String collectionId);
+
+    /** Outcome of {@link #upsertPurchase}. */
+    enum UpsertOutcome { CREATED, REACTIVATED, UNCHANGED }
+
+    /**
+     * One entitlement per right (S-06 / H11): keyed by
+     * {@code (tenantId, userId, targetType, entryId | collectionId)}.
+     * <ul>
+     *   <li>absent ⇒ inserted as given ({@code CREATED});</li>
+     *   <li>{@code REVOKED} ⇒ reactivated with the new {@code orderId},
+     *       {@code grantedAt} and {@code franchiseId} ({@code REACTIVATED}) —
+     *       the right is evaluated from the new purchase;</li>
+     *   <li>already {@code ACTIVE} ⇒ untouched, {@code grantedAt} preserved
+     *       (R-30: a repeated watchdog call never moves the right date).</li>
+     * </ul>
+     * Idempotent and safe under the H9 unique indexes.
+     */
+    UpsertOutcome upsertPurchase(Entitlement entitlement);
+
     /**
      * Subset of {@code orderIds} that already have a backing entitlement.
      * Cross-tenant on purpose — used by the payment reconciliation watchdog to

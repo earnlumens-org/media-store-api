@@ -238,6 +238,9 @@ public class CollectionController {
                 return ResponseEntity.status(404).body(Map.of("error", "Collection not found"));
             }
             return ResponseEntity.ok(Map.of("message", "Collection deleted"));
+        } catch (IllegalStateException e) {
+            // H2: a collection with buyers is never hard-deleted
+            return ResponseEntity.status(409).body(Map.of("error", e.getMessage()));
         } catch (IllegalArgumentException e) {
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
         }

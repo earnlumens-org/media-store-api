@@ -15,6 +15,8 @@ public final class TenantContext {
 
     private static final ThreadLocal<String> CURRENT_TENANT = new ThreadLocal<>();
     private static final ThreadLocal<Boolean> CROSS_TENANT_ALLOWED = ThreadLocal.withInitial(() -> false);
+    /** True while serving a BLOCKED tenant in read-only mode (H1). */
+    private static final ThreadLocal<Boolean> SUSPENDED = ThreadLocal.withInitial(() -> false);
 
     private TenantContext() {
     }
@@ -22,6 +24,20 @@ public final class TenantContext {
     /** Set the tenant for the current thread (called by TenantFilter). */
     public static void set(String tenantId) {
         CURRENT_TENANT.set(tenantId);
+    }
+
+    /** Marks the current request as served for a suspended (BLOCKED) tenant. */
+    public static void setSuspended(boolean suspended) {
+        SUSPENDED.set(suspended);
+    }
+
+    /**
+     * True when the current tenant is BLOCKED and the request is being served
+     * in read-only mode: buyers keep their library, every operation is refused
+     * by {@link TenantFilter} before reaching a controller.
+     */
+    public static boolean isSuspended() {
+        return SUSPENDED.get();
     }
 
     /**
@@ -47,6 +63,7 @@ public final class TenantContext {
     public static void clear() {
         CURRENT_TENANT.remove();
         CROSS_TENANT_ALLOWED.remove();
+        SUSPENDED.remove();
     }
 
     /** Returns true if cross-tenant access is currently allowed on this thread. */

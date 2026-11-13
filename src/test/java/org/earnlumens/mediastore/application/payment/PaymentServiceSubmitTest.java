@@ -13,7 +13,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
-import org.springframework.dao.DuplicateKeyException;
 import org.stellar.sdk.Account;
 import org.stellar.sdk.Asset;
 import org.stellar.sdk.KeyPair;
@@ -57,6 +56,8 @@ class PaymentServiceSubmitTest {
     void setUp() {
         orderRepository = mock(OrderRepository.class);
         entitlementRepository = mock(EntitlementRepository.class);
+        when(entitlementRepository.upsertPurchase(any(Entitlement.class)))
+                .thenReturn(EntitlementRepository.UpsertOutcome.CREATED);
         stellarTxService = mock(StellarTransactionService.class);
         service = new PaymentService(
                 null, null, orderRepository, entitlementRepository,
@@ -137,12 +138,14 @@ class PaymentServiceSubmitTest {
         assertEquals("entry1", response.entryId());
 
         ArgumentCaptor<Entitlement> captor = ArgumentCaptor.forClass(Entitlement.class);
-        verify(entitlementRepository).save(captor.capture());
+        verify(entitlementRepository).upsertPurchase(captor.capture());
         Entitlement entitlement = captor.getValue();
         assertEquals(TENANT, entitlement.getTenantId());
         assertEquals(USER, entitlement.getUserId());
         assertEquals("entry1", entitlement.getEntryId());
         assertEquals(ORDER_ID, entitlement.getOrderId());
+        assertEquals(org.earnlumens.mediastore.domain.media.model.EntitlementStatus.ACTIVE, entitlement.getStatus());
+        assertNotNull(entitlement.getGrantedAt());
 
         verify(orderRepository).expirePendingOrdersForUserExcept(TENANT, USER, ORDER_ID);
     }
@@ -156,7 +159,7 @@ class PaymentServiceSubmitTest {
         SubmitPaymentResponse response = service.submit(TENANT, USER, REQUEST);
 
         assertEquals("COMPLETED", response.status());
-        verify(entitlementRepository).save(any(Entitlement.class));
+        verify(entitlementRepository).upsertPurchase(any(Entitlement.class));
     }
 
     // ── Lock failures (explainLockFailure) ───────────────────────
@@ -286,7 +289,7 @@ class PaymentServiceSubmitTest {
         // The money is on-chain: a transient entitlement-store failure must NOT
         // surface as a payment error — the reconciliation watchdog repairs it.
         mockHappyPath();
-        when(entitlementRepository.save(any(Entitlement.class)))
+        when(entitlementRepository.upsertPurchase(any(Entitlement.class)))
                 .thenThrow(new RuntimeException("Mongo down"));
 
         SubmitPaymentResponse response = service.submit(TENANT, USER, REQUEST);
@@ -295,13 +298,15 @@ class PaymentServiceSubmitTest {
     }
 
     @Test
-    void submit_duplicateEntitlement_isIdempotentSuccess() {
+    void submit_entitlementAlreadyActive_isIdempotentSuccess() {
+        // S-06: the upsert reports an existing ACTIVE right; nothing is thrown or duplicated
         mockHappyPath();
-        when(entitlementRepository.save(any(Entitlement.class)))
-                .thenThrow(new DuplicateKeyException("already exists"));
+        when(entitlementRepository.upsertPurchase(any(Entitlement.class)))
+                .thenReturn(EntitlementRepository.UpsertOutcome.UNCHANGED);
 
         SubmitPaymentResponse response = service.submit(TENANT, USER, REQUEST);
 
         assertEquals("COMPLETED", response.status());
+        verify(entitlementRepository, never()).save(any());
     }
 }

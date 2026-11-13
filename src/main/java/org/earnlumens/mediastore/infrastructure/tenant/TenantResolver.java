@@ -2,7 +2,6 @@ package org.earnlumens.mediastore.infrastructure.tenant;
 
 import jakarta.servlet.http.HttpServletRequest;
 import org.earnlumens.mediastore.infrastructure.tenant.read.TenantConfigService;
-import org.earnlumens.mediastore.infrastructure.tenant.read.TenantReadModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -53,26 +52,47 @@ public class TenantResolver {
     }
 
     /**
+     * Outcome of {@link #resolveTenant}: the canonical tenantId plus whether
+     * the tenant is BLOCKED and must be served in read-only mode (H1).
+     */
+    public record ResolvedTenant(String tenantId, boolean suspended) {
+        public static ResolvedTenant active(String tenantId) {
+            return new ResolvedTenant(tenantId, false);
+        }
+    }
+
+    /**
      * Extracts the tenant identifier from the request host.
      * <ul>
      *   <li>{@code localhost} / {@code 127.0.0.1} / {@code rootDomain} / {@code *.run.app}
-     *       → {@link #DEFAULT_TENANT}.</li>
-     *   <li>{@code {sub}.{rootDomain}} → {@code sub} iff it is syntactically valid,
-     *       not reserved, and an ACTIVE tenant document exists. Otherwise → {@link #DEFAULT_TENANT}.</li>
+     *       and the reserved platform subdomains → {@link #DEFAULT_TENANT}.</li>
+     *   <li>{@code {sub}.{rootDomain}} → {@code sub} iff a tenant document exists
+     *       (ACTIVE, or BLOCKED ⇒ read-only). A syntactically invalid, multi-label
+     *       or unknown subdomain yields {@code null} — <b>never</b> the default
+     *       tenant (H1 action 2: an unknown host must not leak another tenant's
+     *       storefront).</li>
      *   <li>Any other host is treated as a custom domain (custom-domain-upgrade 3.1):
      *       served only when it matches a verified-ACTIVE domain of an ACTIVE, Pro
-     *       tenant ({@code findActiveByCustomDomain}); otherwise {@code null} —
-     *       <b>no tenant</b>. {@code TenantFilter} turns that into a 404 so an
-     *       arbitrary host can never fall back to the default tenant's data.</li>
+     *       tenant ({@code findActiveByCustomDomain}); otherwise {@code null}.
+     *       A BLOCKED tenant's custom domain is therefore a 404 (D-04 / H1
+     *       decision (b)): its buyers use the subdomain.</li>
      * </ul>
+     * {@code TenantFilter} turns {@code null} into a 404 so no downstream code
+     * ever runs without a tenant.
      *
      * @return the canonical tenantId (subdomain), or {@code null} when the host
-     *         is an unknown/non-servable custom domain
+     *         does not map to any tenant
      */
     public String resolve(HttpServletRequest request) {
+        ResolvedTenant resolved = resolveTenant(request);
+        return resolved == null ? null : resolved.tenantId();
+    }
+
+    /** Same as {@link #resolve} but also reports whether the tenant is suspended. */
+    public ResolvedTenant resolveTenant(HttpServletRequest request) {
         String host = request.getServerName();
         if (host == null || host.isBlank()) {
-            return DEFAULT_TENANT;
+            return ResolvedTenant.active(DEFAULT_TENANT);
         }
 
         String hostname = host.contains(":") ? host.substring(0, host.indexOf(':')) : host;
@@ -82,7 +102,7 @@ public class TenantResolver {
                 || "localhost.dv".equals(hostname)
                 || "127.0.0.1".equals(hostname)
                 || rootDomain.equals(hostname)) {
-            return DEFAULT_TENANT;
+            return ResolvedTenant.active(DEFAULT_TENANT);
         }
 
         String suffix = "." + rootDomain;
@@ -91,31 +111,35 @@ public class TenantResolver {
                 // Health probes and internal jobs hit .run.app directly (no
                 // X-Visitor-Host). Keep the historical default-tenant behaviour;
                 // EdgeAuthFilter already gates every non-exempt path there.
-                return DEFAULT_TENANT;
+                return ResolvedTenant.active(DEFAULT_TENANT);
             }
             // Custom domain: only a verified-ACTIVE domain of a Pro tenant may
             // serve. Miss ⇒ no tenant (never the default tenant).
             return tenantConfigService.findActiveByCustomDomain(hostname)
-                    .map(TenantReadModel::getSubdomain)
+                    .map(t -> ResolvedTenant.active(t.getSubdomain()))
                     .orElse(null);
         }
 
         String subdomain = hostname.substring(0, hostname.length() - suffix.length());
-        if (subdomain.contains(".")) {
-            // Multi-label subdomain (e.g. admin-api.staging). Refuse to guess.
-            return DEFAULT_TENANT;
+        if (RESERVED_SUBDOMAINS.contains(subdomain)) {
+            // Platform plane (www, api, admin, …): the default storefront.
+            return ResolvedTenant.active(DEFAULT_TENANT);
         }
-        if (RESERVED_SUBDOMAINS.contains(subdomain) || !SUBDOMAIN.matcher(subdomain).matches()) {
-            return DEFAULT_TENANT;
-        }
-
-        // Final gate: the subdomain must correspond to an ACTIVE tenant document.
-        // Blocked/deleted tenants fall back to the default tenant so data stays isolated.
-        if (tenantConfigService.findActiveBySubdomain(subdomain).isEmpty()) {
-            logger.debug("No ACTIVE tenant for subdomain={}, falling back to default", subdomain);
-            return DEFAULT_TENANT;
+        if (subdomain.contains(".") || !SUBDOMAIN.matcher(subdomain).matches()) {
+            // Multi-label or malformed label: can never be a tenant. Refuse
+            // instead of guessing the default tenant.
+            logger.debug("Unresolvable subdomain label '{}' — no tenant", subdomain);
+            return null;
         }
 
-        return subdomain;
+        // Final gate: the subdomain must correspond to a tenant document. An
+        // unknown subdomain is a 404; a BLOCKED tenant resolves as itself in
+        // read-only mode so its buyers keep their library (H1).
+        return tenantConfigService.findBySubdomain(subdomain)
+                .map(t -> new ResolvedTenant(subdomain, !t.isActive()))
+                .orElseGet(() -> {
+                    logger.debug("No tenant document for subdomain={} — no tenant", subdomain);
+                    return null;
+                });
     }
 }

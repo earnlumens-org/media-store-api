@@ -10,15 +10,18 @@ import org.springframework.test.util.ReflectionTestUtils;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
  * Unit tests for {@link TenantResolver}: subdomain parsing, reserved-words
- * denylist, RFC-1123 regex, ACTIVE-tenant gating, custom-domain resolution
- * (custom-domain-upgrade 3.1: hit ⇒ tenant, miss ⇒ null — no default fallback).
+ * denylist, RFC-1123 regex, tenant gating (H1: unknown ⇒ null, BLOCKED ⇒
+ * read-only), custom-domain resolution (custom-domain-upgrade 3.1: hit ⇒
+ * tenant, miss ⇒ null — no default fallback).
  */
 class TenantResolverTest {
 
@@ -30,7 +33,7 @@ class TenantResolverTest {
         tenantConfigService = mock(TenantConfigService.class);
         resolver = new TenantResolver(tenantConfigService);
         ReflectionTestUtils.setField(resolver, "rootDomain", "earnlumens.org");
-        lenient().when(tenantConfigService.findActiveBySubdomain(org.mockito.ArgumentMatchers.anyString()))
+        lenient().when(tenantConfigService.findBySubdomain(org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(Optional.empty());
         lenient().when(tenantConfigService.findActiveByCustomDomain(org.mockito.ArgumentMatchers.anyString()))
                 .thenReturn(Optional.empty());
@@ -46,6 +49,12 @@ class TenantResolverTest {
         TenantReadModel t = new TenantReadModel();
         t.setSubdomain(sub);
         t.setStatus("ACTIVE");
+        return t;
+    }
+
+    private TenantReadModel blockedTenant(String sub) {
+        TenantReadModel t = activeTenant(sub);
+        t.setStatus("BLOCKED");
         return t;
     }
 
@@ -72,25 +81,64 @@ class TenantResolverTest {
     }
 
     @Test
-    void invalidSubdomainSyntax_returnsDefault() {
-        // Uppercase / underscore / starts-with-hyphen — all invalid per RFC-1123 regex
-        assertEquals("earnlumens", resolver.resolve(req("Alice.earnlumens.org")));
-        assertEquals("earnlumens", resolver.resolve(req("-alice.earnlumens.org")));
-        assertEquals("earnlumens", resolver.resolve(req("a.earnlumens.org"))); // too short
+    void invalidSubdomainSyntax_isNotATenant() {
+        // Underscore / leading hyphen / too short can never be a tenant: H1
+        // action 2 — refuse (404) instead of leaking the default storefront.
+        assertNull(resolver.resolve(req("al_ice.earnlumens.org")));
+        assertNull(resolver.resolve(req("-alice.earnlumens.org")));
+        assertNull(resolver.resolve(req("a.earnlumens.org")));
     }
 
     @Test
-    void unknownActiveSubdomain_returnsDefault() {
-        when(tenantConfigService.findActiveBySubdomain("ghost"))
+    void multiLabelSubdomain_isNotATenant() {
+        assertNull(resolver.resolve(req("api.staging.earnlumens.org")));
+    }
+
+    @Test
+    void unknownSubdomain_isNotATenant_neverDefault() {
+        when(tenantConfigService.findBySubdomain("ghost"))
                 .thenReturn(Optional.empty());
-        assertEquals("earnlumens", resolver.resolve(req("ghost.earnlumens.org")));
+        assertNull(resolver.resolve(req("ghost.earnlumens.org")));
+        assertNull(resolver.resolveTenant(req("ghost.earnlumens.org")));
     }
 
     @Test
     void activeSubdomain_returnsSubdomain() {
-        when(tenantConfigService.findActiveBySubdomain("alice"))
+        when(tenantConfigService.findBySubdomain("alice"))
                 .thenReturn(Optional.of(activeTenant("alice")));
         assertEquals("alice", resolver.resolve(req("alice.earnlumens.org")));
+        TenantResolver.ResolvedTenant resolved = resolver.resolveTenant(req("alice.earnlumens.org"));
+        assertEquals("alice", resolved.tenantId());
+        assertFalse(resolved.suspended());
+    }
+
+    @Test
+    void blockedSubdomain_resolvesAsItselfSuspended() {
+        // H1: a BLOCKED tenant is served read-only as itself — never the
+        // default tenant (that would hide every buyer's library).
+        when(tenantConfigService.findBySubdomain("alice"))
+                .thenReturn(Optional.of(blockedTenant("alice")));
+        assertEquals("alice", resolver.resolve(req("alice.earnlumens.org")));
+        TenantResolver.ResolvedTenant resolved = resolver.resolveTenant(req("alice.earnlumens.org"));
+        assertEquals("alice", resolved.tenantId());
+        assertTrue(resolved.suspended());
+    }
+
+    @Test
+    void blockedTenantCustomDomain_isNotServed() {
+        // D-04 / H1 decision (b): the custom domain of a blocked tenant is a
+        // 404 at the edge; findActiveByCustomDomain already filters it out.
+        when(tenantConfigService.findActiveByCustomDomain("shop.example.com"))
+                .thenReturn(Optional.empty());
+        assertNull(resolver.resolve(req("shop.example.com")));
+    }
+
+    @Test
+    void platformHosts_areNeverSuspended() {
+        assertFalse(resolver.resolveTenant(req("earnlumens.org")).suspended());
+        assertFalse(resolver.resolveTenant(req("localhost")).suspended());
+        assertFalse(resolver.resolveTenant(req("media-store-api-owuexaao5a-ew.a.run.app")).suspended());
+        assertFalse(resolver.resolveTenant(req("www.earnlumens.org")).suspended());
     }
 
     @Test
@@ -130,7 +178,7 @@ class TenantResolverTest {
 
     @Test
     void portInHost_isStripped() {
-        when(tenantConfigService.findActiveBySubdomain("alice"))
+        when(tenantConfigService.findBySubdomain("alice"))
                 .thenReturn(Optional.of(activeTenant("alice")));
         // getServerName() normally returns no port, but handle it defensively.
         HttpServletRequest r = mock(HttpServletRequest.class);
@@ -140,7 +188,7 @@ class TenantResolverTest {
 
     @Test
     void mixedCaseHost_isLowercased() {
-        when(tenantConfigService.findActiveBySubdomain("alice"))
+        when(tenantConfigService.findBySubdomain("alice"))
                 .thenReturn(Optional.of(activeTenant("alice")));
         assertEquals("alice", resolver.resolve(req("ALICE.Earnlumens.ORG")));
     }

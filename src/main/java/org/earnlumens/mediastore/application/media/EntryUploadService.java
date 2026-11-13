@@ -49,10 +49,12 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Pattern;
 
@@ -162,6 +164,25 @@ public class EntryUploadService {
      */
     private static final Pattern LEGACY_R2_KEY = Pattern.compile(
             "^(public|private)/media/([^/]+)/(full|thumbnail|preview)/[0-9a-fA-F-]{36}-[^/]+$");
+
+    /** Error code (409) when a FULL upload is attempted on an entry whose file is locked (H8 / T-1). */
+    public static final String FULL_ASSET_LOCKED = "FULL_ASSET_LOCKED";
+
+    /**
+     * Entry statuses in which the FULL file may still be uploaded or replaced
+     * (H8 action 2) — <b>provided the entry has never been published</b>: see
+     * {@link #isFullUploadAllowed}.
+     */
+    public static final Set<EntryStatus> FULL_UPLOAD_ALLOWED = EnumSet.of(EntryStatus.DRAFT, EntryStatus.REJECTED);
+
+    /**
+     * R-22 kill switch: the FULL gate ships enabled; set
+     * {@code mediastore.uploads.full-asset-gate-enabled=false} to observe
+     * (log only) without redeploying. Field-injected so the constructor and
+     * every existing test stay untouched.
+     */
+    @Value("${mediastore.uploads.full-asset-gate-enabled:true}")
+    private boolean fullAssetGateEnabled = true;
 
     private final EntryRepository entryRepository;
     private final AssetRepository assetRepository;
@@ -431,6 +452,7 @@ public class EntryUploadService {
         }
 
         MediaKind kind = MediaKind.valueOf(request.kind());
+        requireFullUploadAllowed(entry, kind, "initUpload");
         String sanitizedFileName = sanitizeFileName(request.fileName());
 
         // ── Boundary defense: reject dangerous / unsupported file types ──
@@ -494,6 +516,39 @@ public class EntryUploadService {
                 uploadId, request.entryId(), kind, r2Key);
 
         return Optional.of(new InitUploadResponse(uploadId, presignedUrl, r2Key));
+    }
+
+    /**
+     * H8 action 2 (T-1): the FULL file of an entry is immutable once the entry
+     * has been offered to the public — it is the only file that is sold and a
+     * new one would bypass moderation and change what buyers paid for.
+     * <p>
+     * Status alone is not enough: a sold entry can come back to
+     * {@code REJECTED} (takedown via report escalation) or to {@code DRAFT}
+     * ({@code SUSPENDED/ARCHIVED/DELETED → DRAFT}), so the gate also keys on
+     * {@code publishedAt}, which is stamped on the first publish and never
+     * cleared. A never-published {@code DRAFT}/{@code REJECTED} submission is
+     * free to replace its file; everything else is 409 until the versioned
+     * path (P2) exists — before any session, object or asset is created.
+     * Thumbnail and preview uploads are unaffected.
+     */
+    static boolean isFullUploadAllowed(Entry entry) {
+        return FULL_UPLOAD_ALLOWED.contains(entry.getStatus()) && entry.getPublishedAt() == null;
+    }
+
+    private void requireFullUploadAllowed(Entry entry, MediaKind kind, String where) {
+        if (kind != MediaKind.FULL || isFullUploadAllowed(entry)) {
+            return;
+        }
+        if (!fullAssetGateEnabled) {
+            logger.warn("H8 gate (observe only): {} FULL on entry {} in status {} (publishedAt={}) would be rejected",
+                    where, entry.getId(), entry.getStatus(), entry.getPublishedAt());
+            return;
+        }
+        logger.warn("H8 gate: rejecting {} FULL on entry {} in status {} (publishedAt={}, tenant={}, user={})",
+                where, entry.getId(), entry.getStatus(), entry.getPublishedAt(),
+                entry.getTenantId(), entry.getUserId());
+        throw new IllegalStateException(FULL_ASSET_LOCKED);
     }
 
     /**
@@ -582,6 +637,20 @@ public class EntryUploadService {
             r2Key = request.r2Key();
             contentType = request.contentType();
             fileName = request.fileName();
+        }
+
+        // H8: no new FULL asset once the entry left DRAFT (after the idempotent
+        // retry branch above, which creates nothing). The uploaded object is
+        // removed so no orphan is left in R2.
+        try {
+            requireFullUploadAllowed(entry, kind, "finalizeUpload");
+        } catch (IllegalStateException locked) {
+            try {
+                r2StorageService.deleteObject(r2Key);
+            } catch (Exception e) {
+                logger.warn("H8 gate: could not delete rejected upload {}: {}", r2Key, e.getMessage());
+            }
+            throw locked;
         }
 
         // ── Verify the bytes actually landed in R2 and get the true size ──

@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.time.LocalDateTime;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -306,6 +307,46 @@ class ContentModerationServiceTest {
         // Two purchases ⇒ two disputes (one per purchase), both for U1
         assertThat(disputesOf(U1)).hasSize(2);
         assertThat(disputesOf(U1)).extracting(Dispute::getEntitlementId).doesNotHaveDuplicates();
+    }
+
+    // ─── H2: path (b) follows the membership history (D-20) ────────
+
+    @Test
+    void collectionBuyerWhoRetainsARemovedItemGetsADispute_laterBuyerDoesNot() {
+        LocalDateTime t0 = LocalDateTime.of(2026, 1, 1, 0, 0);
+        entry(A, EntryStatus.PUBLISHED);
+        Collection c = collection(COLL, B);               // A is no longer listed…
+        CollectionItem removedA = new CollectionItem(A, 0, null);
+        removedA.setRemovedAt(t0.plusDays(10));           // …removed on day 10
+        removedA.setPosition(null);
+        c.getItems().add(removedA);
+        purchaseCollection(U1, COLL).setGrantedAt(t0);               // bought before removal ⇒ retains A
+        purchaseCollection(U2, COLL).setGrantedAt(t0.plusDays(20));  // bought after removal ⇒ never had A
+
+        service.takedownEntry(TENANT, A, "Illegal", "mod");
+
+        assertThat(disputesOf(U1)).hasSize(1);
+        assertThat(disputesOf(U1).get(0).getAffectedEntryIds()).containsExactly(A);
+        assertThat(disputesOf(U2)).isEmpty();
+    }
+
+    @Test
+    void collectionTakedownListsOnlyTheItemsEachBuyersRightCovers() {
+        LocalDateTime t0 = LocalDateTime.of(2026, 1, 1, 0, 0);
+        entry(A, EntryStatus.PUBLISHED);
+        entry(B, EntryStatus.PUBLISHED);
+        Collection c = collection(COLL, A);
+        CollectionItem removedB = new CollectionItem(B, 1, t0.plusDays(2));
+        removedB.setRemovedAt(t0.plusDays(5));
+        removedB.setPosition(null);
+        c.getItems().add(removedB);
+        purchaseCollection(U1, COLL).setGrantedAt(t0);              // had B between day 2 and 5 ⇒ retains it
+        purchaseCollection(U2, COLL).setGrantedAt(t0.plusDays(6));  // never had B
+
+        service.takedownCollection(TENANT, COLL, "Illegal", "mod");
+
+        assertThat(disputesOf(U1).get(0).getAffectedEntryIds()).containsExactlyInAnyOrder(A, B);
+        assertThat(disputesOf(U2).get(0).getAffectedEntryIds()).containsExactly(A);
     }
 
     @Test

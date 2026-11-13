@@ -5,6 +5,7 @@ import org.earnlumens.mediastore.domain.media.model.Asset;
 import org.earnlumens.mediastore.domain.media.model.AssetStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
+import org.earnlumens.mediastore.domain.media.model.EntryVersion;
 import org.earnlumens.mediastore.domain.media.model.MediaKind;
 import org.earnlumens.mediastore.domain.media.repository.AssetRepository;
 import org.earnlumens.mediastore.domain.media.repository.EntryRepository;
@@ -73,14 +74,29 @@ public class MediaEntitlementService {
 
         logger.debug("Access granted ({}): userId={}, entryId={}",
                 result.owner() ? "owner" : result.entitled() ? "entitlement" : "public", userId, entryId);
-        Optional<MediaEntitlementResponse> response = buildAssetResponse(tenantId, entry);
+        // N8-lite: a buyer is served the version they acquired; owner, public
+        // and free viewers read the live document (currentVersion).
+        EntryVersion purchased = result.entitled()
+                ? ContentVersionService.purchasedVersion(entry, result.rightStart()) : null;
+        Optional<MediaEntitlementResponse> response = buildAssetResponse(tenantId, entry, purchased);
         return new Check(response.isPresent() ? AccessDecision.ALLOWED : AccessDecision.DENIED_HIDDEN, response);
     }
 
-    private Optional<MediaEntitlementResponse> buildAssetResponse(String tenantId, Entry entry) {
+    private Optional<MediaEntitlementResponse> buildAssetResponse(String tenantId, Entry entry, EntryVersion purchased) {
         String entryId = entry.getId();
-        Optional<Asset> optAsset = assetRepository
-                .findByTenantIdAndEntryIdAndKindAndStatus(tenantId, entryId, MediaKind.FULL, AssetStatus.READY);
+        // Version pointer first (D-14); the latest READY FULL is the fallback
+        // for unversioned entries and for a pointer whose asset is not READY (H8).
+        Optional<Asset> optAsset = Optional.empty();
+        if (purchased != null && purchased.getAssetId() != null) {
+            optAsset = assetRepository.findByTenantIdAndEntryId(tenantId, entryId).stream()
+                    .filter(a -> purchased.getAssetId().equals(a.getId()))
+                    .filter(a -> a.getKind() == MediaKind.FULL && a.getStatus() == AssetStatus.READY)
+                    .findFirst();
+        }
+        if (optAsset.isEmpty()) {
+            optAsset = assetRepository
+                    .findByTenantIdAndEntryIdAndKindAndStatus(tenantId, entryId, MediaKind.FULL, AssetStatus.READY);
+        }
 
         if (optAsset.isEmpty()) {
             // RESOURCE entries can be text-only (no file upload).
@@ -95,10 +111,13 @@ public class MediaEntitlementService {
 
         Asset asset = optAsset.get();
 
-        // Resolve HLS R2 prefix: stored on entry for new transcodes,
-        // computed for legacy entries that have hlsReady but no stored prefix
+        // Resolve HLS R2 prefix: the purchased version's own prefix when the
+        // buyer is pinned to it; otherwise the entry's (new transcodes) or the
+        // computed legacy prefix for entries that have hlsReady but no stored prefix.
         String hlsPrefix = null;
-        if (entry.isHlsReady()) {
+        if (purchased != null && purchased.getHlsR2Prefix() != null) {
+            hlsPrefix = purchased.getHlsR2Prefix();
+        } else if (entry.isHlsReady()) {
             hlsPrefix = entry.getHlsR2Prefix() != null
                     ? entry.getHlsR2Prefix()
                     : "public/media/" + entryId + "/hls";

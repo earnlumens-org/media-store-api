@@ -35,7 +35,7 @@ class PublicTenantControllerVisitorTest {
         tenantConfigService = mock(TenantConfigService.class);
         PublicTenantController controller = new PublicTenantController(tenantConfigService);
         ReflectionTestUtils.setField(controller, "rootDomain", "earnlumens.org");
-        lenient().when(tenantConfigService.findActiveBySubdomain(anyString())).thenReturn(Optional.empty());
+        lenient().when(tenantConfigService.findBySubdomain(anyString())).thenReturn(Optional.empty());
         lenient().when(tenantConfigService.findActiveByCustomDomain(anyString())).thenReturn(Optional.empty());
         mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
     }
@@ -64,11 +64,26 @@ class PublicTenantControllerVisitorTest {
 
     @Test
     void activeSubdomain_returnsTenant() throws Exception {
-        when(tenantConfigService.findActiveBySubdomain("alice")).thenReturn(Optional.of(tenant("alice")));
+        when(tenantConfigService.findBySubdomain("alice")).thenReturn(Optional.of(tenant("alice")));
         mockMvc.perform(visitor("alice.earnlumens.org"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.kind").value("tenant"))
-                .andExpect(jsonPath("$.subdomain").value("alice"));
+                .andExpect(jsonPath("$.subdomain").value("alice"))
+                .andExpect(jsonPath("$.suspended").doesNotExist());
+    }
+
+    @Test
+    void blockedSubdomain_returnsTenantFlaggedSuspended() throws Exception {
+        // H1 read-only mode: the storefront stays reachable with a notice so
+        // buyers can find their library; it is never a 404 nor the platform.
+        TenantReadModel t = tenant("alice");
+        t.setStatus("BLOCKED");
+        when(tenantConfigService.findBySubdomain("alice")).thenReturn(Optional.of(t));
+        mockMvc.perform(visitor("alice.earnlumens.org"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.kind").value("tenant"))
+                .andExpect(jsonPath("$.subdomain").value("alice"))
+                .andExpect(jsonPath("$.suspended").value(true));
     }
 
     @Test
@@ -119,7 +134,7 @@ class PublicTenantControllerVisitorTest {
 
     @Test
     void installOffered_apexTrue_subdomainFalse_customDomainTrue() throws Exception {
-        when(tenantConfigService.findActiveBySubdomain("alice")).thenReturn(Optional.of(tenant("alice")));
+        when(tenantConfigService.findBySubdomain("alice")).thenReturn(Optional.of(tenant("alice")));
         when(tenantConfigService.findActiveByCustomDomain("shop.example.com"))
                 .thenReturn(Optional.of(tenant("alice")));
         mockMvc.perform(visitor("earnlumens.org"))
@@ -139,7 +154,7 @@ class PublicTenantControllerVisitorTest {
         t.setBrandText("750");
         t.setBrowserTitle(" 750 ");
         when(tenantConfigService.findActiveByCustomDomain("www.udemo.app")).thenReturn(Optional.of(t));
-        when(tenantConfigService.findActiveBySubdomain("750")).thenReturn(Optional.of(t));
+        when(tenantConfigService.findBySubdomain("750")).thenReturn(Optional.of(t));
         mockMvc.perform(visitor("www.udemo.app"))
                 .andExpect(jsonPath("$.appName").value("udemo"));
         mockMvc.perform(manifest("www.udemo.app"))
@@ -184,7 +199,7 @@ class PublicTenantControllerVisitorTest {
     void visitor_pwaIconKey_onlyOnCustomDomain() throws Exception {
         TenantReadModel t = tenant("alice");
         t.setPwaIconR2Key("public/tenants/alice/appicon/abc.png");
-        when(tenantConfigService.findActiveBySubdomain("alice")).thenReturn(Optional.of(t));
+        when(tenantConfigService.findBySubdomain("alice")).thenReturn(Optional.of(t));
         when(tenantConfigService.findActiveByCustomDomain("shop.example.com")).thenReturn(Optional.of(t));
         mockMvc.perform(visitor("alice.earnlumens.org"))
                 .andExpect(jsonPath("$.pwaIconR2Key").doesNotExist());
@@ -220,7 +235,7 @@ class PublicTenantControllerVisitorTest {
     void manifest_subdomain_usesTenantNameAndBadgeIcons_evenWhenTenantHasOwnIcon() throws Exception {
         TenantReadModel t = tenant("alice");
         t.setPwaIconR2Key("public/tenants/alice/appicon/abc.png");
-        when(tenantConfigService.findActiveBySubdomain("alice")).thenReturn(Optional.of(t));
+        when(tenantConfigService.findBySubdomain("alice")).thenReturn(Optional.of(t));
         mockMvc.perform(manifest("alice.earnlumens.org"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.name").value("Alice Store"))

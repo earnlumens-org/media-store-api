@@ -348,7 +348,11 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
         ops.add(buildSortStage(sort));
         ops.add(Aggregation.skip((long) skip));
         ops.add(Aggregation.limit(limit));
-        ops.add(context -> Document.parse(PUBLIC_FEED_PROJECT));
+        // versionCount lets PurchaseListService resolve the buyer's purchased
+        // version (N8-lite) only for entries that actually have versions[].
+        Document project = Document.parse(PUBLIC_FEED_PROJECT);
+        project.get("$project", Document.class).append("versionCount", 1);
+        ops.add(context -> project);
 
         Aggregation agg = Aggregation.newAggregation(ops);
         return mongoTemplate.aggregate(agg, "entries", Document.class).getMappedResults();
@@ -387,7 +391,8 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
                 "kind": "entry",
                 "sortDate": "$publishedAt",
                 "itemCount": { "$literal": 0 },
-                "coverR2Key": { "$literal": null }
+                "coverR2Key": { "$literal": null },
+                "versionCount": { "$size": { "$ifNull": [ "$versions", [] ] } }
             }}
             """));
 

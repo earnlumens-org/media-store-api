@@ -16,11 +16,11 @@ import org.earnlumens.mediastore.infrastructure.config.StellarConfig;
 import org.earnlumens.mediastore.infrastructure.external.pricing.XlmUsdPriceService;
 import org.earnlumens.mediastore.infrastructure.franchise.read.FranchiseReadModel;
 import org.earnlumens.mediastore.infrastructure.franchise.read.FranchiseReadRepository;
+import org.earnlumens.mediastore.infrastructure.tenant.TenantResolver;
 import org.earnlumens.mediastore.infrastructure.tenant.read.TenantConfigService;
 import org.earnlumens.mediastore.infrastructure.tenant.read.TenantReadModel;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
@@ -59,6 +59,14 @@ public class PaymentService {
     private static final Logger logger = LoggerFactory.getLogger(PaymentService.class);
 
     private static final BigDecimal ONE_HUNDRED = new BigDecimal("100.00");
+
+    /**
+     * H7 (400): the tenant has a commission configured but no payable wallet
+     * (missing, blank or no longer active on Stellar), or a secondary tenant
+     * has no payout wallet for publishing payments. Fail-closed: no order,
+     * no XDR. Operator misconfiguration — never the buyer's fault.
+     */
+    public static final String TENANT_PAYOUT_UNCONFIGURED = "TENANT_PAYOUT_UNCONFIGURED";
 
     /** Tip amount bounds (USD) — the single price input accepted from the client, strictly enforced server-side. */
     private static final BigDecimal TIP_MIN_USD = new BigDecimal("0.25");
@@ -302,15 +310,8 @@ public class PaymentService {
         // removed afterwards. Re-validate (cached + fail-open) BEFORE the buyer
         // signs, so a dead destination yields an actionable 400 here instead of
         // an op_no_destination failure after the user already signed.
-        for (PaymentSplit split : splits) {
-            if (!stellarTxService.isAccountActiveCached(split.getWallet())) {
-                logger.error("Split wallet no longer active on Stellar: role={}, wallet={}, tenant={}, {}={}",
-                        split.getRole(), split.getWallet(), tenantId,
-                        isCollectionPurchase ? "collectionId" : "entryId",
-                        isCollectionPurchase ? collectionId : entryId);
-                throw new IllegalArgumentException("SPLIT_WALLET_NOT_ACTIVE");
-            }
-        }
+        validateSplitWalletsActive(splits, tenantId, "PURCHASE",
+                isCollectionPurchase ? collectionId : entryId);
 
         // Build the MEMO
         String memo = "TOTAL: " + formatXlmForMemo(totalXlm) + " XLM";
@@ -477,15 +478,8 @@ public class PaymentService {
         List<PaymentSplit> splits = buildFullSplits(tenantId, targetSplits, franchise);
 
         // Re-validate every split destination is an active Stellar account before signing.
-        for (PaymentSplit split : splits) {
-            if (!stellarTxService.isAccountActiveCached(split.getWallet())) {
-                logger.error("TIP split wallet no longer active on Stellar: role={}, wallet={}, tenant={}, {}={}",
-                        split.getRole(), split.getWallet(), tenantId,
-                        isCollectionTip ? "collectionId" : "entryId",
-                        isCollectionTip ? collectionId : entryId);
-                throw new IllegalArgumentException("SPLIT_WALLET_NOT_ACTIVE");
-            }
-        }
+        validateSplitWalletsActive(splits, tenantId, "TIP",
+                isCollectionTip ? collectionId : entryId);
 
         String memo = "TIP: " + formatXlmForMemo(totalXlm) + " XLM";
 
@@ -653,41 +647,62 @@ public class PaymentService {
      * decision: the MAIN tenant (earnlumens) keeps 100% for the platform;
      * SECONDARY tenants pay the platform its fee percent (default 10%) and
      * the remainder goes to the tenant owner's wallet.
+     *
+     * <p>H7: a secondary tenant without a payout wallet is a configuration
+     * error, not a reason to route its share to the platform. The payment is
+     * refused with {@code TENANT_PAYOUT_UNCONFIGURED} before any order exists.
      */
     private List<PaymentSplit> buildPublishingSplits(String tenantId) {
         BigDecimal platformPercent = platformConfig.getFeePercent();
         String platformWallet = platformConfig.getWallet();
 
-        Optional<TenantReadModel> tenantConfig = tenantConfigService.findActiveBySubdomain(tenantId);
-        if (tenantConfig.isPresent()) {
-            TenantReadModel t = tenantConfig.get();
-            String tenantWallet = t.getTenantWallet();
-            if (tenantWallet != null && !tenantWallet.isBlank()
-                    && !tenantWallet.equals(platformWallet)) {
-                if (t.getPlatformFeePercent() != null) {
-                    platformPercent = t.getPlatformFeePercent();
-                }
-                if (platformPercent.compareTo(BigDecimal.ZERO) <= 0
-                        || platformPercent.compareTo(ONE_HUNDRED) >= 0) {
-                    platformPercent = platformConfig.getFeePercent();
-                }
-                BigDecimal tenantPercent = ONE_HUNDRED.subtract(platformPercent);
-                List<PaymentSplit> splits = new ArrayList<>();
-                splits.add(new PaymentSplit(platformWallet, SplitRole.PLATFORM, platformPercent));
-                splits.add(new PaymentSplit(tenantWallet, SplitRole.TENANT, tenantPercent));
-                return splits;
-            }
+        if (TenantResolver.DEFAULT_TENANT.equals(tenantId)) {
+            return List.of(new PaymentSplit(platformWallet, SplitRole.PLATFORM, ONE_HUNDRED));
         }
-        // Main tenant (or secondary without a payout wallet): 100% platform.
-        return List.of(new PaymentSplit(platformWallet, SplitRole.PLATFORM, ONE_HUNDRED));
+
+        TenantReadModel t = tenantConfigService.findActiveBySubdomain(tenantId).orElse(null);
+        String tenantWallet = t == null ? null : t.getTenantWallet();
+        if (tenantWallet == null || tenantWallet.isBlank()) {
+            logger.error("TENANT_PAYOUT_UNCONFIGURED: publishing payment on tenant {} without a payout wallet "
+                    + "(tenant doc {}) — refusing instead of routing 100% to the platform",
+                    tenantId, t == null ? "missing/inactive" : "present");
+            throw new IllegalArgumentException(TENANT_PAYOUT_UNCONFIGURED);
+        }
+        if (tenantWallet.equals(platformWallet)) {
+            // Platform-operated secondary tenant: nothing to split.
+            return List.of(new PaymentSplit(platformWallet, SplitRole.PLATFORM, ONE_HUNDRED));
+        }
+        if (t.getPlatformFeePercent() != null) {
+            platformPercent = t.getPlatformFeePercent();
+        }
+        if (platformPercent.compareTo(BigDecimal.ZERO) <= 0
+                || platformPercent.compareTo(ONE_HUNDRED) >= 0) {
+            platformPercent = platformConfig.getFeePercent();
+        }
+        BigDecimal tenantPercent = ONE_HUNDRED.subtract(platformPercent);
+        List<PaymentSplit> splits = new ArrayList<>();
+        splits.add(new PaymentSplit(platformWallet, SplitRole.PLATFORM, platformPercent));
+        splits.add(new PaymentSplit(tenantWallet, SplitRole.TENANT, tenantPercent));
+        return splits;
     }
 
+    /**
+     * Pre-sign check that every destination is an active Stellar account.
+     * The tenant's payout is a <b>mandatory</b> payee (H7): when it is the
+     * one that is dead the error names the operator's misconfiguration
+     * ({@code TENANT_PAYOUT_UNCONFIGURED}) instead of the generic
+     * {@code SPLIT_WALLET_NOT_ACTIVE}, so the storefront can tell the buyer
+     * the store — not their wallet — is the problem.
+     */
     private void validateSplitWalletsActive(List<PaymentSplit> splits, String tenantId,
                                             String kind, String contextId) {
         for (PaymentSplit split : splits) {
             if (!stellarTxService.isAccountActiveCached(split.getWallet())) {
                 logger.error("{} split wallet not active on Stellar: role={}, wallet={}, tenant={}, context={}",
                         kind, split.getRole(), split.getWallet(), tenantId, contextId);
+                if (split.getRole() == SplitRole.TENANT) {
+                    throw new IllegalArgumentException(TENANT_PAYOUT_UNCONFIGURED);
+                }
                 throw new IllegalArgumentException("SPLIT_WALLET_NOT_ACTIVE");
             }
         }
@@ -1116,10 +1131,12 @@ public class PaymentService {
     }
 
     /**
-     * Creates an ACTIVE entitlement for the buyer after a confirmed payment.
+     * Grants the buyer's entitlement after a confirmed payment (S-06 / H11).
      * Hard precondition: the backing order MUST be COMPLETED with an on-chain tx hash.
-     * Idempotent: a duplicate-key on the unique (userId + entryId/collectionId)
-     * index means the entitlement already exists and is treated as success.
+     * One entitlement per right: a first purchase inserts it, a re-purchase
+     * after a refund reactivates the same {@code REVOKED} document with the new
+     * order, and a repeated call for an already {@code ACTIVE} right is a no-op
+     * that preserves {@code grantedAt} (R-30). Idempotent by construction.
      */
     private void createEntitlement(Order order) {
         if (order.getStatus() != OrderStatus.COMPLETED || order.getStellarTxHash() == null) {
@@ -1156,15 +1173,16 @@ public class PaymentService {
         entitlement.setStatus(EntitlementStatus.ACTIVE);
         entitlement.setGrantedAt(LocalDateTime.now(ZoneOffset.UTC));
 
-        try {
-            entitlementRepository.save(entitlement);
-        } catch (DuplicateKeyException e) {
-            logger.warn("Entitlement already exists (idempotent create): userId={}, orderId={}",
+        EntitlementRepository.UpsertOutcome outcome = entitlementRepository.upsertPurchase(entitlement);
+        switch (outcome) {
+            case CREATED -> logger.info("Entitlement created: userId={}, entryId={}, collectionId={}, orderId={}",
+                    order.getUserId(), order.getEntryId(), order.getCollectionId(), order.getId());
+            case REACTIVATED -> logger.info("Entitlement reactivated after refund: userId={}, entryId={}, "
+                    + "collectionId={}, orderId={}", order.getUserId(), order.getEntryId(),
+                    order.getCollectionId(), order.getId());
+            case UNCHANGED -> logger.debug("Entitlement already ACTIVE (idempotent): userId={}, orderId={}",
                     order.getUserId(), order.getId());
-            return;
         }
-        logger.info("Entitlement created: userId={}, entryId={}, collectionId={}, orderId={}",
-                order.getUserId(), order.getEntryId(), order.getCollectionId(), order.getId());
     }
 
     /**
@@ -1221,11 +1239,13 @@ public class PaymentService {
                     tenantPercent = t.getTenantFeePercent();
                     tenantWallet = t.getTenantWallet();
                 } else {
-                    // Fail-open by design (the sale must go through), but never
-                    // silently: the tenant is losing its commission on this sale.
-                    logger.warn("Tenant {} has tenantFeePercent={} but no wallet configured — "
-                                    + "TENANT split omitted, tenant earns nothing on this sale",
+                    // H7: a mandatory payee that cannot be paid stops the sale
+                    // (no order, no XDR). Operator misconfiguration, not the
+                    // buyer's fault — logged at ERROR so it is alerted on.
+                    logger.error("TENANT_PAYOUT_UNCONFIGURED: tenant {} has tenantFeePercent={} but no wallet — "
+                                    + "refusing the sale until the operator configures a payout wallet",
                             tenantId, t.getTenantFeePercent());
+                    throw new IllegalArgumentException(TENANT_PAYOUT_UNCONFIGURED);
                 }
             }
         }

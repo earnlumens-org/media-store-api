@@ -30,10 +30,16 @@ public record CollectionDetailResponse(
         String contentLanguage,
         List<CollectionEntryItem> items,
         /** R2 prefix for cover variants. */
-        String coverVariantsPrefix
+        String coverVariantsPrefix,
+        /**
+         * Items the creator removed after this buyer's purchase, which the
+         * buyer retains (H2 / D-20). Empty for non-buyers.
+         */
+        List<CollectionEntryItem> retainedItems
 ) {
     public record CollectionEntryItem(
             String entryId,
+            /** 0-based position among active items; {@code -1} for a retained (removed) item. */
             int position,
             String type,
             String title,
@@ -48,6 +54,8 @@ public record CollectionDetailResponse(
             /** R2 prefix for thumbnail variants of this entry. */
             String thumbnailVariantsPrefix,
             /** Entry is under a moderation block (H3): not accessible to anyone until reinstated. */
-            boolean blocked
+            boolean blocked,
+            /** Removed from the collection after the viewer's purchase; the viewer keeps access (D-20). */
+            boolean retained
     ) {}
 }

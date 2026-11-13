@@ -95,7 +95,8 @@ class TenantIsolationArchTest {
     );
 
     // ── Methods that carry tenantId inside the entity (e.g. save) ──
-    private static final Set<String> ENTITY_CARRIER_METHODS = Set.of("save");
+    // upsertPurchase keys the write on the entity's own (tenantId, userId, target) — S-06.
+    private static final Set<String> ENTITY_CARRIER_METHODS = Set.of("save", "upsertPurchase");
 
     @TestFactory
     Stream<DynamicTest> allTenantScopedRepositoryMethods_requireTenantId() {

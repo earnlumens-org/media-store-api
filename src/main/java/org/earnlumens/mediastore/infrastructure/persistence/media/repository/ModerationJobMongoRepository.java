@@ -16,8 +16,13 @@ public interface ModerationJobMongoRepository extends MongoRepository<Moderation
     /**
      * Find jobs whose status is DISPATCHED or PROCESSING and whose lastHeartbeat
      * is older than the given threshold — these are stuck/crashed workers.
+     * A job in those states with <b>no</b> heartbeat at all (worker never
+     * reported after dispatch) is equally stale once it is older than the
+     * threshold; before L2 such orphans were invisible to the watchdog.
      */
-    @Query("{ 'status': { $in: ['DISPATCHED', 'PROCESSING'] }, 'lastHeartbeat': { $lt: ?0 } }")
+    @Query("{ 'status': { $in: ['DISPATCHED', 'PROCESSING'] }, "
+            + "$or: [ { 'lastHeartbeat': { $lt: ?0 } }, "
+            + "       { 'lastHeartbeat': null, 'createdAt': { $lt: ?0 } } ] }")
     List<ModerationJobEntity> findStaleJobs(LocalDateTime heartbeatBefore, Pageable pageable);
 
     /**

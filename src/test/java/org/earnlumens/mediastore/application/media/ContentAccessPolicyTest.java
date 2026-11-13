@@ -8,6 +8,7 @@ import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
+import org.earnlumens.mediastore.domain.media.model.EntryVersion;
 import org.earnlumens.mediastore.domain.media.model.GrantType;
 import org.earnlumens.mediastore.domain.media.model.ModerationBlock;
 import org.earnlumens.mediastore.domain.media.model.Order;
@@ -30,12 +31,15 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
  * H3 acceptance matrix for {@link ContentAccessPolicy}: status ×
  * moderationBlock × (buyer / anonymous / owner), free-content rule (D-19)
- * and the backing-order defence on the shared decision point.
+ * and the backing-order defence on the shared decision point. H2 adds the
+ * union-by-right-date scenarios (D-20) and N8-lite the right start (S-07).
  */
 class ContentAccessPolicyTest {
 
@@ -61,6 +65,7 @@ class ContentAccessPolicyTest {
         when(entitlements.findByTenantIdAndUserIdAndCollectionIdsAndStatus(any(), any(), anyList(), any()))
                 .thenReturn(List.of());
         when(collections.findByTenantIdAndStatusAndItemsEntryId(any(), any(), any())).thenReturn(List.of());
+        when(collections.findByTenantIdAndItemsEntryId(any(), any())).thenReturn(List.of());
         policy = new ContentAccessPolicy(entitlements, collections, orders);
     }
 
@@ -109,17 +114,22 @@ class ContentAccessPolicyTest {
         c.setStatus(CollectionStatus.PUBLISHED);
         c.setItems(List.of(new CollectionItem(ENTRY, 0)));
         if (collectionBlocked) c.setModerationBlock(new ModerationBlock("case", "r", "mod", LocalDateTime.now()));
-        when(collections.findByTenantIdAndStatusAndItemsEntryId(TENANT, CollectionStatus.PUBLISHED, ENTRY))
-                .thenReturn(List.of(c));
+        stubCollectionPurchase(userId, c, null);
+    }
+
+    /** Collection purchase with an explicit membership history and right date. */
+    private void stubCollectionPurchase(String userId, Collection c, LocalDateTime grantedAt) {
+        when(collections.findByTenantIdAndItemsEntryId(TENANT, ENTRY)).thenReturn(List.of(c));
         Entitlement ent = new Entitlement();
         ent.setId("ent-c");
         ent.setTenantId(TENANT);
         ent.setUserId(userId);
-        ent.setCollectionId(COLL);
+        ent.setCollectionId(c.getId());
         ent.setTargetType(TargetType.COLLECTION);
         ent.setGrantType(GrantType.PURCHASE);
         ent.setOrderId("order-c");
         ent.setStatus(EntitlementStatus.ACTIVE);
+        ent.setGrantedAt(grantedAt);
         when(entitlements.findByTenantIdAndUserIdAndCollectionIdsAndStatus(eq(TENANT), eq(userId), anyList(), eq(EntitlementStatus.ACTIVE)))
                 .thenReturn(List.of(ent));
         Order order = new Order();
@@ -127,6 +137,24 @@ class ContentAccessPolicyTest {
         order.setStatus(OrderStatus.COMPLETED);
         order.setStellarTxHash("hash-c");
         when(orders.findByTenantIdAndId(TENANT, "order-c")).thenReturn(Optional.of(order));
+    }
+
+    private static Collection paidCollection(CollectionStatus status, CollectionItem... items) {
+        Collection c = new Collection();
+        c.setId(COLL);
+        c.setTenantId(TENANT);
+        c.setUserId(OWNER);
+        c.setPaid(true);
+        c.setStatus(status);
+        c.setItems(new java.util.ArrayList<>(List.of(items)));
+        return c;
+    }
+
+    private static CollectionItem removedItem(String entryId, LocalDateTime addedAt, LocalDateTime removedAt) {
+        CollectionItem i = new CollectionItem(entryId, 0, addedAt);
+        i.setRemovedAt(removedAt);
+        i.setPosition(null);
+        return i;
     }
 
     // ─── Step 0: moderation block beats everything (D-16) ───────
@@ -246,4 +274,128 @@ class ContentAccessPolicyTest {
         assertThat(policy.evaluateCollection(TENANT, c, OWNER).decision()).isEqualTo(AccessDecision.DENIED_BLOCKED);
         assertThat(policy.evaluateCollection(TENANT, c, BUYER).decision()).isEqualTo(AccessDecision.DENIED_BLOCKED);
     }
-}
+    // ─── H2: union by right date (D-20 / S-04) ────────────────────
+
+    private static final LocalDateTime T0 = LocalDateTime.of(2026, 1, 1, 0, 0);
+
+    @Test
+    void d20_itemPresentAtPurchaseThenRemoved_buyerRetains() {
+        Collection c = paidCollection(CollectionStatus.PUBLISHED, removedItem(ENTRY, null, T0.plusDays(10)));
+        stubCollectionPurchase(BUYER, c, T0);
+        ContentAccessPolicy.Result r = policy.evaluate(TENANT, paid(EntryStatus.PUBLISHED), BUYER);
+        assertThat(r.decision()).isEqualTo(AccessDecision.ALLOWED);
+        assertThat(r.entitled()).isTrue();
+    }
+
+    @Test
+    void d20_itemAddedAfterPurchaseThenRemoved_buyerRetains() {
+        // the case the snapshot model could not cover
+        Collection c = paidCollection(CollectionStatus.PUBLISHED, removedItem(ENTRY, T0.plusDays(5), T0.plusDays(10)));
+        stubCollectionPurchase(BUYER, c, T0);
+        ContentAccessPolicy.Result r = policy.evaluate(TENANT, paid(EntryStatus.PUBLISHED), BUYER);
+        assertThat(r.decision()).isEqualTo(AccessDecision.ALLOWED);
+        assertThat(r.rightStart()).isEqualTo(T0.plusDays(5)); // max(grantedAt, addedAt)
+    }
+
+    @Test
+    void d20_itemRemovedBeforePurchase_laterBuyerDoesNotAcquire() {
+        Collection c = paidCollection(CollectionStatus.PUBLISHED, removedItem(ENTRY, null, T0.minusDays(1)));
+        stubCollectionPurchase(BUYER, c, T0);
+        assertThat(policy.evaluate(TENANT, paid(EntryStatus.PUBLISHED), BUYER).decision())
+                .isEqualTo(AccessDecision.DENIED_LOCKED);
+    }
+
+    @Test
+    void d20_removalAtExactlyGrantedAt_favoursTheBuyer() {
+        Collection c = paidCollection(CollectionStatus.PUBLISHED, removedItem(ENTRY, null, T0));
+        stubCollectionPurchase(BUYER, c, T0);
+        assertThat(policy.evaluate(TENANT, paid(EntryStatus.PUBLISHED), BUYER).allowed()).isTrue();
+    }
+
+    @Test
+    void d20_itemRemovedAndReAdded_everyBuyerHasAccess() {
+        Collection c = paidCollection(CollectionStatus.PUBLISHED,
+                removedItem(ENTRY, null, T0.minusDays(1)), new CollectionItem(ENTRY, 0, T0.plusDays(3)));
+        stubCollectionPurchase(BUYER, c, T0); // bought while removed, before re-add
+        ContentAccessPolicy.Result r = policy.evaluate(TENANT, paid(EntryStatus.PUBLISHED), BUYER);
+        assertThat(r.allowed()).isTrue();
+        assertThat(r.rightStart()).isEqualTo(T0.plusDays(3));
+    }
+
+    @ParameterizedTest
+    @EnumSource(value = CollectionStatus.class)
+    void d20_collectionInAnyStatusKeepsGrantingToItsBuyer(CollectionStatus status) {
+        Collection c = paidCollection(status, new CollectionItem(ENTRY, 0));
+        stubCollectionPurchase(BUYER, c, T0);
+        assertThat(policy.evaluate(TENANT, paid(EntryStatus.PUBLISHED), BUYER).allowed()).as(status.name()).isTrue();
+        assertThat(policy.evaluateCollection(TENANT, c, BUYER).allowed()).as(status.name()).isTrue();
+    }
+
+    @Test
+    void d20_historicalRecordsWithoutDatesMeanSinceForever() {
+        Collection c = paidCollection(CollectionStatus.ARCHIVED, new CollectionItem(ENTRY, 0));
+        stubCollectionPurchase(BUYER, c, null);
+        ContentAccessPolicy.Result r = policy.evaluate(TENANT, paid(EntryStatus.PUBLISHED), BUYER);
+        assertThat(r.allowed()).isTrue();
+        assertThat(r.rightStart()).isEqualTo(ContentAccessPolicy.SINCE_FOREVER);
+    }
+
+    @Test
+    void d20_evaluationNeverWritesEntitlements() {
+        Collection c = paidCollection(CollectionStatus.PUBLISHED, removedItem(ENTRY, null, T0.plusDays(1)));
+        stubCollectionPurchase(BUYER, c, T0);
+        policy.evaluate(TENANT, paid(EntryStatus.PUBLISHED), BUYER);
+        verify(entitlements, never()).save(any());
+        verify(entitlements, never()).upsertPurchase(any());
+        verify(collections, never()).save(any());
+    }
+
+    // ─── N8-lite: right start feeds the purchased version (S-07) ─────
+
+    private static Entry versioned(LocalDateTime v2ApprovedAt) {
+        Entry e = new Entry();
+        e.setId(ENTRY);
+        e.setTenantId(TENANT);
+        e.setUserId(OWNER);
+        e.setType(EntryType.RESOURCE);
+        e.setStatus(EntryStatus.PUBLISHED);
+        e.setPaid(true);
+        EntryVersion v1 = new EntryVersion(); v1.setVersion(1); v1.setApprovedAt(T0.minusDays(30));
+        EntryVersion v2 = new EntryVersion(); v2.setVersion(2); v2.setApprovedAt(v2ApprovedAt);
+        e.setVersions(new java.util.ArrayList<>(List.of(v1, v2)));
+        e.setCurrentVersion(2);
+        return e;
+    }
+
+    @Test
+    void s07_unversionedEntry_directRightShortCircuits_noCollectionLookup() {
+        stubDirectPurchase(BUYER, true);
+        ContentAccessPolicy.Result r = policy.evaluate(TENANT, paid(EntryStatus.PUBLISHED), BUYER);
+        assertThat(r.entitled()).isTrue();
+        verify(collections, never()).findByTenantIdAndItemsEntryId(any(), any());
+    }
+
+    @Test
+    void s07_sameEntryByTwoPaths_rightStartIsTheEarliest() {
+        stubDirectPurchase(BUYER, true); // grantedAt null in this stub → set it
+        Entitlement direct = entitlements.findByTenantIdAndUserIdAndEntryIdAndStatus(TENANT, BUYER, ENTRY, EntitlementStatus.ACTIVE).get();
+        direct.setGrantedAt(T0.plusDays(20));
+        Collection c = paidCollection(CollectionStatus.PUBLISHED, new CollectionItem(ENTRY, 0, T0.minusDays(1)));
+        stubCollectionPurchase(BUYER, c, T0);
+
+        ContentAccessPolicy.Result r = policy.evaluate(TENANT, versioned(T0.plusDays(10)), BUYER);
+
+        assertThat(r.entitled()).isTrue();
+        assertThat(r.rightStart()).isEqualTo(T0); // collection right came first
+        assertThat(ContentVersionService.purchasedVersion(versioned(T0.plusDays(10)), r.rightStart()).getVersion()).isEqualTo(1);
+    }
+
+    @Test
+    void s07_itemAddedToCollectionAfterV2_buyerAcquiresV2() {
+        Collection c = paidCollection(CollectionStatus.PUBLISHED, new CollectionItem(ENTRY, 0, T0.plusDays(15)));
+        stubCollectionPurchase(BUYER, c, T0);
+        Entry e = versioned(T0.plusDays(10));
+        ContentAccessPolicy.Result r = policy.evaluate(TENANT, e, BUYER);
+        assertThat(r.rightStart()).isEqualTo(T0.plusDays(15));
+        assertThat(ContentVersionService.purchasedVersion(e, r.rightStart())).isNull(); // v2 == current ⇒ live
+    }}

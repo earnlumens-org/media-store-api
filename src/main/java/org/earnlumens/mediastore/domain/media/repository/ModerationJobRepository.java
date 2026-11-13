@@ -28,6 +28,15 @@ public interface ModerationJobRepository {
      */
     List<ModerationJob> findAllStaleJobs(LocalDateTime heartbeatBefore, int limit);
 
+    /**
+     * Atomically moves a still-active job to {@code COMPLETED} and returns
+     * whether this caller won. Active = not {@code COMPLETED}/{@code DEAD} and
+     * not a cancelled {@code FAILED} (one with {@code completedAt}). Two
+     * concurrent worker callbacks for the same job therefore apply the
+     * decision exactly once (rev. 19 anomaly: duplicated AI approval).
+     */
+    boolean claimCompletion(String tenantId, String jobId);
+
     /** Find an active (non-terminal) job for the given entry. */
     Optional<ModerationJob> findActiveByTenantIdAndEntryId(String tenantId, String entryId);
 }

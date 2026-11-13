@@ -7,6 +7,7 @@ import org.earnlumens.mediastore.domain.media.model.EntitlementStatus;
 import org.earnlumens.mediastore.domain.media.model.Entry;
 import org.earnlumens.mediastore.domain.media.model.EntryStatus;
 import org.earnlumens.mediastore.domain.media.model.EntryType;
+import org.earnlumens.mediastore.domain.media.model.EntryVersion;
 import org.earnlumens.mediastore.domain.media.model.GrantType;
 import org.earnlumens.mediastore.domain.media.model.ModerationBlock;
 import org.earnlumens.mediastore.domain.media.model.Order;
@@ -165,5 +166,73 @@ class PublicEntryServiceAccessTest {
         assertThat(cdnService.check(TENANT, null, ENTRY).decision()).isEqualTo(AccessDecision.DENIED_HIDDEN);
         assertThat(publicService.lookupEntry(TENANT, ENTRY, OWNER).entry()).isPresent();
         assertThat(cdnService.check(TENANT, OWNER, ENTRY).response()).isPresent();
+    }
+
+    // ─── N8-lite: buyer of v1 keeps v1 metadata after v2 is approved ───
+
+    private static final LocalDateTime T0 = LocalDateTime.of(2026, 1, 1, 0, 0);
+
+    private void publishV2(EntryType type) {
+        entry.setType(type);
+        entry.setTitle("Title v2");
+        entry.setDescription("Description v2");
+        entry.setResourceContent("Text v2");
+        entry.setTags(List.of("v2"));
+        entry.setThumbnailR2Key("public/media/e1/thumbnail/v2.jpg");
+        entry.setThumbnailVariantsPrefix("public/media/e1/thumbnail/variants-v2");
+        entry.setPreviewR2Key("public/media/e1/preview/v2.jpg");
+        EntryVersion v1 = new EntryVersion();
+        v1.setVersion(1); v1.setApprovedAt(T0);
+        v1.setTitle("Title v1"); v1.setDescription("Description v1"); v1.setResourceContent("Text v1");
+        v1.setTags(List.of("v1")); v1.setThumbnailR2Key("public/media/e1/thumbnail/v1.jpg");
+        v1.setPreviewR2Key("public/media/e1/preview/v1.jpg");
+        EntryVersion v2 = new EntryVersion();
+        v2.setVersion(2); v2.setApprovedAt(T0.plusDays(10));
+        v2.setTitle("Title v2"); v2.setDescription("Description v2"); v2.setResourceContent("Text v2");
+        v2.setTags(List.of("v2")); v2.setThumbnailR2Key("public/media/e1/thumbnail/v2.jpg");
+        v2.setPreviewR2Key("public/media/e1/preview/v2.jpg");
+        entry.setVersions(new java.util.ArrayList<>(List.of(v1, v2)));
+        entry.setCurrentVersion(2);
+    }
+
+    @ParameterizedTest
+    @EnumSource(EntryType.class)
+    void n8_buyerOfV1SeesV1_anonymousAndOwnerSeeV2(EntryType type) {
+        publishV2(type);
+        stubPurchase();
+        entitlements.findByTenantIdAndUserIdAndEntryIdAndStatus(TENANT, BUYER, ENTRY, EntitlementStatus.ACTIVE)
+                .get().setGrantedAt(T0.plusDays(5));
+
+        var buyer = publicService.lookupEntry(TENANT, ENTRY, BUYER).entry().orElseThrow();
+        assertThat(buyer.viewerAccess()).isEqualTo("ENTITLED");
+        assertThat(buyer.title()).isEqualTo("Title v1");
+        assertThat(buyer.description()).isEqualTo("Description v1");
+        assertThat(buyer.resourceContent()).isEqualTo("Text v1");
+        assertThat(buyer.tags()).containsExactly("v1");
+        assertThat(buyer.thumbnailR2Key()).isEqualTo("public/media/e1/thumbnail/v1.jpg");
+        assertThat(buyer.thumbnailVariantsPrefix()).as("variants belong to v2's key").isNull();
+        assertThat(buyer.previewR2Key()).isEqualTo("public/media/e1/preview/v1.jpg");
+
+        for (String viewer : new String[]{null, OWNER}) {
+            var live = publicService.lookupEntry(TENANT, ENTRY, viewer).entry().orElseThrow();
+            assertThat(live.title()).isEqualTo("Title v2");
+            assertThat(live.resourceContent()).isEqualTo("Text v2");
+            assertThat(live.thumbnailVariantsPrefix()).isEqualTo("public/media/e1/thumbnail/variants-v2");
+        }
+    }
+
+    @Test
+    void n8_buyerAfterV2SeesV2_andUnversionedEntryIsUntouched() {
+        publishV2(EntryType.RESOURCE);
+        stubPurchase();
+        entitlements.findByTenantIdAndUserIdAndEntryIdAndStatus(TENANT, BUYER, ENTRY, EntitlementStatus.ACTIVE)
+                .get().setGrantedAt(T0.plusDays(20));
+        assertThat(publicService.lookupEntry(TENANT, ENTRY, BUYER).entry().orElseThrow().title()).isEqualTo("Title v2");
+
+        entry.setVersions(new java.util.ArrayList<>());
+        entry.setCurrentVersion(null);
+        entitlements.findByTenantIdAndUserIdAndEntryIdAndStatus(TENANT, BUYER, ENTRY, EntitlementStatus.ACTIVE)
+                .get().setGrantedAt(T0.minusDays(100));
+        assertThat(publicService.lookupEntry(TENANT, ENTRY, BUYER).entry().orElseThrow().title()).isEqualTo("Title v2");
     }
 }

@@ -20,10 +20,12 @@ import java.util.concurrent.ConcurrentHashMap;
  * instance — the short TTL bounds that divergence window to ≤60 s without
  * needing a shared cache or pub/sub invalidation.
  * <p>
- * <b>Security note.</b> Only ACTIVE tenants are returned to callers. Blocked
- * or deleted tenants cause a fall-through to {@link Optional#empty()} so that
- * downstream code applies the safest default (e.g. global platform fee, no
- * tenant split).
+ * <b>Security note.</b> {@link #findActiveBySubdomain} only returns ACTIVE
+ * tenants: blocked tenants fall through to {@link Optional#empty()} so fee and
+ * feature lookups apply the safest default. {@link #findBySubdomain} returns
+ * the document in any status and exists for the single purpose of resolving
+ * a BLOCKED tenant as itself in read-only mode (MYCELIUM-RESILIENCE.md H1):
+ * its buyers keep their library while every operation is refused.
  */
 @Service
 public class TenantConfigService {
@@ -46,6 +48,16 @@ public class TenantConfigService {
      * value is also what media-store-api uses as its canonical {@code tenantId}.
      */
     public Optional<TenantReadModel> findActiveBySubdomain(String subdomain) {
+        return findBySubdomain(subdomain).filter(TenantReadModel::isActive);
+    }
+
+    /**
+     * Returns the tenant document for the subdomain in <b>any</b> status
+     * (ACTIVE or BLOCKED), or empty when no tenant exists. Same 60 s cache as
+     * {@link #findActiveBySubdomain}. Callers other than tenant resolution and
+     * the visitor endpoint must use {@code findActiveBySubdomain}.
+     */
+    public Optional<TenantReadModel> findBySubdomain(String subdomain) {
         if (subdomain == null || subdomain.isBlank()) return Optional.empty();
 
         CacheEntry entry = cache.get(subdomain);
@@ -54,8 +66,7 @@ public class TenantConfigService {
             return entry.value;
         }
 
-        Optional<TenantReadModel> fresh = repository.findBySubdomain(subdomain)
-                .filter(TenantReadModel::isActive);
+        Optional<TenantReadModel> fresh = repository.findBySubdomain(subdomain);
         cache.put(subdomain, new CacheEntry(fresh, now.plus(TTL)));
         return fresh;
     }

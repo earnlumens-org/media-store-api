@@ -39,7 +39,7 @@ class TenantOAuth2AuthorizationRequestResolverTest {
         // Delegate produces an authorization request (i.e. the request really
         // starts an OAuth flow) unless a test overrides it.
         when(delegate.resolve(any())).thenReturn(authRequest());
-        lenient().when(tenantConfigService.findActiveBySubdomain(anyString())).thenReturn(Optional.empty());
+        lenient().when(tenantConfigService.findBySubdomain(anyString())).thenReturn(Optional.empty());
         lenient().when(tenantConfigService.findActiveByCustomDomain(anyString())).thenReturn(Optional.empty());
     }
 
@@ -153,7 +153,7 @@ class TenantOAuth2AuthorizationRequestResolverTest {
 
     @Test
     void validTenantParam_stillWorks() {
-        when(tenantConfigService.findActiveBySubdomain("alice"))
+        when(tenantConfigService.findBySubdomain("alice"))
                 .thenReturn(Optional.of(activeTenant("alice")));
         MockHttpServletRequest request = oauthStart();
         request.setParameter("tenant", "alice");
@@ -168,7 +168,7 @@ class TenantOAuth2AuthorizationRequestResolverTest {
     void validReturnHost_winsOverTenantParam() {
         when(tenantConfigService.findActiveByCustomDomain("shop.example.com"))
                 .thenReturn(Optional.of(activeTenant("alice")));
-        lenient().when(tenantConfigService.findActiveBySubdomain("bob"))
+        lenient().when(tenantConfigService.findBySubdomain("bob"))
                 .thenReturn(Optional.of(activeTenant("bob")));
         MockHttpServletRequest request = oauthStart();
         request.setParameter("return_host", "shop.example.com");

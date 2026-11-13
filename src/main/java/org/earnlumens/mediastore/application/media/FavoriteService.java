@@ -43,15 +43,18 @@ public class FavoriteService {
     private final EntryRepository entryRepository;
     private final CollectionRepository collectionRepository;
     private final EntitlementRepository entitlementRepository;
+    private final ContentAccessPolicy accessPolicy;
 
     public FavoriteService(FavoriteRepository favoriteRepository,
                            EntryRepository entryRepository,
                            CollectionRepository collectionRepository,
-                           EntitlementRepository entitlementRepository) {
+                           EntitlementRepository entitlementRepository,
+                           ContentAccessPolicy accessPolicy) {
         this.favoriteRepository = favoriteRepository;
         this.entryRepository = entryRepository;
         this.collectionRepository = collectionRepository;
         this.entitlementRepository = entitlementRepository;
+        this.accessPolicy = accessPolicy;
     }
 
     /**
@@ -139,26 +142,16 @@ public class FavoriteService {
         Set<String> entitledEntryIds = new java.util.HashSet<>(entitlementRepository.findEntitledEntryIds(
                 tenantId, userId, paidNonOwnedEntryIds, EntitlementStatus.ACTIVE));
 
-        // Also check collection-level entitlements: if the user purchased a collection,
-        // all entries inside it are unlocked too.
+        // Also check collection-level entitlements: entries the user reaches via
+        // a purchased collection are unlocked too (D-20 union rule).
         if (!paidNonOwnedEntryIds.isEmpty()) {
             Set<String> stillLockedEntryIds = paidNonOwnedEntryIds.stream()
                     .filter(id -> !entitledEntryIds.contains(id))
                     .collect(java.util.stream.Collectors.toSet());
             if (!stillLockedEntryIds.isEmpty()) {
-                Set<String> userCollIds = entitlementRepository.findAllEntitledCollectionIds(
-                        tenantId, userId, EntitlementStatus.ACTIVE);
-                if (!userCollIds.isEmpty()) {
-                    List<Collection> userColls = collectionRepository.findByTenantIdAndIdIn(
-                            tenantId, new java.util.ArrayList<>(userCollIds));
-                    for (Collection c : userColls) {
-                        if (c.getItems() != null) {
-                            for (var item : c.getItems()) {
-                                if (item.getEntryId() != null && stillLockedEntryIds.contains(item.getEntryId())) {
-                                    entitledEntryIds.add(item.getEntryId());
-                                }
-                            }
-                        }
+                for (String id : accessPolicy.entryIdsCoveredByCollections(tenantId, userId)) {
+                    if (stillLockedEntryIds.contains(id)) {
+                        entitledEntryIds.add(id);
                     }
                 }
             }

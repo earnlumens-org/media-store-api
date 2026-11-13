@@ -100,6 +100,10 @@ public interface OrderRepository {
     /** Orders in {@code status} (FAILED re-check scan). */
     List<Order> findByStatus(OrderStatus status, int limit);
 
-    /** Orders in {@code status} completed after {@code cutoff} (missing-entitlement repair scan). */
+    /**
+     * Orders in {@code status} completed strictly after {@code cutoff},
+     * <b>oldest first</b>, at most {@code limit} — the page of the
+     * entitlement backfill cursor (H5).
+     */
     List<Order> findByStatusAndCompletedAtAfter(OrderStatus status, LocalDateTime cutoff, int limit);
 }

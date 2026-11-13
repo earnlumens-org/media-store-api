@@ -254,12 +254,14 @@ public class ContentModerationService {
             }
         }
 
-        // Collection-level block: every buyer of the collection is affected
+        // Collection-level block: every buyer of the collection is affected,
+        // on the items their right covers (D-20)
         for (String collectionId : moderationCase.getCollectionIds()) {
             Optional<Collection> coll = collectionRepository.findByTenantIdAndId(tenantId, collectionId);
-            List<String> itemIds = coll.map(c -> c.getItems().stream().map(CollectionItem::getEntryId).toList())
-                    .orElse(List.of());
             for (Entitlement e : entitlementRepository.findActivePurchasesByCollectionIds(tenantId, List.of(collectionId))) {
+                List<String> itemIds = coll.map(c -> c.itemsCoveredBy(e.getGrantedAt()).stream()
+                                .map(CollectionItem::getEntryId).toList())
+                        .orElse(List.of());
                 affected.computeIfAbsent(e.getId(), k -> new Affected(e)).entryIds.addAll(itemIds);
             }
         }
@@ -318,12 +320,15 @@ public class ContentModerationService {
     }
 
     /**
-     * Union-by-right-date rule (D-20 / S-04). Until H2 adds
-     * {@code items[].removedAt}, a membership record is always active, so the
-     * right covers the entry whenever the collection lists it.
+     * Union-by-right-date rule (D-20 / S-04): the buyer's right covers the
+     * entry when the collection holds a membership record of it that is
+     * active or was removed at or after {@code grantedAt} (R-32: {@code >=}
+     * favours the buyer; a missing {@code grantedAt} means "since forever").
      */
     static boolean rightCoversEntry(Collection collection, String entryId, Entitlement entitlement) {
-        return collection.getItems().stream().anyMatch(i -> entryId.equals(i.getEntryId()));
+        return collection.getItems().stream()
+                .filter(i -> entryId.equals(i.getEntryId()))
+                .anyMatch(i -> i.coversRightSince(entitlement.getGrantedAt()));
     }
 
     private ModerationCase newCase(String tenantId, ModerationCaseKind kind, List<String> entryIds,

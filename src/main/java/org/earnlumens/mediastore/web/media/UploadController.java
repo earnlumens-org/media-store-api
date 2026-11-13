@@ -92,6 +92,9 @@ public class UploadController {
                 return ResponseEntity.status(403).body(Map.of("error", "Forbidden"));
             }
             return ResponseEntity.ok(result.get());
+        } catch (IllegalStateException e) {
+            // H8: the FULL file is immutable once the entry left DRAFT
+            return ResponseEntity.status(409).body(Map.of("error", e.getMessage()));
         } catch (IllegalArgumentException e) {
             logger.warn("initUpload: invalid request: {}", e.getMessage());
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
@@ -123,6 +126,8 @@ public class UploadController {
                 return ResponseEntity.status(403).body(Map.of("error", "Forbidden"));
             }
             return ResponseEntity.ok(result.get());
+        } catch (IllegalStateException e) {
+            return ResponseEntity.status(409).body(Map.of("error", e.getMessage()));
         } catch (IllegalArgumentException e) {
             logger.warn("finalizeUpload: invalid request: {}", e.getMessage());
             return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));

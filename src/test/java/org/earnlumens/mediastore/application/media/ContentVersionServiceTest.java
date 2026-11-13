@@ -221,4 +221,67 @@ class ContentVersionServiceTest {
         assertThat(service.rejectPendingVersion(TENANT, e, "x")).isSameAs(e);
         verify(entryRepository, never()).save(any());
     }
+
+    // ─── N8-lite: purchasedVersion(entry, rightStart) (S-07 / S-01) ─────
+
+    private static final LocalDateTime T0 = LocalDateTime.of(2026, 1, 1, 0, 0);
+
+    private Entry withVersions(int current, LocalDateTime... approvedAt) {
+        Entry e = published();
+        List<EntryVersion> versions = new java.util.ArrayList<>();
+        for (int i = 0; i < approvedAt.length; i++) {
+            EntryVersion v = new EntryVersion();
+            v.setVersion(i + 1);
+            v.setApprovedAt(approvedAt[i]);
+            v.setTitle("title v" + (i + 1));
+            versions.add(v);
+        }
+        e.setVersions(versions);
+        e.setCurrentVersion(current);
+        return e;
+    }
+
+    @Test
+    void purchasedVersion_entryWithoutVersions_isLiveWithoutAnyComputation() {
+        Entry e = published();
+        assertThat(ContentVersionService.purchasedVersion(e, T0)).isNull();
+        assertThat(ContentVersionService.purchasedVersion(e, null)).isNull();
+    }
+
+    @Test
+    void purchasedVersion_rightBeforeSecondApproval_isV1() {
+        Entry e = withVersions(2, T0, T0.plusDays(10));
+        EntryVersion v = ContentVersionService.purchasedVersion(e, T0.plusDays(5));
+        assertThat(v).isNotNull();
+        assertThat(v.getVersion()).isEqualTo(1);
+        assertThat(v.getTitle()).isEqualTo("title v1");
+    }
+
+    @Test
+    void purchasedVersion_rightAfterLatestApproval_isLive() {
+        Entry e = withVersions(2, T0, T0.plusDays(10));
+        assertThat(ContentVersionService.purchasedVersion(e, T0.plusDays(11))).isNull();
+    }
+
+    @Test
+    void purchasedVersion_rightExactlyAtApproval_takesThatVersion() {
+        Entry e = withVersions(3, T0, T0.plusDays(10), T0.plusDays(20));
+        assertThat(ContentVersionService.purchasedVersion(e, T0.plusDays(10)).getVersion()).isEqualTo(2);
+    }
+
+    @Test
+    void purchasedVersion_tenLaterVersions_buyerKeepsTheirs() {
+        LocalDateTime[] dates = new LocalDateTime[11];
+        for (int i = 0; i < 11; i++) dates[i] = T0.plusDays(i * 10L);
+        Entry e = withVersions(11, dates);
+        assertThat(ContentVersionService.purchasedVersion(e, T0.plusDays(1)).getVersion()).isEqualTo(1);
+        assertThat(ContentVersionService.purchasedVersion(e, T0.plusDays(45)).getVersion()).isEqualTo(5);
+    }
+
+    @Test
+    void purchasedVersion_unknownRightStartOrRightBeforeV1_fallsBackToV1() {
+        Entry e = withVersions(2, T0, T0.plusDays(10));
+        assertThat(ContentVersionService.purchasedVersion(e, null).getVersion()).isEqualTo(1);
+        assertThat(ContentVersionService.purchasedVersion(e, T0.minusDays(1)).getVersion()).isEqualTo(1);
+    }
 }

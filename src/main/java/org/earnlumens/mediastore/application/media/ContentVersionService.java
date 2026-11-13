@@ -67,6 +67,37 @@ public class ContentVersionService {
     }
 
     /**
+     * N8-lite (S-07): the version a right that started at {@code rightStart}
+     * acquired — the last approved version with {@code approvedAt <= rightStart}
+     * (or v1 when none qualifies). Returns {@code null} when the buyer should
+     * simply read the live document: the entry has no {@code versions[]}
+     * (absent = v1, S-01) or the purchased version <b>is</b> the current one,
+     * whose fields are the live projection. A {@code null} {@code rightStart}
+     * (historical entitlement without a date) counts as "since forever".
+     */
+    public static EntryVersion purchasedVersion(Entry entry, LocalDateTime rightStart) {
+        List<EntryVersion> versions = entry.getVersions();
+        if (versions.isEmpty()) {
+            return null;
+        }
+        EntryVersion best = null;
+        for (EntryVersion v : versions) {
+            boolean approvedBeforeRight = rightStart != null
+                    && (v.getApprovedAt() == null || !v.getApprovedAt().isAfter(rightStart));
+            if (approvedBeforeRight && (best == null || v.getVersion() > best.getVersion())) {
+                best = v;
+            }
+        }
+        if (best == null) {
+            best = versions.stream().min(Comparator.comparingInt(EntryVersion::getVersion)).orElse(null);
+        }
+        if (best == null || best.getVersion() >= entry.currentVersionOrOne()) {
+            return null;
+        }
+        return best;
+    }
+
+    /**
      * Returns the slot to edit: the existing pending edit when there is one
      * (a newer edit builds on it), otherwise a fresh slot. Nothing is saved;
      * the caller fills the fields, then calls {@link #finalizeStaging}.

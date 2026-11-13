@@ -149,7 +149,9 @@ public class TenantOAuth2AuthorizationRequestResolver implements OAuth2Authoriza
 
     /**
      * Returns a normalized tenant subdomain when the input is a syntactically
-     * valid, non-reserved, currently-active tenant; {@code null} otherwise.
+     * valid, non-reserved subdomain of an existing tenant; {@code null}
+     * otherwise. A BLOCKED tenant is accepted on purpose: its buyers must be
+     * able to sign in to reach their library (read-only mode, H1).
      */
     private String validateTenant(String raw) {
         if (raw == null) return null;
@@ -157,7 +159,7 @@ public class TenantOAuth2AuthorizationRequestResolver implements OAuth2Authoriza
         if (candidate.isEmpty()) return null;
         if (!SUBDOMAIN.matcher(candidate).matches()) return null;
         if (RESERVED_SUBDOMAINS.contains(candidate)) return null;
-        if (tenantConfigService.findActiveBySubdomain(candidate).isEmpty()) return null;
+        if (tenantConfigService.findBySubdomain(candidate).isEmpty()) return null;
         return candidate;
     }
 
