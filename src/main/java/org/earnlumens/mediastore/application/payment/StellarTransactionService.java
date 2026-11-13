@@ -210,22 +210,96 @@ public class StellarTransactionService {
      * appear as a payment destination is known to be active, and payments
      * never fail later with {@code op_no_destination}.
      *
-     * Fail-open by design: if Horizon is unreachable or returns an unexpected
-     * error, this returns {@code true} (with a warning log) so that a Horizon
-     * outage never blocks creators from publishing. The payment flow itself
-     * still confirms on-chain results, so a false positive here can only
-     * delay the first sale, never lose funds.
+     * Fail-open by design (MYCELIUM-RESILIENCE.md N7, D-06): if Horizon is
+     * unreachable or returns an unexpected error, this returns {@code true}
+     * so that a Horizon outage never blocks creators from publishing nor
+     * buyers from purchasing. The payment flow itself still confirms on-chain
+     * results, so a false positive here can only delay the first sale, never
+     * lose funds: a dead destination fails on-chain with
+     * {@code op_no_destination}, the order ends {@code FAILED} and nothing is
+     * charged. Every fail-open resolution is counted and logged with the
+     * {@code HORIZON_FAIL_OPEN} marker; a burst escalates to
+     * {@code HORIZON_FAIL_OPEN_BURST} at ERROR (outage signal).
      */
     public boolean isAccountActive(String publicKey) {
+        return checkAccountActivation(publicKey) != ActivationCheck.INACTIVE;
+    }
+
+    /** Outcome of a Horizon activation lookup; {@code UNKNOWN_FAIL_OPEN} is treated as active. */
+    enum ActivationCheck { ACTIVE, INACTIVE, UNKNOWN_FAIL_OPEN }
+
+    ActivationCheck checkAccountActivation(String publicKey) {
         try {
             horizonPool.executeRead("loadAccount", s -> s.loadAccount(publicKey));
-            return true;
+            return ActivationCheck.ACTIVE;
         } catch (AccountNotFoundException | BadRequestException e) {
             logger.info("Stellar account not active: {} ({})", publicKey, e.getClass().getSimpleName());
-            return false;
+            return ActivationCheck.INACTIVE;
         } catch (Exception e) {
-            logger.warn("Could not verify Stellar account activation for {} — failing open", publicKey, e);
-            return true;
+            long now = System.currentTimeMillis();
+            boolean burst = failOpenMonitor.record(now);
+            logger.warn("HORIZON_FAIL_OPEN could not verify Stellar account activation for {} — failing open "
+                            + "(total={}, lastWindow={})",
+                    publicKey, failOpenMonitor.total(), failOpenMonitor.inWindow(now), e);
+            if (burst) {
+                logger.error("HORIZON_FAIL_OPEN_BURST {} activation checks failed open within {} min — "
+                                + "Horizon outage suspected; purchases continue, dead destinations fail on-chain without charge",
+                        failOpenMonitor.inWindow(now), FailOpenMonitor.WINDOW_MS / 60_000L);
+            }
+            return ActivationCheck.UNKNOWN_FAIL_OPEN;
+        }
+    }
+
+    private final FailOpenMonitor failOpenMonitor = new FailOpenMonitor();
+
+    /** Lifetime count of activation checks resolved in fail-open mode (N7 metric). */
+    public long failOpenCount() {
+        return failOpenMonitor.total();
+    }
+
+    /**
+     * N7 fail-open metric: lifetime counter plus a sliding window used to emit
+     * a single {@code HORIZON_FAIL_OPEN_BURST} alert per window once
+     * {@value #BURST_THRESHOLD} fail-opens accumulate within
+     * {@value #WINDOW_MS} ms. No external metrics backend is wired in this
+     * service, so the log markers are the alerting surface (Cloud Logging
+     * log-based metric / alert on {@code HORIZON_FAIL_OPEN_BURST}).
+     */
+    static final class FailOpenMonitor {
+        static final int BURST_THRESHOLD = 3;
+        static final long WINDOW_MS = 5 * 60_000L;
+
+        private final java.util.concurrent.atomic.LongAdder total = new java.util.concurrent.atomic.LongAdder();
+        private final java.util.ArrayDeque<Long> recent = new java.util.ArrayDeque<>();
+        /** Epoch millis of the last burst alert; -1 = never (avoids Long.MIN_VALUE subtraction overflow). */
+        private long burstAlertedAtMs = -1L;
+
+        /** Records one fail-open; returns true when a burst alert must be emitted now. */
+        synchronized boolean record(long nowMs) {
+            total.increment();
+            recent.addLast(nowMs);
+            evict(nowMs);
+            boolean windowClear = burstAlertedAtMs < 0 || nowMs - burstAlertedAtMs >= WINDOW_MS;
+            if (recent.size() >= BURST_THRESHOLD && windowClear) {
+                burstAlertedAtMs = nowMs;
+                return true;
+            }
+            return false;
+        }
+
+        long total() {
+            return total.sum();
+        }
+
+        synchronized int inWindow(long nowMs) {
+            evict(nowMs);
+            return recent.size();
+        }
+
+        private void evict(long nowMs) {
+            while (!recent.isEmpty() && recent.peekFirst() < nowMs - WINDOW_MS) {
+                recent.pollFirst();
+            }
         }
     }
 
@@ -246,7 +320,10 @@ public class StellarTransactionService {
      * wallet per minute, worst case). Negative results are never cached:
      * an account can be funded at any moment and must become sellable
      * immediately. Inherits the fail-open behaviour of isAccountActive, so a
-     * Horizon outage never blocks purchases.
+     * Horizon outage never blocks purchases — but a fail-open verdict is
+     * <b>not</b> cached either (N7): as soon as Horizon answers again the real
+     * state of the wallet is used, instead of a dead destination riding a
+     * 60 s "active" entry.
      */
     public boolean isAccountActiveCached(String publicKey) {
         long now = System.currentTimeMillis();
@@ -254,13 +331,13 @@ public class StellarTransactionService {
         if (expiry != null && expiry > now) {
             return true;
         }
-        boolean active = isAccountActive(publicKey);
-        if (active) {
+        ActivationCheck check = checkAccountActivation(publicKey);
+        if (check == ActivationCheck.ACTIVE) {
             activeAccountCache.put(publicKey, now + ACTIVE_CACHE_TTL_MS);
         } else {
             activeAccountCache.remove(publicKey);
         }
-        return active;
+        return check != ActivationCheck.INACTIVE;
     }
 
     /**

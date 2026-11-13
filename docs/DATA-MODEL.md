@@ -151,7 +151,7 @@ A publishable content item (video, audio, image, or resource/article).
 | `publishedAt`      | DateTime   |          | `null`       | Set when status → `PUBLISHED`                                 |
 | `moderationBlock`  | Object     |          | `null`       | ✅ **H3 / S-03.** `{ caseId, reason, by, at }`. Non-null ⇒ blocked for **everyone**, all versions (§8.8). Set only by explicit moderation actions (`ContentModerationService`), cleared on reinstatement. While set, the creator cannot change the status nor upload |
 | `currentVersion`   | Integer    |          | `1`          | ✅ **N9 (creator side of D-14).** Absent ⇒ `1` (S-01: no backfill). Incremented when a pending edit is approved |
-| `versions[]`       | [Object]   |          | —            | ✅ **N9 (creator side of D-14).** One element per **approved** version (§2.3). Absent until the first edit of a published entry is approved; then it holds the reconstructed v1 plus the new version. The buyer-side choice (`version_choices`, N8) is 🔜 |
+| `versions[]`       | [Object]   |          | —            | ✅ **N9 (creator side of D-14).** One element per **approved** version (§2.3). Absent until the first edit of a published entry is approved; then it holds the reconstructed v1 plus the new version. ✅ **N8-lite (L1)**: read to serve each buyer the version they acquired (§8.7). The buyer's explicit choice (`version_choices`, §6a) is 🔜 P2 |
 | `pendingVersion`   | Object     |          | `null`       | ✅ **N9.** Single staging slot for an edit awaiting moderation (§2.3). The live fields are never touched until approval; the entry **stays in its status** |
 
 #### 2.1 `paymentSplits[]` sub-document
@@ -180,7 +180,7 @@ UI does not expose it**. Every paid entry is purchasable individually today.
 > `PaymentService.prepare` rejecting `COLLECTION_ONLY` entries plus a Studio
 > toggle; the query of §9.9 already exists (`getCollectionsContainingEntry`).
 
-#### 2.3 Versions — ✅ creator side (N9), 🔜 buyer side (N8 / D-14)
+#### 2.3 Versions — ✅ creator side (N9) · ✅ buyer read side (N8-lite, L1) · 🔜 buyer choice (N8 / P2)
 
 ```jsonc
 // versions[] element — written ONLY when a version is approved (ContentVersionService.applyPendingVersion)
@@ -225,9 +225,20 @@ Rules (D-14, S-01, S-02, N9) — implemented in `ContentVersionService`:
   live content additionally gets a `PREVENTIVE` block (R-21).
 - **Retention is infinite by default** (S-02): no job deletes version files.
   A reference-based GC is an optional P2 item, never part of the core design.
-- 🔜 **N8**: `version_choices`, computed `purchasedVersion`, update / undo
-  and asset resolution by effective version are not implemented; every
-  viewer still sees `currentVersion`.
+- ✅ **N8-lite (L1, S-07 read side).** `ContentVersionService.purchasedVersion(entry, rightStart)`
+  = the last element of `versions[]` with `approvedAt <= rightStart` (v1 when
+  none qualifies; `rightStart == null` = "since forever"); it returns the live
+  document when `versions[]` is absent (S-01, no computation) or when the
+  purchased version **is** `currentVersion`. `rightStart` comes from
+  `ContentAccessPolicy` (§8.3): the direct `grantedAt`, or the earliest
+  `max(grantedAt, addedAt)` over the collections covering the entry — the
+  same entry bought twice resolves to the **earliest** right. Buyers get the
+  purchased version's asset / HLS prefix (CDN), title / description /
+  `resourceContent` / tags / thumbnail / preview (detail page, library);
+  owner, anonymous and free viewers read `currentVersion`. Pre-generated
+  variants are dropped when the version's key differs from the live one.
+- 🔜 **N8 (P2)**: `version_choices`, update / undo, "new version available",
+  `changeSummary` with `FILE`. Until then the buyer simply keeps what they bought.
 
 ### Status State Machine (as implemented)
 
@@ -350,21 +361,28 @@ UPLOADED ──→ PROCESSING ──→ READY
 - Entry **references** Assets by `entryId` (Assets store the FK).
 - Entry **denormalizes** `thumbnailR2Key` and `previewR2Key` on finalize of a
   THUMBNAIL / PREVIEW upload (not on READY — they are READY immediately).
-- **Resolving the FULL asset.** ⚠️ Today six call-sites
+- **Resolving the FULL asset.** ✅ **H8 (L1).** `AssetRepository.findByTenantIdAndEntryIdAndKindAndStatus`
+  is backed by `findFirst…OrderByCreatedAtDesc` — the **latest** READY FULL,
+  never a query that assumes uniqueness. Assets are append-only, so two READY
+  FULL assets on one entry resolve deterministically at the six call-sites
   (`MediaEntitlementService`, `PublicEntryService`, `ModerationJobService`,
-  `TranscodingJobService` ×2, `EntryUploadService`) use a Spring Data
-  *derived query* returning `Optional` for `(entryId, kind=FULL, status=READY)`.
-  Because assets are append-only, a second `FULL` upload on a published entry
-  makes that query **throw** (`IncorrectResultSizeDataAccessException` ⇒ 5xx
-  for everyone, including buyers). 🔜 **H8** replaces the repository method
-  with "latest READY FULL by `createdAt`" and, with N8, resolves by version
-  pointer (`versions[n].assetId`); the "latest" query remains only as the
-  fallback for entries without `versions[]`.
-- 🔜 **H8 gate:** `initUpload`/`finalizeUpload` with `kind = FULL` on an entry
-  that is not `DRAFT` / `REJECTED` is only accepted through the versioned
-  path (N9 `pendingVersion`), otherwise **409**. Today the API accepts it
-  and does **not** re-moderate (only THUMBNAIL/PREVIEW changes trigger
-  re-review) — a moderation bypass closed by H8.
+  `TranscodingJobService` ×2, `EntryUploadService`) instead of throwing
+  (`AssetRepositoryImplIntegrationTest`). For a **buyer** the CDN and the
+  detail page first follow the version pointer (`versions[n].assetId` of the
+  purchased version, §8.7) and use "latest" only as the fallback for
+  unversioned entries or a pointer whose asset is not READY.
+- ✅ **H8 gate (L1, T-1; tightened in L2).** `initUpload`/`finalizeUpload`
+  with `kind = FULL` answer **409 `FULL_ASSET_LOCKED`** before any session,
+  object or `Asset` is created (a late `finalize` deletes the uploaded
+  object) unless the entry is `DRAFT` / `REJECTED` **and has never been
+  published** (`publishedAt == null`). The second condition closes the L1
+  gap: a sold entry can come back to `REJECTED` (takedown via report) or to
+  `DRAFT` (`SUSPENDED/ARCHIVED/DELETED → DRAFT`), and `publishedAt` — stamped
+  on first publish, never cleared — is the zero-query "was ever on sale"
+  marker that covers direct and collection buyers alike. THUMBNAIL / PREVIEW
+  are unaffected. The versioned path that lifts the 409 (new FULL → pending
+  version → moderation) is P2. Kill switch for observation:
+  `mediastore.uploads.full-asset-gate-enabled=false` (R-22).
 - Worker flow (unchanged):
   ```
   Worker →  GET /api/media/entitlements/{entryId}
@@ -403,14 +421,14 @@ model** (§8.6, D-11 / D-20).
 | `priceCurrency`    | String     |          | `null`       | Enum `PriceCurrency`                                     |
 | `sellerWallet`     | String     |          | `null`       | Required when `isPaid = true` (validated on publish)     |
 | `paymentSplits`    | [Object]   |          | `[]`         | Same semantics as Entry (§2.1)                           |
-| `items`            | [Object]   |          | `[]`         | Embedded array, **max 1 000 active items** (`Collection.MAX_ITEMS`). 🔜 H2: removed items **stay** in the array with `removedAt` (membership history, §4.1) |
+| `items`            | [Object]   |          | `[]`         | Embedded array, **max 1 000 active items** (`Collection.MAX_ITEMS`, counts `removedAt == null` only). ✅ H2: removed items **stay** in the array with `removedAt` (membership history, §4.1) |
 | `contentLanguage`  | String     |          | `null`       | ISO 639-1                                                |
 | `moderationFeedback` | String   |          | `null`       | Last rejection / takedown justification                  |
 | `createdAt`        | DateTime   | auto     |              |                                                          |
 | `updatedAt`        | DateTime   | auto     |              |                                                          |
 | `publishedAt`      | DateTime   |          | `null`       | Set when status → `PUBLISHED`                            |
 | `moderationBlock`  | Object     |          | `null`       | ✅ **H3 / S-03.** Same semantics as on Entry: the collection page is hidden from everyone and the collection **stops granting access to its entries** (its direct buyers get a dispute) |
-| `pendingVersion`   | Object     |          | `null`       | 🔜 **Planned (N9 — deferred to the H2 / N8 block).** Staged edit (title, description, cover, items) awaiting moderation; `changeSummary` holds `added[]` / `removed[]` entry ids (D-14). Today collection edits are **not re-moderated at all** (pre-existing gap, see §10) and depend on the membership history of H2 |
+| `pendingVersion`   | Object     |          | `null`       | 🔜 **Planned (N9 — P2).** Staged edit (title, description, cover, items) awaiting moderation; `changeSummary` holds `added[]` / `removed[]` entry ids (D-14). Today collection edits are **not re-moderated at all** (pre-existing gap, see §10). The membership history it depends on exists since L1 (§4.1) |
 
 > ⚠️ admin-api's `CollectionAdminDocument` still declares a `previousStatus`
 > field that the media-store-api model does not read. Since H3 admin-api no
@@ -418,17 +436,21 @@ model** (§8.6, D-11 / D-20).
 > `/api/internal/moderation/collections/{id}/takedown` and sets
 > `moderationBlock`), so the field is dead and can be dropped.
 
-#### 4.1 `items[]` sub-document — membership history
+#### 4.1 `items[]` sub-document — membership history (✅ H2 / D-20 / S-04, L1)
 
 | Field      | Type     | Required | Notes                        |
 |------------|----------|----------|------------------------------|
 | `entryId`  | String   | ✔        | Reference to `entries._id`   |
-| `position` | Integer  | ✔ (active) | 0-based sort order. 🔜 `null` once removed |
-| `addedAt`  | DateTime |          | 🔜 **Planned (H2 / D-20).** When the entry entered the collection. **Absent (historical data) = "since forever"** — no backfill |
-| `removedAt`| DateTime |          | 🔜 **Planned (H2 / D-20).** Set when the creator removes the item; the record is **kept**. Re-adding appends a **new** record |
+| `position` | Integer  | ✔ (active) | 0-based sort order among active records. `null` once removed |
+| `addedAt`  | DateTime |          | When the entry entered the collection (`addItem`, UTC). **Absent (historical data) = "since forever"** — no backfill |
+| `removedAt`| DateTime |          | Set when the creator removes the item (UTC); the record is **kept**. Re-adding appends a **new** record |
 
-> ⚠️ Today `addItem` / `removeItem` / `reorderItems` overwrite `items[]` with
-> no history. 🔜 With H2 they become append / mark / reorder-active-only.
+> `addItem` appends `{entryId, position, addedAt}` (idempotent on an active
+> record; a removed record is history, not a duplicate); `removeItem` stamps
+> `removedAt`, clears `position` and re-numbers the active records;
+> `reorderItems` validates against and renumbers **active records only** and
+> never discards a removed one (`CollectionServiceTest`). None of them writes
+> an entitlement.
 >
 > **Why history instead of a per-buyer snapshot (S-04, rev. 10).** A snapshot
 > of the items at purchase time cannot express D-20: an entry **added after
@@ -438,9 +460,11 @@ model** (§8.6, D-11 / D-20).
 > entitlement, no new index, no migration and no write to entitlements when
 > the creator edits the collection.
 
-**Public listing** = records with `removedAt == null`, sorted by `position`.
+**Public listing** = records with `removedAt == null`, sorted by `position`
+(`Collection.activeItems()`; `itemCount` = `activeItemCount()`).
 **Buyer listing** (§9.8) = those plus the removed records the buyer still has
-a right to, flagged "no longer in this collection".
+a right to (`Collection.itemsCoveredBy(grantedAt)`), returned separately as
+`retainedItems`.
 
 ### Status State Machine (as implemented)
 
@@ -463,8 +487,8 @@ moderationBlock (orthogonal to status, H3): admin-api takedown sets it; reinstat
 | `Any → ARCHIVED` | Creator only | ✅ H3: an admin takedown no longer archives — it sets `moderationBlock` (status unchanged) through the internal moderation surface |
 | `Any → DELETED` | Creator (soft delete) | |
 | `ARCHIVED \| DELETED → DRAFT` | Creator unarchives / restores | Must be re-published (re-moderated) |
-| `DRAFT \| REJECTED → ∅` | Creator hard-deletes | ⚠️ Allowed even when entitlements reference the collection ⇒ irreversible loss. 🔜 **H2**: 409 when `entitlements.count(collectionId) > 0` |
-| `addItem` / `removeItem` / `reorderItems` | Creator | ⚠️ Overwrite `items[]` with no history. 🔜 H2: `addItem` appends `{entryId, position, addedAt}`; `removeItem` sets `removedAt` (+ `position = null`) and keeps the record; `reorderItems` touches active records only. 🔜 N9/D-14: on a published collection the change is staged in `pendingVersion` with `added[]`/`removed[]` and applied on approval |
+| `DRAFT \| REJECTED → ∅` | Creator hard-deletes | ✅ **H2**: **409 `COLLECTION_HAS_BUYERS`** when any entitlement (any status) references the collection; nothing is touched. Soft delete remains available |
+| `addItem` / `removeItem` / `reorderItems` | Creator | ✅ H2: `addItem` appends `{entryId, position, addedAt}`; `removeItem` sets `removedAt` (+ `position = null`) and keeps the record; `reorderItems` touches active records only (§4.1). 🔜 N9/D-14 (P2): on a published collection the change is staged in `pendingVersion` with `added[]`/`removed[]` and applied on approval |
 
 ### Indexes
 
@@ -567,7 +591,7 @@ receives the exact remainder so the sum is always `100.00`.
 | # | Role | Source | Rule |
 |---|---|---|---|
 | 1 | `PLATFORM` | `TenantReadModel.platformFeePercent` (fallback `PlatformConfig`) | Always present |
-| 2 | `TENANT` | `tenantFeePercent` + `tenantWallet` of the tenant | Only if `tenantFeePercent > 0`. ⚠️ If the wallet is missing the sale **proceeds without it** (fail-open, logged) — 🔜 **H7** makes this fail-closed (`TENANT_PAYOUT_UNCONFIGURED`, 4xx, no order) |
+| 2 | `TENANT` | `tenantFeePercent` + `tenantWallet` of the tenant | Only if `tenantFeePercent > 0`. ✅ **H7 (L2)**: if the wallet is missing, blank or no longer active on Stellar the sale is **refused** — `400 TENANT_PAYOUT_UNCONFIGURED`, no order, no XDR (logged at ERROR: operator misconfiguration). admin-api refuses to save `tenantFeePercent > 0` without a wallet (`TENANT_WALLET_REQUIRED`) |
 | 3 | `FRANCHISE` | `franchises.commissionPercent` (frozen) | `franchisePercent = tenantPercent × commissionPercent / 100`, **carved out of the `TENANT` share** (§5.2). Final price unchanged |
 | 4 | `ORIGINAL` | `original.remixRoyaltyPercent` (read live from the original entry; default 20) | Only when the entry is a remix. Carved out of the seller pool; **skipped** (sale proceeds) if it would exceed the pool or the original cannot be resolved (D-05) |
 | 5 | `RESELLER` | `entry.resellerCommissionPercent` (default 10) + `reseller_links` | Only for entry purchases with a valid `?r=` code, `resellerEnabled`, non-self referral and an active wallet. Carved out of the remaining seller pool; **skipped** on any failure (D-05) |
@@ -582,9 +606,13 @@ fails on-chain and the order ends `FAILED` without charging.
 wallet, then the same `buildFullSplits` (platform + tenant + franchise).
 Range `0.25 ≤ USD ≤ 100`, memo `"TIP: x XLM"`, never an entitlement.
 
-**Publishing orders** (`buildPublishingSplits`): `PLATFORM + TENANT`, or
-`PLATFORM 100 %` when the tenant has no wallet. ⚠️ Same fail-open as row 2 —
-🔜 H7 applies the same fail-closed rule.
+**Publishing orders** (`buildPublishingSplits`): main tenant ⇒ `PLATFORM
+100 %`; secondary tenant ⇒ `PLATFORM + TENANT` (or `PLATFORM 100 %` when its
+payout wallet *is* the platform wallet). ✅ **H7 (L2)**: a secondary tenant
+without a payout wallet (or without an ACTIVE tenant document) is refused with
+`TENANT_PAYOUT_UNCONFIGURED` instead of silently routing 100 % to the
+platform. Before signing, a dead **tenant** wallet is also reported as
+`TENANT_PAYOUT_UNCONFIGURED` (other roles keep `SPLIT_WALLET_NOT_ACTIVE`).
 
 ### 5.2 Franchise split rule
 
@@ -648,15 +676,16 @@ one document per user × target**, regardless of how many orders exist.
 | `grantType`    | String   | ✔        | `PURCHASE` | Enum `GrantType`. Only `PURCHASE` is ever written. `GIFT \| PROMO \| CREATOR` ⏸ **Deferred (D-18)** |
 | `orderId`      | String   | ✔        |          | FK to `orders._id` (the **latest** completing order, see re-purchase rule) |
 | `status`       | String   | ✔        | `ACTIVE` | Enum `EntitlementStatus`: `ACTIVE \| REVOKED \| EXPIRED`. Only `ACTIVE` is ever written today; `REVOKED` is reserved for admin refunds |
-| `grantedAt`    | DateTime | auto     |          | **The date the right started.** 🔜 Drives both the collection union (§8.6: items with `removedAt > grantedAt`) and the purchased version (§6a) |
+| `grantedAt`    | DateTime | auto     |          | **The date the right started.** ✅ Drives both the collection union (§8.6: items with `removedAt >= grantedAt`) and the purchased version (§8.7, computed; `version_choices` of §6a stays 🔜 P2) |
 | `expiresAt`    | DateTime |          | `null`   | ⏸ **Deferred (D-18).** Never set and **not evaluated** by access checks |
 
-> 🔜 **No new fields are added to `entitlements` by H2 or N8** (rev. 10). The
+> ✅ **No new fields were added to `entitlements` by H2 or N8-lite** (rev. 10,
+> confirmed in L1). The
 > collection snapshot (`snapshotEntryIds[]`) and the three version pointers
 > proposed in earlier revisions were dropped: the first could not express
 > D-20, the second could not express per-entry versions inside a collection.
-> Both are now derived from `grantedAt` plus data that lives where the change
-> happens (`collections.items[]`, `entries.versions[]`, `version_choices`).
+> Both are derived from `grantedAt` plus data that lives where the change
+> happens (`collections.items[]`, `entries.versions[]`, and — P2 — `version_choices`).
 
 ### Creation rules
 
@@ -666,14 +695,18 @@ one document per user × target**, regardless of how many orders exist.
 - `ContentAccessPolicy.isBackedByCompletedOrder` re-verifies on every access
   check — CDN **and** public entry view (✅ H3) — that a `PURCHASE`
   entitlement is backed by a `COMPLETED` order with a tx hash.
-- ⚠️ Today creation is an **insert** that treats `DuplicateKeyException` as
-  success. With a `REVOKED` entitlement in place (after a refund) a re-purchase
-  would pay and silently get nothing (**H11**). 🔜 **H11 / S-06**: creation
-  becomes an **upsert** on `(tenantId, userId, targetType, targetId)` —
-  `status = ACTIVE`, `orderId = new order`, `grantedAt = now`; an already
-  `ACTIVE` entitlement with the same `orderId` is a no-op (R-30). A new
-  `grantedAt` means collection rights and purchased versions are evaluated
-  from the new purchase — correct, the buyer held no right in between.
+- ✅ **H11 / S-06 / R-30 (L1).** Creation is `EntitlementRepository.upsertPurchase`,
+  keyed on `(tenantId, userId, targetType, entryId | collectionId)`: **one
+  entitlement per right**. Absent ⇒ inserted (`CREATED`); `REVOKED` (after a
+  refund) ⇒ the **same document** is reactivated with `status = ACTIVE`, the
+  new `orderId`, `grantedAt = now` and `franchiseId` (`REACTIVATED`); already
+  `ACTIVE` ⇒ untouched, `grantedAt` preserved (`UNCHANGED`) — a repeated
+  watchdog call never moves the right date. A new `grantedAt` means
+  collection rights and purchased versions are evaluated from the new
+  purchase — correct, the buyer held no right in between. The former
+  "`DuplicateKeyException` = success" path is gone; a concurrent insert race
+  on the unique index is reported as `UNCHANGED`
+  (`EntitlementRepositoryImplIntegrationTest`, incl. 16-thread race).
 
 ### Indexes
 
@@ -687,12 +720,13 @@ one document per user × target**, regardless of how many orders exist.
 
 ---
 
-## 6a. `version_choices` — 🔜 Planned (N8 / D-14 / S-07)
+## 6a. `version_choices` — 🔜 Planned (N8 / D-14 / S-07, P2) · `purchased_version` ✅ implemented (L1)
 
 The buyer's **chosen version of one entry**, independent of how the right was
 obtained (direct purchase, one or several collections). A document exists
 **only if the buyer ever updated**; otherwise the buyer uses their
-`purchasedVersion`, which is **computed, never stored**.
+`purchasedVersion`, which is **computed, never stored** — and since L1 that
+computed version is what every buyer is served (§2.3, §8.7).
 
 | Field | Type | Required | Notes |
 |---|---|---|---|
@@ -709,22 +743,23 @@ Index (migration): `{tenantId:1, userId:1, entryId:1}` **unique**.
 ```python
 # Version the buyer acquired — immutable by construction (depends only on
 # immutable dates). Right start = earliest moment the user had any right.
+# ✅ L1: ContentAccessPolicy.evaluate(...).rightStart() + ContentVersionService.purchasedVersion
 def right_started_at(user, entry):
     starts = []
     e = entitlements.find_one(userId=user, targetType=ENTRY, entryId=entry.id, status=ACTIVE)
     if e: starts.append(e.grantedAt)
-    for coll, rec in collections_covering(entry.id):            # §8.6 rule, incl. removed records
+    for coll, rec in collections_covering(entry.id):            # §8.6 rule, incl. removed records, any status
         ce = entitlements.find_one(userId=user, targetType=COLLECTION, collectionId=coll.id, status=ACTIVE)
-        if ce and (rec.removedAt is None or rec.removedAt > ce.grantedAt):
+        if ce and (rec.removedAt is None or rec.removedAt >= ce.grantedAt):   # >= favours the buyer (R-32)
             starts.append(max(ce.grantedAt, rec.addedAt or EPOCH))
     return min(starts) if starts else None
 
 def purchased_version(user, entry):
-    if not entry.versions: return 1                             # S-01: absent = v1
-    t = right_started_at(user, entry)
+    if not entry.versions: return 1                             # S-01: absent = v1, no computation
+    t = right_started_at(user, entry)                           # None (no dates) = since forever ⇒ v1
     return max(v.version for v in entry.versions if v.approvedAt <= t) or 1
 
-def effective_version(user, entry):
+def effective_version(user, entry):                             # 🔜 P2 — today: purchased_version
     c = version_choices.find_one(userId=user, entryId=entry.id)
     return c.activeVersion if c else purchased_version(user, entry)
 ```
@@ -940,9 +975,10 @@ collection membership and the moderation block.
 > written (block first, owner, free-only-when-public, confirmed purchase in
 > any status). The three denials are distinct (`AccessDecision`): the CDN
 > returns them as `403 {reason}`, the UI as `451 CONTENT_BLOCKED` /
-> `404`. What is still ⚠️ in §8.3–§8.6 belongs to **H2** (collection
-> membership history, collection access in any status) and **N8** (version
-> resolution).
+> `404`. ✅ **L1 (H2 / H8 / N8-lite)** completed §8.3–§8.7: collection
+> membership history with union by right date in any collection status,
+> deterministic asset resolution, and the buyer's purchased version. What
+> remains 🔜 is the buyer's explicit version choice (`version_choices`, P2).
 
 ### 8.1 Terminology (matches UI code)
 
@@ -995,7 +1031,7 @@ Set<EntryStatus> PUBLIC_VISIBLE  = Set.of(PUBLISHED, UNLISTED);   // ContentAcce
 takedown) but the **block field, not the status, is what denies access**; a
 buyer of a `SUSPENDED` entry whose block has been cleared keeps access.
 
-### 8.3 Entry Access Check (✅ `ContentAccessPolicy.evaluate` — H3; steps 4/8 partially 🔜 H2 / N8)
+### 8.3 Entry Access Check (✅ `ContentAccessPolicy.evaluate` — H3 + H2 + N8-lite, L1)
 
 ```python
 def has_entry_access(user_id, entry):
@@ -1023,14 +1059,15 @@ def has_entry_access(user_id, entry):
     # 4. Collection entitlement — UNION BY RIGHT DATE (D-11 / D-20)
     #    The buyer has the entry via collection C iff C has a membership record
     #    for the entry that is still active (removedAt == null) OR was removed
-    #    AFTER the buyer's right started (removedAt > grantedAt). Covers items
-    #    present at purchase, items added later, and items later removed.
-    #    Collections are matched in ANY status (⚠️ today: PUBLISHED only).
+    #    AT OR AFTER the buyer's right started (removedAt >= grantedAt, R-32).
+    #    Covers items present at purchase, items added later, and items later
+    #    removed. Collections are matched in ANY status; a blocked collection
+    #    grants nothing. rightStart = earliest max(grantedAt, addedAt) — feeds §8.7.
     for coll in collections.find("items.entryId" = entry.id):          # includes removed records
         e = entitlements.find_one(userId=user_id, targetType=COLLECTION,
                                   collectionId=coll.id, status=ACTIVE)
         if not e or not backed_by_completed_order(e): continue
-        if any(r.entryId == entry.id and (r.removedAt is None or r.removedAt > e.grantedAt)
+        if any(r.entryId == entry.id and (r.removedAt is None or r.removedAt >= e.grantedAt)
                for r in coll.items):
             return ALLOWED
 
@@ -1046,13 +1083,14 @@ shown as the paywall; the CDN denies). The detail response also carries
 `status` and `viewerAccess` (`OWNER` / `PUBLIC` / `ENTITLED`) so the
 storefront can show "in review" / "archived by the creator" notices.
 
-✅ **Implemented (H3)**: steps 0, 1, 2, 3, 5 exactly as written, on both
-decision points, including `backed_by_completed_order` on the UI path.
-⚠️ **Step 4 today**: membership is the live `items[]` of **`PUBLISHED`**
-collections (no `removedAt` records exist yet) and a collection under
-`moderationBlock` grants nothing — the union-by-right-date rule and "any
-collection status" arrive with **H2**. The CDN's step 8 still resolves the
-asset with the single-result query (**H8**).
+✅ **Implemented**: steps 0–5 exactly as written, on both decision points,
+including `backed_by_completed_order` on the UI path (H3) and the
+union-by-right-date rule over the membership history in any collection
+status (H2, L1). For an unversioned entry a direct right short-circuits
+(S-01); for a versioned one the policy also evaluates the collection path so
+that `rightStart` is the **earliest** right (S-07). The CDN resolves the
+asset by the purchased version's pointer, falling back to the latest READY
+FULL (H8, §3).
 
 ### 8.4 Collection Access Check
 
@@ -1067,15 +1105,16 @@ def has_collection_access(user_id, collection):
     e = entitlements.find_one(userId=user_id, targetType=COLLECTION,
                               collectionId=collection.id, status=ACTIVE)
     if e and backed_by_completed_order(e):
-        return ALLOWED                               # in ANY collection status (⚠️ today: PUBLISHED only, H2)
+        return ALLOWED                               # in ANY collection status (✅ H2)
     return DENIED_LOCKED if collection.status == PUBLISHED else DENIED_HIDDEN
 ```
 
 A buyer can always open the detail page of a collection they bought, even if
-it is `ARCHIVED`, `DELETED`, `IN_REVIEW` or `REJECTED` (⚠️ today blocked for
-non-owners, H2). The page lists the active items plus the removed records the
-buyer still has a right to (`removedAt > grantedAt`), flagged; items under
-`moderationBlock` are shown as blocked.
+it is `ARCHIVED`, `DELETED`, `IN_REVIEW` or `REJECTED` (✅ H2, L1:
+`CollectionService.getCollectionDetail` delegates to
+`ContentAccessPolicy.evaluateCollection`). The page lists the active items
+plus, as `retainedItems`, the removed records the buyer still has a right to
+(`removedAt >= grantedAt`); items under `moderationBlock` are shown as blocked.
 
 ### 8.5 Computing `locked` / `unlocked`
 
@@ -1101,28 +1140,31 @@ entitlement ∪ entries of any entitled collection) and collections.
 >
 > **One rule (S-04, rev. 10):** the buyer with `grantedAt = G` has entry `X`
 > via collection `C` iff `C.items[]` has a record for `X` with
-> `removedAt == null` **or** `removedAt > G`. Nothing is stored per buyer.
+> `removedAt == null` **or** `removedAt >= G` (R-32). Nothing is stored per buyer.
 > This replaces both the former "Live Access, No Snapshot" (Patreon) model
 > and the interim "snapshot at purchase" model, which could not express an
-> entry added after purchase and removed later.
+> entry added after purchase and removed later. ✅ **Implemented in L1 (H2)**
+> — `CollectionItem.coversRightSince`, applied by `ContentAccessPolicy`
+> (CDN + detail page), `PurchaseListService` (library), `CollectionService`
+> (collection page) and `ContentModerationService` (dispute path b).
 
 #### Collection purchase rules
 
-| Scenario                                                  | Record for X        | Buyer `G` | Result (target) | Today |
-|-----------------------------------------------------------|---------------------|-----------|-----------------|-------|
-| X present at purchase, still present                      | `removedAt = null`  | any       | ✔ access | ✔ |
-| X present at purchase, removed at `R > G`                 | `removedAt = R`     | `G < R`   | ✔ **retained** | ⚠️ lost |
-| X **added** at `T > G`                                     | `removedAt = null`  | `G < T`   | ✔ gained (live membership) | ✔ |
-| X added at `T > G`, then **removed** at `R > T`           | `removedAt = R`     | `G < R`   | ✔ **retained** | ⚠️ lost |
-| X removed at `R`, buyer purchases at `G₂ > R`              | `removedAt = R`     | `G₂ > R`  | ✘ **not acquired** | ✘ |
-| X removed, then **re-added** at `T₂` (new record)          | new `removedAt = null` | any    | ✔ for every buyer | ✔ |
-| Creator archives / soft-deletes / unpublishes the collection, or it enters re-review / is rejected | — | any | ✔ buyer keeps everything and can open the collection page | ⚠️ buyer loses everything (only `PUBLISHED` consulted) — H2 |
-| Creator hard-deletes a collection with buyers             | — | — | ✘ **409** — not allowed | ⚠️ allowed from `DRAFT`/`REJECTED` — H2 |
-| Creator changes free entry to paid inside collection      | — | any | ✔ still accessible via collection | ✔ |
-| Creator changes paid entry to free                        | — | any | ✔ accessible to everyone while `PUBLISHED`/`UNLISTED` | ✔ |
-| An entry of the collection is **taken down** (`moderationBlock`) | — | any | ✘ that entry only, for everyone; a dispute opens for each buyer whose right covers it (§8.8). Rest unaffected | ✅ H3 (right = live membership until H2) |
-| The **collection itself** is taken down (`moderationBlock`) | — | any | ✘ collection page hidden; the collection stops granting access to its entries; one dispute per collection buyer. Entries bought individually are unaffected | ✅ H3 |
-| Collection refunded, then re-purchased at `G₂`             | — | `G₂`      | rights evaluated from `G₂` (items removed in between are not recovered) | design only |
+| Scenario                                                  | Record for X        | Buyer `G` | Result | State |
+|-----------------------------------------------------------|---------------------|-----------|--------|-------|
+| X present at purchase, still present                      | `removedAt = null`  | any       | ✔ access | ✅ |
+| X present at purchase, removed at `R >= G`                | `removedAt = R`     | `G <= R`  | ✔ **retained** | ✅ H2 |
+| X **added** at `T > G`                                     | `removedAt = null`  | `G < T`   | ✔ gained (live membership) | ✅ |
+| X added at `T > G`, then **removed** at `R > T`           | `removedAt = R`     | `G < R`   | ✔ **retained** | ✅ H2 |
+| X removed at `R`, buyer purchases at `G₂ > R`              | `removedAt = R`     | `G₂ > R`  | ✘ **not acquired** | ✅ |
+| X removed, then **re-added** at `T₂` (new record)          | new `removedAt = null` | any    | ✔ for every buyer | ✅ |
+| Creator archives / soft-deletes / unpublishes the collection, or it enters re-review / is rejected | — | any | ✔ buyer keeps everything and can open the collection page | ✅ H2 |
+| Creator hard-deletes a collection with buyers             | — | — | ✘ **409 `COLLECTION_HAS_BUYERS`** | ✅ H2 |
+| Creator changes free entry to paid inside collection      | — | any | ✔ still accessible via collection | ✅ |
+| Creator changes paid entry to free                        | — | any | ✔ accessible to everyone while `PUBLISHED`/`UNLISTED` | ✅ |
+| An entry of the collection is **taken down** (`moderationBlock`) | — | any | ✘ that entry only, for everyone; a dispute opens for each buyer whose right covers it (§8.8) — by the date rule, so a buyer who never had the item gets none. Rest unaffected | ✅ H3 + H2 |
+| The **collection itself** is taken down (`moderationBlock`) | — | any | ✘ collection page hidden; the collection stops granting access to its entries; one dispute per collection buyer listing the items their right covers. Entries bought individually are unaffected | ✅ H3 + H2 |
+| Collection refunded, then re-purchased at `G₂`             | — | `G₂`      | the same entitlement is reactivated with `grantedAt = G₂`; rights evaluated from `G₂` (items removed in between are not recovered) | ✅ H11 (the admin refund flow that sets `REVOKED` is still 🔜) |
 
 > **Key principle:** an entitlement is a right to access. For
 > `targetType = COLLECTION` the right means *"everything this collection has
@@ -1140,29 +1182,30 @@ entitlement ∪ entries of any entitled collection) and collections.
 | Entry re-enters `IN_REVIEW` (report escalation)             | ✔ | ✔ retained, with a notice | ✅ H3 (`EntryStatusBanner`) |
 | Creator edits title / thumbnail / preview (→ pending version) | ✔ | ✔ unchanged; entry stays `PUBLISHED`; buyer keeps seeing the approved version | ✅ N9 |
 | Pending edit **rejected** (`CHANGES_REJECTED`)              | ✔ | ✔ unchanged, **no dispute** | ✅ N9 |
-| New version **approved** (D-14)                             | ✔ | ✔ buyer keeps their effective version; sees "new version available"; updates (and can undo once) **only by explicit action**; never charged | n/a — N8 |
-| New version of **one entry inside a purchased collection** (D-14 / S-07) | via collection | ✔ only that entry shows the notice; updating it changes nothing for the other entries; each entry has its own purchased / active / undo state | n/a — N8 |
-| Entry **added to a collection** after purchase, later re-versioned | via collection | ✔ purchased version = the one current when the entry **entered** the collection (`max(grantedAt, addedAt)`) | n/a — N8 |
+| New version **approved** (D-14)                             | ✔ | ✔ buyer keeps seeing **the version they acquired** (asset, HLS, title, description, resource text, tags, thumbnail, preview) while the public sees the new one. 🔜 P2: "new version available", explicit update, one undo; never charged | ✅ N8-lite (L1) · 🔜 N8 choice |
+| New version of **one entry inside a purchased collection** (D-14 / S-07) | via collection | ✔ only that entry is affected; each entry has its own purchased version. 🔜 P2: per-entry update / undo | ✅ N8-lite (L1) |
+| Entry **added to a collection** after purchase, later re-versioned | via collection | ✔ purchased version = the one current when the entry **entered** the collection (`max(grantedAt, addedAt)`) | ✅ N8-lite (L1) |
 | Content **taken down** (`CONTENT_TAKEDOWN` → `moderationBlock`) | ✔ | ✘ **blocked, all versions** (D-16). Dispute opened (§8.8). Entitlement stays `ACTIVE` | ✅ H3 |
 | Content taken down                                          | ✘ | ✘ blocked | ✅ H3 (CDN no longer serves free content under a block) |
 | Reinstated after takedown (→ `previousStatus`, block cleared)    | ✔ | ✔ access returns automatically, no entitlement change | ✅ H3 |
 | Creator changes price after purchase                        | ✔ | ✔ no effect — entitlement is price-independent | ✔ |
 | Creator changes wallet after purchase                       | ✔ | ✔ no effect — splits are frozen on the order | ✔ |
-| Tenant blocked by platform                                  | ✔ | ✔ library and playback keep working on `{sub}.earnlumens.org` in read-only mode (H1 / D-04) | ⚠️ falls to default tenant — H1 |
-| Buyer banned (participation sanction)                       | ✔ | ✔ read-only session keeps the library unless the sanction explicitly revokes it (N3) | ⚠️ total loss — N3 |
+| Tenant blocked by platform                                  | ✔ | ✔ library and playback keep working on `{sub}.earnlumens.org` in read-only mode (H1 / D-04) | ✅ H1 (L2): `TenantResolver` resolves a `BLOCKED` tenant as itself; `TenantFilter` lets `GET`/`HEAD`/`OPTIONS`, `/api/auth/**`, OAuth2 and `/api/internal/**` through and answers **`423 TENANT_SUSPENDED`** to everything else; `/public/tenant/visitor` carries `suspended: true`; the custom domain is a 404 (D-04 (b)); an **unknown** subdomain is `404 tenant_not_found`, never the default tenant |
+| Buyer banned (participation sanction)                       | ✔ | ✔ read-only session keeps the library unless the sanction explicitly revokes it (N3) | ⚠️ total loss — N3 (P4). ✅ **L2 firewall**: the strike ladder saturates at `STRIKE_2` (30 d) and never produces a permanent ban; `PERMA_BAN` is an explicit admin action whose confirmation shows the user's active purchases |
 
 ### 8.7 Versions & Download Policy
 
-**Versions (🔜 N8 / D-14 / S-07).** The buyer always keeps the version they
-acquired (`purchased_version`, computed from the dates of the right — §6a),
-uses the one they choose (`version_choices.activeVersion`, written only when
-they update) and can undo the last update once (`previousVersion`). Choices
+**Versions (✅ N8-lite read side, L1 · 🔜 N8 choice, P2 — D-14 / S-07).** The buyer always keeps the version they
+acquired (`purchased_version`, computed from the dates of the right — §6a;
+**served today** on the CDN, the detail page and the library), will use the
+one they choose (`version_choices.activeVersion`, written only when they
+update) and will be able to undo the last update once (`previousVersion`). Choices
 are **per entry**: a collection buyer manages each entry independently and
 updating one never affects the others or any other buyer. New versions are
 offered only after approval; **nothing updates automatically**, updating is
 free, and a change summary (`versions[n].changeSummary`) is shown before
 updating. A takedown blocks **all** versions (D-16); there is no per-version
-blocking.
+blocking. Until P2 the FULL file of a non-`DRAFT` entry is immutable (409, §3).
 
 **Download.** Everything a user can access (entry purchase, collection
 purchase, or public free content) must be downloadable: video and audio
@@ -1182,7 +1225,7 @@ attachment` for non-inline types and the CDN streams the FULL asset.
 
 | What is moderated | Outcome | Access | Dispute |
 |---|---|---|---|
-| A **pending edit** (`pendingVersion`, N9) — title, description, thumbnail, preview, resource text (🔜 new FULL file: H8; collection items: H2/N8) | **`CHANGES_REJECTED`** — slot cleared, `moderationFeedback` set, live document and `status` untouched | Buyers and public unchanged | **None** |
+| A **pending edit** (`pendingVersion`, N9) — title, description, thumbnail, preview, resource text (🔜 P2: new FULL file — today 409, §3; collection items — `Collection.pendingVersion`) | **`CHANGES_REJECTED`** — slot cleared, `moderationFeedback` set, live document and `status` untouched | Buyers and public unchanged | **None** |
 | The **live content** — by report escalation (`HIGH` severity), a moderator's explicit "remove content", a human or automatic rejection of content that was live, or a late discovery (stolen, illegal) | **`CONTENT_TAKEDOWN`** — `moderationBlock` set (+ `SUSPENDED` on the explicit action), a `moderation_cases` document created | **Blocked for everyone, all versions** | **One `OPEN` dispute per affected purchase** |
 
 The scope is **inferred from the moderated object** (S-05): the moderator
@@ -1223,15 +1266,15 @@ def on_content_blocked(case):               # case: moderation_cases document
             for e in db.entitlements.find({ tenantId: case.tenantId, targetType: "COLLECTION",
                                             collectionId: coll._id, grantType: "PURCHASE",
                                             status: "ACTIVE" }):
-                # ⚠️ until H2 there is no removedAt: a listed item always covers the right
-                if any(r.removedAt is None or r.removedAt > e.grantedAt for r in recs):
+                # ✅ H2: the date rule — a buyer whose right never covered the item gets no dispute
+                if any(r.removedAt is None or r.removedAt >= e.grantedAt for r in recs):
                     affected.setdefault(e.id, (e, set())).[1].add(entry_id)
 
-    # Collection-level block: every buyer of the collection, affected = all its items
+    # Collection-level block: every buyer of the collection, affected = the items their right covers (§8.6)
     for coll_id in case.collectionIds:
         for e in db.entitlements.find({ targetType: "COLLECTION", collectionId: coll_id,
                                         grantType: "PURCHASE", status: "ACTIVE" }):
-            affected.setdefault(e.id, (e, set())).[1].update(item ids of coll_id)
+            affected.setdefault(e.id, (e, set())).[1].update(items of coll_id covered by e.grantedAt)
 
     # ONE dispute per affected purchase, idempotent on (caseId, entitlementId):
     # upsert with $setOnInsert only + unique index — never overwrites a resolution
@@ -1268,9 +1311,9 @@ after the block never leaves a buyer without follow-up (R-20).
 
 > **Implementation status:** ✅ blocks, cases, dispute trigger, sweep,
 > reinstatement and administrator resolution (`RESOLVED` / `DISMISSED`) are
-> implemented (H3 + N9). 🔜 `REFUNDED` resolution (H11), version-aware
-> resolution (N8) and the collection membership history used by path (b)
-> (H2).
+> implemented (H3 + N9); ✅ path (b) follows the membership history (H2,
+> L1). 🔜 `REFUNDED` resolution (admin refund flow; the entitlement side —
+> reactivation on re-purchase — is done, §6) and version-aware resolution (N8, P2).
 
 ### 8.9 Free content (D-19) ✅
 
@@ -1322,7 +1365,7 @@ db.assets.find({ tenantId: T, entryId: entryId })
 
 Two queries. Asset results give the UI the preview + full asset metadata.
 
-### 9.4 Entitlement Check (Worker flow) — `ContentAccessPolicy` (✅ H3; 🔜 H2 / H8 / N8 for steps 6 and 8)
+### 9.4 Entitlement Check (Worker flow) — `ContentAccessPolicy` (✅ H3 + H2 + H8 + N8-lite, L1)
 
 ```js
 PUBLIC_VISIBLE = ["PUBLISHED", "UNLISTED"]
@@ -1348,12 +1391,12 @@ ent = db.entitlements.findOne({
 if (ent && backedByCompletedOrder(ent)) → allowed(version = effectiveVersion(requestUserId, entry))
 
 // 6. Collection entitlement — union by right date (§8.6): a membership record
-//    for the entry with removedAt == null or removedAt > entitlement.grantedAt
-for (coll of db.collections.find({ tenantId: T, "items.entryId": entryId })) {   // any status
+//    for the entry with removedAt == null or removedAt >= entitlement.grantedAt
+for (coll of db.collections.find({ tenantId: T, "items.entryId": entryId })) {   // any status, not blocked
   ent = db.entitlements.findOne({ tenantId: T, userId: requestUserId,
                                   targetType: "COLLECTION", collectionId: coll._id, status: "ACTIVE" })
   if (!ent || !backedByCompletedOrder(ent)) continue
-  if (coll.items.some(r => r.entryId == entryId && (r.removedAt == null || r.removedAt > ent.grantedAt)))
+  if (coll.items.some(r => r.entryId == entryId && (r.removedAt == null || r.removedAt >= ent.grantedAt)))
     → allowed(version = effectiveVersion(requestUserId, entry))
 }
 
@@ -1361,19 +1404,18 @@ for (coll of db.collections.find({ tenantId: T, "items.entryId": entryId })) {  
 → PUBLIC_VISIBLE.includes(entry.status) ? denied(LOCKED) : denied(HIDDEN)
 
 // 8. Resolve the file for the resolved version (only if allowed)
-//    effectiveVersion = version_choices.activeVersion ?? purchasedVersion (§6a); no versions[] ⇒ 1
+//    effectiveVersion = purchasedVersion (§6a) today; version_choices.activeVersion is P2. No versions[] ⇒ live
 v = (entry.versions ?? []).find(x => x.version == version)
-assetId = v ? v.assetId : latestReadyFull(T, entryId).id   // never a query that assumes uniqueness (H8)
-return { r2Key, contentType, contentDisposition, hlsPrefix: v ? v.hlsR2Prefix : entry.hlsR2Prefix }
+asset = (v && readyFullAsset(v.assetId)) ?? latestReadyFull(T, entryId)   // never a query that assumes uniqueness (H8)
+return { r2Key, contentType, contentDisposition, hlsPrefix: v?.hlsR2Prefix ?? entry.hlsR2Prefix }
 ```
 
-✅ **Implemented (H3)** in `MediaEntitlementService.check` →
-`ContentAccessPolicy.evaluate`: steps 1–5 and 7 exactly as written; the
-three denials are distinct and returned as `403 {"error":"Forbidden",
-"reason": BLOCKED|HIDDEN|LOCKED}`. ⚠️ Step 6 consults `PUBLISHED`
-collections only and has no `removedAt` records (H2); step 8 serves
-`currentVersion` with the single-result query that throws with two READY
-FULL assets (H8 / N8).
+✅ **Implemented** in `MediaEntitlementService.check` →
+`ContentAccessPolicy.evaluate`: every step as written; the three denials are
+distinct and returned as `403 {"error":"Forbidden", "reason": BLOCKED|HIDDEN|LOCKED}`.
+Step 6 walks the membership history in any collection status (H2); step 8
+serves the buyer's purchased version by pointer with the deterministic
+"latest READY FULL" as fallback (H8 / N8-lite).
 
 ### 9.5 User's Library ("My Purchases")
 
@@ -1388,11 +1430,13 @@ entryIds      = results.filter(e => e.targetType == "ENTRY").map(e => e.entryId)
 collectionIds = results.filter(e => e.targetType == "COLLECTION").map(e => e.collectionId)
 
 // 3. Hydrate — NO status filter (buyers see DRAFT/ARCHIVED/DELETED too);
-//    collection items = active records ∪ removed records with removedAt > grantedAt (🔜 H2)
+//    collection items = active records ∪ removed records with removedAt >= grantedAt (✅ H2);
+//    a blocked collection contributes nothing; each row shows the purchased version's
+//    title / description / tags / thumbnail / preview (✅ N8-lite)
 entries     = db.entries.find({ tenantId: T, _id: { $in: entryIds } })
 collections = db.collections.find({ tenantId: T, _id: { $in: collectionIds } })
 
-// 4. Per-entry access state for the UI (🔜 in the library list — the detail page already
+// 4. Per-entry access state for the UI (🔜 P2 in the library list — the detail page already
 //    returns `status` / `viewerAccess` / 451 since H3; version flags are N8) — per entry,
 //    also for entries reached through a collection
 entries.forEach(entry => {
@@ -1406,8 +1450,13 @@ entries.forEach(entry => {
 })
 ```
 
-✅ `PurchaseListService` already hydrates without a status filter and expands
-collection items; the `accessState` / version flags are planned.
+✅ `PurchaseListService` hydrates without a status filter and expands
+collection items by the union rule with the purchased version per row (L1);
+the `accessState` / version flags of step 4 are planned (P2). ✅ (L2) The
+unified `/api/purchases/feed` (aggregation) also shows the **purchased
+version** on entry cards: the pipeline projects `versionCount` and only the
+entries that carry `versions[]` are re-read to overlay title / description /
+thumbnail (variants dropped when the key differs).
 
 ### 9.6 Creator Dashboard — My Entries
 
@@ -1436,18 +1485,19 @@ Response includes `targetType` so the dashboard can display entry vs. collection
 // 1. Collection document (includes items[])
 coll = db.collections.findOne({ tenantId: T, _id: collId })
 
-// 2. Buyer's collection entitlement (any collection status for a buyer — 🔜 H2)
+// 2. Buyer's collection entitlement (any collection status for a buyer — ✅ H2;
+//    ContentAccessPolicy.evaluateCollection, blocked ⇒ hidden)
 collEnt = db.entitlements.findOne({
   tenantId: T, userId: U,
   targetType: "COLLECTION", collectionId: collId, status: "ACTIVE"
 })
 hasCollAccess = collEnt != null && backedByCompletedOrder(collEnt)
 
-// 3. Items to show (🔜 H2 / D-20): active records, plus — for a buyer — removed
-//    records with removedAt > grantedAt, rendered after the live ones and flagged
-//    "no longer in this collection"
+// 3. Items to show (✅ H2 / D-20): active records, plus — for a buyer — removed
+//    records with removedAt >= grantedAt, returned separately as `retainedItems`
+//    ("Items you keep access to" on the storefront)
 active  = coll.items.filter(r => r.removedAt == null).sort(position)
-retained = hasCollAccess ? coll.items.filter(r => r.removedAt != null && r.removedAt > collEnt.grantedAt) : []
+retained = hasCollAccess ? coll.items.filter(r => r.removedAt != null && r.removedAt >= collEnt.grantedAt) : []
 entryIds = unique([...active, ...retained].map(r => r.entryId))
 entries = db.entries.find({ tenantId: T, _id: { $in: entryIds } })
 
@@ -1534,9 +1584,9 @@ db.orders.insertOne({
 // 5. On confirmation: CAS PROCESSING→COMPLETED, then grant
 db.orders.updateOne({ _id: orderId, status: "PROCESSING" },
                     { $set: { status: "COMPLETED", completedAt: now } })
-db.entitlements.upsert(                                   // 🔜 H11 / S-06 (today: insert)
+db.entitlements.upsertPurchase(                           // ✅ H11 / S-06 (reactivates REVOKED, no-op when ACTIVE)
   { tenantId: T, userId: U, targetType: "ENTRY", entryId: E },
-  { $set: { status: "ACTIVE", grantType: "PURCHASE", orderId, grantedAt: now, franchiseId } })
+  { status: "ACTIVE", grantType: "PURCHASE", orderId, grantedAt: now, franchiseId })
 // grantedAt is all the version model needs: purchasedVersion = version current at grantedAt (§6a)
 // 🔜 N2: publish prepared/completed records to the external rights ledger (async)
 ```
@@ -1557,11 +1607,11 @@ processExistingOrders(existing)
 // 4. Sign → submit → confirm (same pipeline)
 
 // 5. ONE entitlement for the whole collection — nothing else is stored
-db.entitlements.upsert(                                   // 🔜 H11 / S-06
+db.entitlements.upsertPurchase(                           // ✅ H11 / S-06
   { tenantId: T, userId: U, targetType: "COLLECTION", collectionId: C },
-  { $set: { status: "ACTIVE", grantType: "PURCHASE", orderId, grantedAt: now, franchiseId } })
+  { status: "ACTIVE", grantType: "PURCHASE", orderId, grantedAt: now, franchiseId })
 // No per-entry entitlements and no snapshot: the right = every item record of C with
-// removedAt == null or removedAt > grantedAt (§8.6); versions per entry via §6a
+// removedAt == null or removedAt >= grantedAt (§8.6); versions per entry via §6a
 ```
 
 ---
@@ -1578,17 +1628,17 @@ execution and acceptance criteria live there; this table is the map.
 |---|---|---|---|---|
 | ~~1~~ | ~~Core indexes exist only as annotations; unique definitions on `orders`/`entitlements` are wrong (§5, §6)~~ — ✅ closed by **H9** (`CoreIndexMigration`, corrected annotations, real-mongod test) | `*Entity`, `CoreIndexMigration` | **H9** | No |
 | ~~2~~ | ~~`prepare` treats `TIP` orders as purchases (§5.3)~~ — ✅ closed by **H10** (`targetType` in the previous-order lookups, real-mongod + `prepare`-level tests) | `OrderRepository`, `OrderMongoRepository`, `OrderRepositoryImpl`, `PaymentService.prepare` | **H10** | No |
-| 3 | Re-purchase after `REVOKED` silently fails (§6) | `PaymentService.createEntitlement` → upsert | **H11** / S-06 | No |
+| ~~3~~ | ~~Re-purchase after `REVOKED` silently fails (§6)~~ — ✅ closed by **H11 / S-06 / R-30** (L1): `EntitlementRepository.upsertPurchase` (reactivate `REVOKED` / insert / no-op), `EntitlementRepositoryImplIntegrationTest` with real mongod incl. 16-thread race | `PaymentService.createEntitlement`, `EntitlementRepositoryImpl` | **H11** | No |
 | ~~4~~ | ~~CDN ignores entry status; UI hides buyers in `IN_REVIEW`/`REJECTED`/`SUSPENDED`; free content served in any status; three denials collapsed into one~~ — ✅ closed by **H3** (`ContentAccessPolicy` shared by `MediaEntitlementService` and `PublicEntryService`; `ContentAccessPolicyTest` + `PublicEntryServiceAccessTest` parity matrix) | | **H3** | — |
 | ~~5~~ | ~~No `moderationBlock`, `moderation_cases`, `disputes`; takedown = status change~~ — ✅ closed by **H3** (`ContentModerationService`, `ModerationIndexMigration`, `ModerationCaseSweep`, internal surface for admin-api, admin-ui "Edits & takedowns") | | **H3** | — |
-| ~~6~~ | ~~Edits on published entries overwrite the live document and send it to `IN_REVIEW`~~ — ✅ closed by **N9** for entries (`ContentVersionService`, `ModerationScope`, pending-edit queue). ⚠️ Collection edits (title / description / cover / items) still write live and are **not re-moderated** (pre-existing); `Collection.pendingVersion` deferred to the H2 / N8 block because it depends on the membership history and `changeSummary` | `CollectionService` | **H2 / N8** | No |
+| ~~6~~ | ~~Edits on published entries overwrite the live document and send it to `IN_REVIEW`~~ — ✅ closed by **N9** for entries (`ContentVersionService`, `ModerationScope`, pending-edit queue). ⚠️ Collection edits (title / description / cover / items) still write live and are **not re-moderated** (pre-existing); `Collection.pendingVersion` is **P2** (the membership history it needed exists since L1) | `CollectionService` | **P2** | No |
 | 6b | admin-api used to persist its partial `EntryDocument` / `CollectionAdminDocument` with `save()`, which **replaced the whole document** and silently dropped every field those models do not declare (`paymentSplits`, `spaceIds`, `hlsR2Prefix`, `thumbnailVariantsPrefix`, `contentFingerprint`, `remix*`, …) on every approve / reject / suspend | admin-api `ModerationService` | ✅ closed by **H3** (all writes go through `/api/internal/moderation/**`; `ModerationServiceTest` asserts no local `save`). ✅ Measured in Atlas on 2026-10-22 (read-only, plan R-34 / rev. 19): no document in `entries`, `collections` or `users` was last written by admin-api (`_class` check), the single human-approved entry was re-saved complete by media-store-api a minute later, no field loss detectable — no repair needed | No |
-| 7 | Second `FULL` upload on a sold entry: no re-moderation, and two READY FULL assets ⇒ 5xx in six call-sites | `AssetRepository` ("latest"), `EntryUploadService` (409 gate) | **H8** | No |
-| 8 | No versions; buyer always sees the live document | `Entry.versions[]/currentVersion`, new `version_choices`, `ContentVersionService` | **N8** (D-14, S-01, S-02, S-07) | Resolved |
-| 9 | Collection access requires `PUBLISHED`; removed items are lost; hard delete with buyers allowed | `MediaEntitlementService`, `PublicEntryService`, `CollectionService` (`items[].addedAt/removedAt`) | **H2** (D-11, D-20, S-04) | Resolved (D-20) |
-| 10 | Tenant fee silently dropped when the tenant has no wallet (§5.1) | `PaymentService.buildFullSplits` / `buildPublishingSplits` | **H7** | No |
-| 11 | Blocked tenant falls back to the default tenant; buyers lose their library | `TenantResolver`, read-only mode | **H1** (D-04) | Resolved |
-| 12 | Banned buyer loses the library | `AuthController`, restricted session | **N3** | No |
+| ~~7~~ | ~~Second `FULL` upload on a sold entry: no re-moderation, and two READY FULL assets ⇒ 5xx in six call-sites~~ — ✅ closed by **H8** (L1): `findFirst…OrderByCreatedAtDesc` behind the shared repository method (`AssetRepositoryImplIntegrationTest`), 409 `FULL_ASSET_LOCKED` on `initUpload`/`finalizeUpload` outside `DRAFT`/`REJECTED` **or on any once-published entry** (`publishedAt != null`, L2) (`EntryUploadServiceTest`). The versioned FULL replacement that lifts the 409 is P2 | `AssetRepositoryImpl`, `EntryUploadService` | **H8** | No |
+| 8 | No versions; buyer always sees the live document — ✅ **partially closed by N8-lite** (L1): `purchasedVersion` computed from the right date and served on the CDN, detail page and library (`ContentVersionServiceTest`, `MediaEntitlementServiceTest`, `PublicEntryServiceAccessTest`, `PurchaseListServiceTest`). 🔜 **P2**: `version_choices`, update / undo, "new version available", `changeSummary` `FILE` | `ContentVersionService.purchasedVersion`, `ContentAccessPolicy.Result.rightStart` | **N8** (D-14, S-01, S-02, S-07) | Resolved |
+| ~~9~~ | ~~Collection access requires `PUBLISHED`; removed items are lost; hard delete with buyers allowed~~ — ✅ closed by **H2** (L1): `items[].addedAt/removedAt` history, union-by-right-date in `ContentAccessPolicy` / `PurchaseListService` / `CollectionService` / dispute path (b), buyer's collection page in any status with `retainedItems`, 409 `COLLECTION_HAS_BUYERS` (`ContentAccessPolicyTest`, `CollectionServiceTest`, `PurchaseListServiceTest`, `ContentModerationServiceTest`) | `CollectionItem`, `Collection`, `ContentAccessPolicy`, `CollectionService` | **H2** (D-11, D-20, S-04) | Resolved (D-20) |
+| ~~10~~ | ~~Tenant fee silently dropped when the tenant has no wallet (§5.1)~~ — ✅ closed by **H7** (L2): `TENANT_PAYOUT_UNCONFIGURED` in `buildFullSplits`, `buildPublishingSplits` and the pre-sign wallet check for the `TENANT` role (`PaymentServiceSplitsTest`, `PaymentServicePrepareTenantPayoutTest`); admin-api `TENANT_WALLET_REQUIRED` + admin-ui warning | `PaymentService` | **H7** | — |
+| ~~11~~ | ~~Blocked tenant falls back to the default tenant; buyers lose their library~~ — ✅ closed by **H1** (L2): `TenantResolver.resolveTenant` (BLOCKED ⇒ suspended, unknown ⇒ null), `TenantFilter` read-only allowlist + `423 TENANT_SUSPENDED`, `TenantContext.isSuspended()`, visitor `suspended`, storefront notice (`TenantResolverTest`, `TenantFilterTest`, `PublicTenantControllerVisitorTest`) | `TenantResolver`, `TenantFilter`, `TenantSuspensionPolicy` | **H1** (D-04) | Resolved |
+| 12 | Banned buyer loses the library — ✅ **L2 firewall**: the ladder caps at `STRIKE_2`, `PERMA_BAN` is explicit with purchases shown (admin-api `UserSanctionServiceLadderTest`). 🔜 **P4**: restricted session with read-only library | `AuthController`, restricted session | **N3** | No |
 | 13 | Rights exist only in Mongo; no external ledger | `ledger*` fields on `Order`, publisher, restore job | **N2** (D-03, D-10, D-12) | Resolved |
 | 14 | No download endpoint (§8.7) | new endpoint + UI | checklist §12 | No |
 
@@ -1604,12 +1654,12 @@ on-chain change (D-03).
 | Decision | Rationale |
 |----------|-----------|
 | **Separate `assets` collection** (not embedded in Entry), **append-only** | Assets are uploaded independently, have their own lifecycle (UPLOADED→READY) and may be many per entry. Append-only storage is also what lets versions (D-14) be pure metadata: the old file is already there. |
-| **Denormalized `thumbnailR2Key` / `previewR2Key` / `durationSec` / `hlsR2Prefix` on Entry** | Feed queries read hundreds of entries; no Asset join. 🔜 With versions, these fields are **the projection of `currentVersion`** — a declared invariant, not a second source of truth. |
+| **Denormalized `thumbnailR2Key` / `previewR2Key` / `durationSec` / `hlsR2Prefix` on Entry** | Feed queries read hundreds of entries; no Asset join. With versions, these fields are **the projection of `currentVersion`** — a declared invariant, not a second source of truth; a buyer pinned to an older version reads `versions[n]` instead (§2.3). |
 | **`orders` is a general payment ledger** (`targetType` with 5 values) | One audited Stellar pipeline for purchases, tips and publishing fees. Only `ENTRY`/`COLLECTION` grant rights; the others are context. Orders are **not** unique per target: retries and repeated tips are legitimate. |
 | **`orders` separate from `entitlements`** | Order tracks financial state (tx hash, amount, refund); entitlement tracks access. **One entitlement per right**, pointing at its latest completing order; refunding revokes it but the orders persist for accounting. |
 | **`stellarTxHash` computed at `prepare`** | The order is persisted with its definitive hash before the buyer signs — there is never a confirmed payment without a trace (basis of N2). No on-chain change is ever needed to link a payment to a purchase (D-03). |
 | **Full split snapshotted on the order** | Who was paid what is frozen at purchase time (§5.1). Wallet, fee or royalty changes afterwards cannot alter a settled sale. |
-| **Fail-closed for mandatory payees, fail-open for voluntary attributions** | A tenant with a configured fee must be payable or the sale stops (H7); a dead reseller or original attribution is dropped and the buyer pays the same price (D-05). Horizon outages on the pre-sign wallet check stay fail-open: a dead destination fails on-chain without charging (D-06). |
+| **Fail-closed for mandatory payees, fail-open for voluntary attributions** | A tenant with a configured fee must be payable or the sale stops (H7); a dead reseller or original attribution is dropped and the buyer pays the same price (D-05). Horizon outages on the pre-sign wallet check stay fail-open: a dead destination fails on-chain without charging (D-06). ✅ (L3 / N7) every fail-open is counted and logged (`HORIZON_FAIL_OPEN`, burst alert `HORIZON_FAIL_OPEN_BURST`) and is **never cached** as "active". |
 | **`sellerId` / `franchiseId` / `resellerId` / `originalCreatorId` on Order** | Denormalized for dashboards and audit without joins. `Entitlement.franchiseId` is analytics only. |
 | **`Decimal128` for amounts** | Native decimal type, maps to `BigDecimal`; no floating-point rounding. |
 | **Compound indexes with `tenantId` first; explicit migrations** | Every query is tenant-scoped. Auto-index-creation is off, so every index is created by a named, idempotent migration and nothing else (H9). |
@@ -1638,7 +1688,7 @@ on-chain change (D-03).
 - [x] `Collection` with pricing fields, author denormalization, moderation (`IN_REVIEW` / `REJECTED`), soft delete
 - [x] `Order` as general ledger: `TargetType` ×5, attribution fields, full split snapshot, tx hash at prepare, CAS state machine, async submit, Horizon reconciliation watchdog
 - [x] `Entitlement` with `targetType` / `collectionId` / `franchiseId`; `isBackedByCompletedOrder` on the CDN path
-- [x] Collection purchase flow; collection entitlement check in `MediaEntitlementService` (PUBLISHED collections, live membership)
+- [x] Collection purchase flow; collection entitlement check in `MediaEntitlementService` (any collection status, membership history — L1)
 - [x] `FavoriteService` locked/unlocked for entries and collections
 - [x] "Collections containing entry X" query (§9.9)
 - [x] Franchise split carve-out (§5.2); tips; publishing orders
@@ -1649,16 +1699,17 @@ on-chain change (D-03).
 
 - [x] **H9** — real Atlas indexes recorded (plan §10.0: none of the core indexes existed); `CoreIndexMigration`; non-unique order indexes; partial unique entitlement indexes; aligned annotations; `CoreIndexMigrationIntegrationTest` (embedded real mongod, no Docker)
 - [x] **H10** — `targetType` filter in previous-order lookups (`OrderRepository` → `OrderMongoRepository` → `OrderRepositoryImpl` → `PaymentService.prepare`); `PaymentServicePrepareTipIsolationTest` (tip-then-buy, pending-tip-then-buy, purchase regressions) + `OrderRepositoryImplIntegrationTest` (embedded real mongod)
-- [ ] **N10** — this document's factual sync (done in this revision; keep it true)
-- [x] **H3 + N9** — `ContentAccessPolicy` (§8.3) in CDN and UI; `moderationBlock` on entries and collections; `moderation_cases`; `disputes` trigger with union of access paths + `ModerationCaseSweep`; `pendingVersion` staging with `ModerationScope`, approval → `versions[]` / `currentVersion`; free-content rule (D-19); internal moderation surface for admin-api (approve / reject / takedown / reinstate / pending-version, cases, disputes) replacing admin-api's whole-document saves; admin-ui "Edits & takedowns" page + Reinstate; storefront 451 notice, status banner, Studio chips; edge entitlement TTL 30 → 5 min. 🔜 left for later blocks: `Collection.pendingVersion` (H2/N8), `REFUNDED` resolution (H11), union-by-right-date in path (b) (H2)
-- [ ] **H8 + N8** — repository "latest READY FULL"; 409 gate on FULL outside the versioned path; `versions[]` / `currentVersion`; `version_choices` collection + unique index; per-entry update / undo; computed purchased version; change summary; "absent = v1"; no GC
-- [ ] **H2 + H11** — `items[].addedAt/removedAt` membership history (no backfill); union-by-right-date in CDN, UI and "My Purchases"; collection access in any status; 409 on hard delete with buyers; `createEntitlement` upsert
-- [ ] **H1**, **N3** — tenant read-only mode; restricted session for sanctioned buyers
-- [ ] **H7** — fail-closed tenant payout (`TENANT_PAYOUT_UNCONFIGURED`), also for publishing splits
+- [x] **N10** — this document's factual sync (rev. 9); ✅ (L2) guarded by `EnumDocumentationParityTest`: every enum row of §14 is compared value for value with its `.java` on every test run
+- [x] **H3 + N9** — `ContentAccessPolicy` (§8.3) in CDN and UI; `moderationBlock` on entries and collections; `moderation_cases`; `disputes` trigger with union of access paths + `ModerationCaseSweep`; `pendingVersion` staging with `ModerationScope`, approval → `versions[]` / `currentVersion`; free-content rule (D-19); internal moderation surface for admin-api (approve / reject / takedown / reinstate / pending-version, cases, disputes) replacing admin-api's whole-document saves; admin-ui "Edits & takedowns" page + Reinstate; storefront 451 notice, status banner, Studio chips; edge entitlement TTL 30 → 5 min. 🔜 left for P2: `Collection.pendingVersion`; the admin `REFUNDED` flow
+- [x] **L1 — H8 + N8-lite + H2 + H11 + H5** (2026-11-06) — repository "latest READY FULL" (`findFirst…OrderByCreatedAtDesc`, real-mongod test); 409 `FULL_ASSET_LOCKED` on FULL outside `DRAFT`/`REJECTED` (kill switch `mediastore.uploads.full-asset-gate-enabled`); computed `purchasedVersion` served to buyers on CDN / detail page / library, owner & public on `currentVersion`, "absent = v1"; `items[].addedAt/removedAt` membership history (no backfill); union-by-right-date (`>=`) in `ContentAccessPolicy`, "My Purchases", collection page (`retainedItems`, any status for a buyer) and dispute path (b); 409 `COLLECTION_HAS_BUYERS` on hard delete; `upsertPurchase` (insert / reactivate `REVOKED` / no-op, real-mongod test incl. race); entitlement backfill without a time window (cursor over `completedAt`, wraps; `ENTITLEMENT_BACKFILL_REPAIRED` alert + lag); storefront "Items you keep access to"
+- [ ] **N8 (P2)** — `version_choices` collection + unique index; per-entry update / undo; "new version available"; change summary `FILE`; versioned FULL replacement that lifts the 409; `Collection.pendingVersion`
+- [x] **L2 — H7 + H1 + N3 firewall + N10 guard + rev. 19 anomalies** (2026-11-11) — `TENANT_PAYOUT_UNCONFIGURED` fail-closed (purchases, tips, publishing; dead tenant wallet named explicitly) + admin-api `TENANT_WALLET_REQUIRED` + admin-ui warning; tenant **read-only mode** (`BLOCKED` resolves as itself, `TenantFilter` allowlist, `423 TENANT_SUSPENDED`, visitor `suspended`, storefront notice, buy buttons disabled, 423 mapped in checkout/tip) and `404 tenant_not_found` for unknown / malformed subdomains (no default-tenant fallback); strike ladder capped at `STRIKE_2` with explicit, acknowledged `PERMA_BAN` showing active purchases (`library` on user detail); `EnumDocumentationParityTest`; moderation watchdog catches `DISPATCHED`/`PROCESSING` jobs with `lastHeartbeat: null` and closes orphans whose entry/collection is gone; atomic `claimCompletion` makes duplicate AI callbacks a no-op; H8 gate also keys on `publishedAt` (a once-published entry keeps its FULL locked in `REJECTED`/re-`DRAFT`); `/api/purchases/feed` cards show the purchased version
+- [ ] **N3 (P4)** — restricted session for sanctioned buyers (read-only library)
 - [ ] **N2** — external rights ledger (`ledger*` outbox fields, async publisher, restore job) — *no on-chain change*
-- [ ] **H5**, **N4**, **N1**, **H4**, **H6**, **N5**, **N6**, **N7** — see plan
+- [x] **L3 — §13 Terms + N6 + N7** (2026-11-11) — storefront `/terms#purchases` "Purchase terms" block generated from §13 (en/es, English fallback for other locales), linked from the checkout dialog before paying and from a legal footer on every page, no session required; cdn-worker caches only explicit entitlement denials (401/403/`allowed:false`) — 5xx/429/network/malformed bodies are never cached — and tags responses with `X-Edge-Entitlement`; `StellarTransactionService` counts and logs Horizon fail-opens (`HORIZON_FAIL_OPEN`, `HORIZON_FAIL_OPEN_BURST`) and no longer caches a fail-open verdict as active
+- [ ] **N4**, **N1**, **H4**, **H6**, **N5** — see plan
 - [ ] Download endpoint/button for all accessible content (§8.7)
-- [ ] Terms & Conditions page updated from §13
+- [x] Terms & Conditions page updated from §13 (L3)
 
 ### ⏸ Deferred by decision
 
@@ -1674,6 +1725,14 @@ on-chain change (D-03).
 > dialogs. It describes the **target** behaviour (§8). Until the planned items
 > of §12 ship, the platform honours these terms **manually** where the code
 > does not yet (collection removals, re-reviews, takedowns).
+>
+> ✅ **Published (L3, 2026-11-11):** rendered in `media-store-ui` as the
+> "Purchase terms" block of `/terms#purchases` (`Legal.purchase` in
+> `src/locales/legal/{en,es}.json`, sections A–F), linked from the checkout
+> dialog before the buyer pays and from the storefront footer. Any change to
+> this section must be mirrored there (`legal-purchase-terms.test.ts` pins the
+> structure). The download sentence is phrased as "where the platform offers a
+> download" until §8.7 ships.
 
 ### What the user purchases
 
@@ -1779,4 +1838,4 @@ intermediary.
 
 `versions[].changeSummary` / `pendingVersion.changeSummary` (✅ N9, plain
 string list): `TITLE \| DESCRIPTION \| RESOURCE_TEXT \| TAGS \| THUMBNAIL \|
-PREVIEW`; 🔜 `FILE` arrives with the versioned FULL replacement (H8 / N8).
+PREVIEW`; 🔜 `FILE` arrives with the versioned FULL replacement (P2).
