@@ -74,6 +74,14 @@ class TenantResolverTest {
     }
 
     @Test
+    void configuredPlatformHost_returnsDefault() {
+        ReflectionTestUtils.setField(resolver, "rootDomain", "app-dev.earnlumens.org");
+        assertNull(resolver.resolve(req("api-dev.earnlumens.org")));
+        ReflectionTestUtils.setField(resolver, "platformHosts", java.util.Set.of("api-dev.earnlumens.org"));
+        assertEquals("earnlumens", resolver.resolve(req("api-dev.earnlumens.org")));
+    }
+
+    @Test
     void reservedSubdomain_returnsDefault() {
         assertEquals("earnlumens", resolver.resolve(req("api.earnlumens.org")));
         assertEquals("earnlumens", resolver.resolve(req("www.earnlumens.org")));

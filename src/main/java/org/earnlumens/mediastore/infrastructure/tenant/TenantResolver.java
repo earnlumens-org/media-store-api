@@ -45,6 +45,10 @@ public class TenantResolver {
     @Value("${mediastore.tenant.root-domain:earnlumens.org}")
     private String rootDomain;
 
+    /** Exact platform hosts outside {@code rootDomain} (dev: api-dev sits beside app-dev). Empty in prod. */
+    @Value("${mediastore.tenant.platform-hosts:}")
+    private Set<String> platformHosts = Set.of();
+
     private final TenantConfigService tenantConfigService;
 
     public TenantResolver(TenantConfigService tenantConfigService) {
@@ -101,7 +105,8 @@ public class TenantResolver {
         if ("localhost".equals(hostname)
                 || "localhost.dv".equals(hostname)
                 || "127.0.0.1".equals(hostname)
-                || rootDomain.equals(hostname)) {
+                || rootDomain.equals(hostname)
+                || platformHosts.contains(hostname)) {
             return ResolvedTenant.active(DEFAULT_TENANT);
         }
 
