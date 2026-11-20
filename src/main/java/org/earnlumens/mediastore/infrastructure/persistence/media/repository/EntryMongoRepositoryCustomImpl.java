@@ -133,7 +133,7 @@ public class EntryMongoRepositoryCustomImpl implements EntryMongoRepositoryCusto
                 "contentLanguage": 1, "durationSec": 1, "viewCount": 1,
                 "itemCount": 1, "createdAt": 1, "updatedAt": 1, "publishedAt": 1,
                 "sellerWallet": 1, "sortDate": 1, "moderationFeedback": 1,
-                "resourceContent": 1,
+                "resourceContent": 1, "resellerEnabled": 1, "resellerCommissionPercent": 1,
                 "pendingVersion.changeSummary": 1, "moderationBlock.caseId": 1
             }}
             """));

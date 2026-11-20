@@ -1576,7 +1576,9 @@ public class EntryUploadService {
                     doc.getString("coverVariantsPrefix"),
                     doc.get("pendingVersion") != null,
                     pendingChangesOf(doc),
-                    doc.get("moderationBlock") != null
+                    doc.get("moderationBlock") != null,
+                    doc.getBoolean("resellerEnabled"),
+                    toBigDecimal(doc.get("resellerCommissionPercent"))
             );
         }).toList();
 

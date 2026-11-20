@@ -47,5 +47,8 @@ public record StudioItemResponse(
         /** Parts of the pending edit (TITLE, DESCRIPTION, THUMBNAIL, …); empty when none. */
         java.util.List<String> pendingChanges,
         /** Content is under a moderation block (H3): blocked for everyone until reinstated. */
-        boolean blocked
+        boolean blocked,
+        /** Entries only; null for legacy documents (client applies the entity default). */
+        Boolean resellerEnabled,
+        BigDecimal resellerCommissionPercent
 ) {}
