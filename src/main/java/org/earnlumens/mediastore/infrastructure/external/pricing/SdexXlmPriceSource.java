@@ -85,7 +85,8 @@ public class SdexXlmPriceSource {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() != 200) {
-                logger.warn("[{}] {} — HTTP {} from Horizon orderbook ({})", name(), Instant.now(), response.statusCode(), baseUrl);
+                logger.warn("[{}] {} — HTTP {} from Horizon orderbook ({})", name(), Instant.now(),
+                        response.statusCode(), horizonPool.redact(baseUrl));
                 // Rate-limited or failing node: rotate away during its cooldown.
                 if (response.statusCode() == 429 || response.statusCode() >= 500) {
                     horizonPool.markUrlDown(baseUrl, "order_book HTTP " + response.statusCode());
@@ -117,7 +118,8 @@ public class SdexXlmPriceSource {
             return Optional.of(midPrice);
 
         } catch (Exception e) {
-            logger.error("[{}] {} — failed to fetch SDEX price: {}", name(), Instant.now(), e.getMessage());
+            logger.error("[{}] {} — failed to fetch SDEX price: {}", name(), Instant.now(),
+                    horizonPool.redact(e.getMessage()));
             // Transport-level failure: rotate away from this node during its cooldown.
             horizonPool.markUrlDown(baseUrl, "order_book " + e.getClass().getSimpleName());
             return Optional.empty();

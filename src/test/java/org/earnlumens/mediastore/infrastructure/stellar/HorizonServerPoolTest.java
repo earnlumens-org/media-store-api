@@ -1,6 +1,10 @@
 package org.earnlumens.mediastore.infrastructure.stellar;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import org.junit.jupiter.api.Test;
+import org.slf4j.LoggerFactory;
 import org.stellar.sdk.Server;
 import org.stellar.sdk.exception.AccountNotFoundException;
 import org.stellar.sdk.exception.BadRequestException;
@@ -191,5 +195,120 @@ class HorizonServerPoolTest {
     void markUrlDown_unknownUrl_isIgnored() {
         PoolFixture f = fixture(THREE_URLS);
         assertDoesNotThrow(() -> f.pool().markUrlDown("https://unknown.example", "test"));
+    }
+
+    // ── credentials never reach the logs ───────────────────────────
+    // Paid Horizon endpoints carry their key in the URL (path, query or user-info).
+
+    private static final String PATH_KEY = "pAthKey-0123456789abcdefABCDEF";
+    private static final String QUERY_KEY = "qUeryKey-0123456789abcdefABCDEF";
+    private static final String USER_KEY = "uSerKey-0123456789abcdefABCDEF";
+    private static final String KEYED_URL = "https://paid.example/v1/" + PATH_KEY;
+    private static final List<String> KEYED_URLS = List.of(
+            KEYED_URL,
+            "https://h2.example",
+            "https://user:" + USER_KEY + "@h3.example:8443/horizon?apikey=" + QUERY_KEY);
+
+    /** Runs {@code action} and returns everything the pool logged, throwable text included. */
+    private static String logged(Runnable action) {
+        Logger logger = (Logger) LoggerFactory.getLogger(HorizonServerPool.class);
+        ListAppender<ILoggingEvent> appender = new ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            action.run();
+        } finally {
+            logger.detachAppender(appender);
+        }
+        StringBuilder out = new StringBuilder();
+        for (ILoggingEvent event : appender.list) {
+            out.append(event.getFormattedMessage()).append('\n');
+            if (event.getThrowableProxy() != null) {
+                out.append(event.getThrowableProxy().getMessage()).append('\n');
+            }
+        }
+        return out.toString();
+    }
+
+    private static void assertNoKey(String logs) {
+        assertFalse(logs.isEmpty(), "the action was expected to log");
+        for (String key : List.of(PATH_KEY, QUERY_KEY, USER_KEY)) {
+            assertFalse(logs.contains(key), () -> "credential leaked into the log: " + logs);
+        }
+    }
+
+    @Test
+    void startupLog_showsOnlySchemeAndHostOfEachNode() {
+        String logs = logged(() -> fixture(KEYED_URLS));
+
+        assertNoKey(logs);
+        assertTrue(logs.contains("3 node(s): [https://paid.example, https://h2.example, https://h3.example:8443]"),
+                logs);
+    }
+
+    @Test
+    void markUrlDown_logsLabel_andRedactsTheReason() {
+        PoolFixture f = fixture(KEYED_URLS);
+
+        String logs = logged(() -> f.pool().markUrlDown(KEYED_URL, "order_book HTTP 503 from " + KEYED_URL));
+
+        assertNoKey(logs);
+        assertTrue(logs.contains("Horizon node https://paid.example marked down"), logs);
+    }
+
+    @Test
+    void readFailover_redactsUrlAndBareKeyInsideTheExceptionText() {
+        PoolFixture f = fixture(KEYED_URLS);
+
+        String logs = logged(() -> f.pool().executeRead("loadAccount", s -> {
+            if (KEYED_URL.equals(f.urlOf(s))) {
+                throw new ConnectionErrorException(new IOException(
+                        "unexpected end of stream on " + KEYED_URL + "/accounts — invalid api key " + PATH_KEY));
+            }
+            return "ok";
+        }));
+
+        assertNoKey(logs);
+        assertTrue(logs.contains("https://paid.example marked down"), logs);
+        assertTrue(logs.contains("loadAccount failure"), logs);
+    }
+
+    @Test
+    void submitFailure_redactsEveryNodeUrlInTheExceptionText() {
+        PoolFixture f = fixture(KEYED_URLS);
+        Server first = f.pool().submitServer();
+
+        String logs = logged(() -> f.pool().reportSubmitFailure(first,
+                new IOException("timeout calling " + KEYED_URLS.get(0) + " then " + KEYED_URLS.get(2))));
+
+        assertNoKey(logs);
+    }
+
+    @Test
+    void requestsStillUseTheFullNodeUrl() {
+        PoolFixture f = fixture(KEYED_URLS);
+
+        assertEquals(KEYED_URL, f.pool().nextReadUrl());
+        assertEquals(KEYED_URL, f.urlOf(f.pool().submitServer()));
+        assertEquals(KEYED_URLS.size(), f.servers().size());
+        assertTrue(f.servers().keySet().containsAll(KEYED_URLS));
+    }
+
+    @Test
+    void safeLabel_keepsSchemeHostAndPortOnly() {
+        assertEquals("https://horizon.stellar.org", HorizonServerPool.safeLabel("https://horizon.stellar.org"));
+        assertEquals("https://paid.example", HorizonServerPool.safeLabel(KEYED_URL));
+        assertEquals("https://h3.example:8443", HorizonServerPool.safeLabel(KEYED_URLS.get(2)));
+        assertEquals("<horizon-node>", HorizonServerPool.safeLabel("not a url " + PATH_KEY));
+        assertEquals("<horizon-node>", HorizonServerPool.safeLabel(PATH_KEY));
+    }
+
+    @Test
+    void redact_leavesUnrelatedTextUntouched() {
+        PoolFixture f = fixture(KEYED_URLS);
+
+        assertNull(f.pool().redact(null));
+        assertEquals("order_book HTTP 503", f.pool().redact("order_book HTTP 503"));
+        assertEquals("https://h2.example/accounts/GABC", f.pool().redact("https://h2.example/accounts/GABC"));
     }
 }

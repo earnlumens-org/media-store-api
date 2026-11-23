@@ -12,6 +12,9 @@ import org.stellar.sdk.exception.RequestTimeoutException;
 import org.stellar.sdk.exception.TooManyRequestsException;
 import org.stellar.sdk.exception.UnknownResponseException;
 
+import java.net.URI;
+import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.function.Function;
 
@@ -66,13 +69,19 @@ public class HorizonServerPool {
     /** How long a node is skipped after a transport-level failure. */
     static final long COOLDOWN_MS = 30_000L;
 
+    /** URL fragments at least this long are treated as provider credentials when logging. */
+    private static final int MIN_SECRET_LENGTH = 12;
+
     private static final class Node {
         final String url;
+        /** Scheme and authority only — the only form of the URL that may be logged. */
+        final String label;
         final Server server;
         volatile long downUntilMs;
 
         Node(String url, Server server) {
             this.url = url;
+            this.label = safeLabel(url);
             this.server = server;
         }
 
@@ -82,6 +91,9 @@ public class HorizonServerPool {
     }
 
     private final List<Node> nodes;
+    /** Full node URLs (longest first) and their key-like fragments, for {@link #redact}. */
+    private final List<Node> nodesByUrlLength;
+    private final List<String> secretFragments;
 
     @Autowired
     public HorizonServerPool(StellarConfig config) {
@@ -94,7 +106,67 @@ public class HorizonServerPool {
             throw new IllegalArgumentException("At least one Horizon URL is required");
         }
         this.nodes = urls.stream().map(u -> new Node(u, serverFactory.apply(u))).toList();
-        logger.info("Horizon pool initialised with {} node(s): {}", nodes.size(), urls);
+        this.nodesByUrlLength = nodes.stream()
+                .sorted(Comparator.comparingInt((Node n) -> n.url.length()).reversed())
+                .toList();
+        this.secretFragments = urls.stream().flatMap(u -> secretFragments(u).stream()).distinct().toList();
+        logger.info("Horizon pool initialised with {} node(s): {}", nodes.size(),
+                nodes.stream().map(n -> n.label).toList());
+    }
+
+    /**
+     * A node URL may carry a provider key in its path, query or user-info
+     * (paid Horizon endpoints do), so logs only ever show scheme and authority.
+     */
+    static String safeLabel(String url) {
+        try {
+            URI uri = URI.create(url);
+            if (uri.getScheme() == null || uri.getHost() == null) {
+                return "<horizon-node>";
+            }
+            return uri.getScheme() + "://" + uri.getHost() + (uri.getPort() >= 0 ? ":" + uri.getPort() : "");
+        } catch (IllegalArgumentException e) {
+            return "<horizon-node>";
+        }
+    }
+
+    private static List<String> secretFragments(String url) {
+        List<String> fragments = new ArrayList<>();
+        try {
+            URI uri = URI.create(url);
+            for (String part : new String[]{uri.getRawUserInfo(), uri.getRawPath(), uri.getRawQuery()}) {
+                if (part == null) {
+                    continue;
+                }
+                for (String token : part.split("[/?&=:@]")) {
+                    if (token.length() >= MIN_SECRET_LENGTH) {
+                        fragments.add(token);
+                    }
+                }
+            }
+        } catch (IllegalArgumentException e) {
+            // Unparseable URL: safeLabel already hides it entirely.
+        }
+        return fragments;
+    }
+
+    /**
+     * Makes text safe to log: every configured node URL is replaced by its
+     * scheme-and-host label and any key-like fragment of those URLs is masked,
+     * wherever it appears (exception messages, upstream error bodies).
+     */
+    public String redact(String text) {
+        if (text == null) {
+            return null;
+        }
+        String out = text;
+        for (Node n : nodesByUrlLength) {
+            out = out.replace(n.url, n.label);
+        }
+        for (String fragment : secretFragments) {
+            out = out.replace(fragment, "***");
+        }
+        return out;
     }
 
     public int size() {
@@ -195,7 +267,7 @@ public class HorizonServerPool {
         for (Node n : nodes) {
             if (n.url.equals(url)) {
                 n.downUntilMs = System.currentTimeMillis() + COOLDOWN_MS;
-                logger.warn("Horizon node {} marked down for {} ms ({})", url, COOLDOWN_MS, reason);
+                logger.warn("Horizon node {} marked down for {} ms ({})", n.label, COOLDOWN_MS, redact(reason));
                 return;
             }
         }
@@ -204,6 +276,6 @@ public class HorizonServerPool {
     private void markDown(Node node, String opName, Exception e) {
         node.downUntilMs = System.currentTimeMillis() + COOLDOWN_MS;
         logger.warn("Horizon node {} marked down for {} ms after {} failure: {}",
-                node.url, COOLDOWN_MS, opName, e.toString());
+                node.label, COOLDOWN_MS, opName, redact(e.toString()));
     }
 }
