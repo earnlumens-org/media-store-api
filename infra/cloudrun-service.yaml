@@ -1,20 +1,16 @@
+# Snapshot of the live service (2026-11-23). <REDACTED> values are plain-text env vars kept out of git:
+# supply them from the live service before `gcloud run services replace`, or the placeholders get deployed.
+# Not representable here: domain mapping api.earnlumens.org (public access comes from invoker-iam-disabled).
 apiVersion: serving.knative.dev/v1
 kind: Service
 metadata:
   annotations:
-    run.googleapis.com/build-enable-automatic-updates: 'false'
-    run.googleapis.com/build-id: 982095ee-5600-4f96-8967-88243b2ad8e6
-    run.googleapis.com/build-image-uri: europe-west1-docker.pkg.dev/earnlumens/cloud-run-source-deploy/media-store-api
-    run.googleapis.com/build-name: projects/180864838424/locations/europe-west1/builds/982095ee-5600-4f96-8967-88243b2ad8e6
-    run.googleapis.com/build-source-location: gs://run-sources-earnlumens-europe-west1/services/media-store-api/1776191834.23736-3ecb1a7f2f9d45adb2c9ba27094ed0fc.zip#1776191838589564
     run.googleapis.com/ingress: all
-    run.googleapis.com/ingress-status: all
     run.googleapis.com/invoker-iam-disabled: 'true'
-    run.googleapis.com/urls: '["https://media-store-api-180864838424.europe-west1.run.app","https://media-store-api-owuexaao5a-ew.a.run.app"]'
   labels:
     cloud.googleapis.com/location: europe-west1
-    commit-sha: c89e1740ee5fd83ba78f0d5d72e90f9798e437a1
-    gcb-build-id: dc737794-529b-4951-9212-ef0e95b90469
+    commit-sha: e2d9b8e2254917346438da1fd66818754193775a
+    gcb-build-id: 50187534-5782-4263-9d83-0d9b242928c5
     gcb-trigger-id: a48405b7-4f89-4a3d-b573-740accb3fd94
     gcb-trigger-region: global
     managed-by: gcp-cloud-build-deploy-cloud-run
@@ -25,13 +21,10 @@ spec:
     metadata:
       annotations:
         autoscaling.knative.dev/maxScale: '25'
-        run.googleapis.com/client-name: gcloud
-        run.googleapis.com/client-version: 560.0.0
         run.googleapis.com/startup-cpu-boost: 'true'
       labels:
-        client.knative.dev/nonce: mvvajkjusf
-        commit-sha: c89e1740ee5fd83ba78f0d5d72e90f9798e437a1
-        gcb-build-id: dc737794-529b-4951-9212-ef0e95b90469
+        commit-sha: e2d9b8e2254917346438da1fd66818754193775a
+        gcb-build-id: 50187534-5782-4263-9d83-0d9b242928c5
         gcb-trigger-id: a48405b7-4f89-4a3d-b573-740accb3fd94
         gcb-trigger-region: global
         managed-by: gcp-cloud-build-deploy-cloud-run
@@ -41,7 +34,7 @@ spec:
       containers:
       - env:
         - name: SPRING_PROFILES_ACTIVE
-          value: <REDACTED>
+          value: prod
         - name: SPRING_MONGODB_URI
           value: <REDACTED>
         - name: SPRING_SECURITY_OAUTH2_CLIENT_REGISTRATION_X_CLIENT_ID
@@ -53,9 +46,9 @@ spec:
         - name: MEDIASTORE_APP_JWTSECRET
           value: <REDACTED>
         - name: MEDIASTORE_FRONTEND_URI
-          value: <REDACTED>
+          value: https://earnlumens.org
         - name: MEDIASTORE_SEC_COOKIESECURE
-          value: <REDACTED>
+          value: 'true'
         - name: MEDIASTORE_R2_BUCKET
           value: <REDACTED>
         - name: MEDIASTORE_R2_ACCESSKEYID
@@ -69,19 +62,19 @@ spec:
         - name: PLATFORM_WALLET
           value: <REDACTED>
         - name: PLATFORM_FEE_PERCENT
-          value: <REDACTED>
+          value: '10.00'
         - name: CLOUD_RUN_PROJECT_ID
-          value: <REDACTED>
+          value: earnlumens
         - name: CLOUD_RUN_REGION
-          value: <REDACTED>
+          value: europe-west1
         - name: CLOUD_RUN_JOB_NAME
-          value: <REDACTED>
+          value: transcode-video
         - name: CALLBACK_BASE_URL
-          value: <REDACTED>
+          value: https://api.earnlumens.org
         - name: MEDIASTORE_MODERATION_CLOUD_RUN_JOB_NAME
-          value: <REDACTED>
+          value: moderate-content
         - name: MEDIASTORE_ACRCLOUD_HOST
-          value: <REDACTED>
+          value: identify-us-west-2.acrcloud.com
         - name: MEDIASTORE_ACRCLOUD_ACCESSKEY
           value: <REDACTED>
         - name: MEDIASTORE_ACRCLOUD_ACCESSSECRET
@@ -89,7 +82,7 @@ spec:
         - name: MEDIASTORE_GEMINI_APIKEY
           value: <REDACTED>
         - name: TENANT_ROOT_DOMAIN
-          value: <REDACTED>
+          value: earnlumens.org
         - name: MODERATION_SECRET
           valueFrom:
             secretKeyRef:
@@ -113,10 +106,26 @@ spec:
         - name: THUMBNAIL_SECRET
           value: <REDACTED>
         - name: THUMBNAIL_CLOUD_RUN_JOB_NAME
-          value: <REDACTED>
+          value: thumbnail-process
         - name: TENANT_CACHE_SECRET
           value: <REDACTED>
-        image: europe-west1-docker.pkg.dev/earnlumens/cloud-run-source-deploy/media-store-api/media-store-api:c89e1740ee5fd83ba78f0d5d72e90f9798e437a1
+        - name: STELLAR_HORIZON_URLS
+          value: <REDACTED>
+        - name: MEDIASTORE_EDGE_AUTH_SECRET
+          valueFrom:
+            secretKeyRef:
+              key: latest
+              name: edge-auth-secret
+        - name: MEDIASTORE_EDGE_AUTH_ENABLED
+          value: 'true'
+        - name: MEDIASTORE_ADMIN_API_BASE_URL
+          value: https://admin-api-owuexaao5a-ew.a.run.app
+        - name: MEDIASTORE_PLAN_APPLY_SECRET
+          valueFrom:
+            secretKeyRef:
+              key: latest
+              name: plan-apply-secret
+        image: europe-west1-docker.pkg.dev/earnlumens/cloud-run-source-deploy/media-store-api/media-store-api:e2d9b8e2254917346438da1fd66818754193775a
         name: placeholder-1
         ports:
         - containerPort: 8080
