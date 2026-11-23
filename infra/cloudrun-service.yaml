@@ -13,8 +13,8 @@ metadata:
     run.googleapis.com/urls: '["https://media-store-api-180864838424.europe-west1.run.app","https://media-store-api-owuexaao5a-ew.a.run.app"]'
   labels:
     cloud.googleapis.com/location: europe-west1
-    commit-sha: eff9999c554512bba5a59280366e5fbfa66cc346
-    gcb-build-id: c50fc265-7076-4f37-8e3f-bd115b944116
+    commit-sha: c89e1740ee5fd83ba78f0d5d72e90f9798e437a1
+    gcb-build-id: dc737794-529b-4951-9212-ef0e95b90469
     gcb-trigger-id: a48405b7-4f89-4a3d-b573-740accb3fd94
     gcb-trigger-region: global
     managed-by: gcp-cloud-build-deploy-cloud-run
@@ -30,8 +30,8 @@ spec:
         run.googleapis.com/startup-cpu-boost: 'true'
       labels:
         client.knative.dev/nonce: mvvajkjusf
-        commit-sha: eff9999c554512bba5a59280366e5fbfa66cc346
-        gcb-build-id: c50fc265-7076-4f37-8e3f-bd115b944116
+        commit-sha: c89e1740ee5fd83ba78f0d5d72e90f9798e437a1
+        gcb-build-id: dc737794-529b-4951-9212-ef0e95b90469
         gcb-trigger-id: a48405b7-4f89-4a3d-b573-740accb3fd94
         gcb-trigger-region: global
         managed-by: gcp-cloud-build-deploy-cloud-run
@@ -116,7 +116,7 @@ spec:
           value: <REDACTED>
         - name: TENANT_CACHE_SECRET
           value: <REDACTED>
-        image: europe-west1-docker.pkg.dev/earnlumens/cloud-run-source-deploy/media-store-api/media-store-api:eff9999c554512bba5a59280366e5fbfa66cc346
+        image: europe-west1-docker.pkg.dev/earnlumens/cloud-run-source-deploy/media-store-api/media-store-api:c89e1740ee5fd83ba78f0d5d72e90f9798e437a1
         name: placeholder-1
         ports:
         - containerPort: 8080
