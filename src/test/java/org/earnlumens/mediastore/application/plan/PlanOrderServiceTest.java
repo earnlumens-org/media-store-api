@@ -15,6 +15,8 @@ import org.earnlumens.mediastore.infrastructure.tenant.read.TenantConfigService;
 import org.earnlumens.mediastore.infrastructure.tenant.read.TenantReadModel;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.springframework.data.mongodb.core.MongoTemplate;
 
 import java.math.BigDecimal;
@@ -109,6 +111,17 @@ class PlanOrderServiceTest {
                 () -> service.prepare(TENANT, OWNER, "WEEKLY", WALLET));
         assertThrows(IllegalArgumentException.class,
                 () -> service.prepare(TENANT, OWNER, "MONTHLY", "not-a-wallet"));
+    }
+
+    /** §0.0 P30-2 (CAP-84): M…, C… and W… are never a buyer wallet. */
+    @ParameterizedTest
+    @MethodSource("org.earnlumens.mediastore.application.payment.StellarAddressTypeRejectionTest#nonAccountAddresses")
+    void prepare_rejectsNonAccountStellarAddresses(String address) {
+        var e = assertThrows(IllegalArgumentException.class,
+                () -> service.prepare(TENANT, OWNER, "MONTHLY", address));
+
+        assertEquals("Invalid buyer wallet", e.getMessage());
+        verifyNoInteractions(repository, stellarTxService);
     }
 
     @Test

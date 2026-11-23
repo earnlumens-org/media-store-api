@@ -13,12 +13,15 @@ import org.stellar.sdk.KeyPair;
 import org.stellar.sdk.Memo;
 import org.stellar.sdk.Network;
 import org.stellar.sdk.Server;
+import org.stellar.sdk.TimeBounds;
 import org.stellar.sdk.Transaction;
 import org.stellar.sdk.TransactionBuilder;
+import org.stellar.sdk.TransactionPreconditions;
 import org.stellar.sdk.operations.PaymentOperation;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.util.Arrays;
 import java.util.HexFormat;
 import java.util.List;
 
@@ -287,5 +290,59 @@ class StellarTransactionServiceVerifyTest {
         SecurityException e = assertThrows(SecurityException.class,
                 () -> service.verifySignedXdrAgainstOrder(tampered.toEnvelopeXdrBase64(), order));
         assertTrue(e.getMessage().contains("source account"));
+    }
+
+    // ── Cross-SDK golden vector (MYCELIUM-RESILIENCE.md §0.0, P30-1) ──
+    // Envelope, hash and signature emitted by stellar-sdk 2.2.3 for a fixed 3-way
+    // split. Orders prepared by a revision on the old SDK are verified by the new one.
+
+    private static final String GOLDEN_UNSIGNED_XDR =
+            "AAAAAgAAAACKiOPddAnxlf1S2y08ul1yymcJvx2UEhvzdIgBtA9vXAAAApQAAAAAB1vNFgAAAAEAAAAAAAAAAAAAAABrSdIAAAAAAQAAAA9UT1RBTDogNy43NyBYTE0AAAAAAwAAAAAAAAABAAAAAIE5dw6ofRdfVqNUZsNMfszLjYqRtO43ol32D1uPybOUAAAAAAAAAAAAdo+QAAAAAAAAAAEAAAAA7UkoxijRwsbq6QM4kFmVYSlZJzpcY/k2NsFGFKyHN9EAAAAAAAAAAAOW2JwAAAAAAAAAAQAAAADKk6wXBRhwcdZ7g8f/Dv6BCOjsRTBXXXcmh5Mz29q+fAAAAAAAAAAAAJQzdAAAAAAAAAAA";
+    private static final String GOLDEN_TX_HASH =
+            "d8cb1d3fe058e3fd2faa27e3de4ba62757c54cc17c3a7ffef525ddbe38ed40cf";
+    private static final String GOLDEN_SIGNED_XDR =
+            "AAAAAgAAAACKiOPddAnxlf1S2y08ul1yymcJvx2UEhvzdIgBtA9vXAAAApQAAAAAB1vNFgAAAAEAAAAAAAAAAAAAAABrSdIAAAAAAQAAAA9UT1RBTDogNy43NyBYTE0AAAAAAwAAAAAAAAABAAAAAIE5dw6ofRdfVqNUZsNMfszLjYqRtO43ol32D1uPybOUAAAAAAAAAAAAdo+QAAAAAAAAAAEAAAAA7UkoxijRwsbq6QM4kFmVYSlZJzpcY/k2NsFGFKyHN9EAAAAAAAAAAAOW2JwAAAAAAAAAAQAAAADKk6wXBRhwcdZ7g8f/Dv6BCOjsRTBXXXcmh5Mz29q+fAAAAAAAAAAAAJQzdAAAAAAAAAABtA9vXAAAAEBEs+T4SvGSJXd/po7kvk89PwfSysF7dPuMbZLhdyLYJR8p9mMBLTMrZ6SyjrAENyQ6vm7O7htPYgioL8BSiPcJ";
+
+    private static KeyPair fixedKeyPair(int fill) {
+        byte[] seed = new byte[32];
+        Arrays.fill(seed, (byte) fill);
+        return KeyPair.fromSecretSeed(seed);
+    }
+
+    @Test
+    void envelopeFromSdk2_2_3_isReproducedByteForByteAndStillVerifies() {
+        buyer = fixedKeyPair(1);
+        totalXlm = new BigDecimal("7.77");
+        splits = List.of(
+                new PaymentSplit(fixedKeyPair(2).getAccountId(), SplitRole.PLATFORM, new BigDecimal("10.00")),
+                new PaymentSplit(fixedKeyPair(3).getAccountId(), SplitRole.SELLER, new BigDecimal("77.50")),
+                new PaymentSplit(fixedKeyPair(4).getAccountId(), SplitRole.COLLABORATOR, new BigDecimal("12.50")));
+        String memo = "TOTAL: 7.77 XLM";
+
+        TransactionBuilder builder = new TransactionBuilder(new Account(buyer.getAccountId(), 123456789L), network)
+                .setBaseFee(220)
+                .addPreconditions(TransactionPreconditions.builder()
+                        .timeBounds(new TimeBounds(0L, 1_800_000_000L)).build())
+                .addMemo(Memo.text(memo));
+        for (PaymentSplit split : splits) {
+            builder.addOperation(PaymentOperation.builder()
+                    .destination(split.getWallet())
+                    .asset(Asset.createNativeAsset())
+                    .amount(splitAmount(split.getPercent()))
+                    .build());
+        }
+        Transaction rebuilt = builder.build();
+
+        assertEquals(GOLDEN_UNSIGNED_XDR, rebuilt.toEnvelopeXdrBase64());
+        assertEquals(GOLDEN_TX_HASH, HexFormat.of().formatHex(rebuilt.hash()));
+        rebuilt.sign(buyer);
+        assertEquals(GOLDEN_SIGNED_XDR, rebuilt.toEnvelopeXdrBase64());
+
+        Order order = orderFor(rebuilt, memo);
+        order.setStellarTxHash(GOLDEN_TX_HASH);
+        Transaction verified = service.verifySignedXdrAgainstOrder(GOLDEN_SIGNED_XDR, order);
+
+        assertEquals(GOLDEN_TX_HASH, HexFormat.of().formatHex(verified.hash()));
+        assertEquals(GOLDEN_SIGNED_XDR, verified.toEnvelopeXdrBase64());
     }
 }

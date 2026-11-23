@@ -26,6 +26,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -280,6 +281,21 @@ class CollectionServiceTest {
         stubBuyer(T0);
         assertThat(service.getCollectionDetail(TENANT, COLL, BUYER)).isEmpty();
         assertThat(service.getCollectionDetail(TENANT, COLL, OWNER)).isEmpty();
+    }
+
+    /** §0.0 P30-2 (CAP-84): M…, C… and W… never overwrite the seller wallet. */
+    @ParameterizedTest
+    @MethodSource("org.earnlumens.mediastore.application.payment.StellarAddressTypeRejectionTest#nonAccountAddresses")
+    void updateCollection_rejectsNonAccountStellarAddresses(String address) {
+        var request = new org.earnlumens.mediastore.domain.media.dto.request.UpdateCollectionRequest(
+                null, null, null, null, null, null, null, address);
+
+        assertThatThrownBy(() -> service.updateCollection(TENANT, OWNER, COLL, request))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Invalid Stellar public key");
+
+        assertThat(collection.getSellerWallet()).isNull();
+        verify(collections, never()).save(any());
     }
 
     private static CollectionItem removed(String entryId, LocalDateTime addedAt, LocalDateTime removedAt) {

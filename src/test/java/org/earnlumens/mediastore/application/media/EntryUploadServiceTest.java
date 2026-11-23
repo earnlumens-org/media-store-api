@@ -29,6 +29,8 @@ import org.earnlumens.mediastore.infrastructure.r2.R2PresignedUrlService;
 import org.earnlumens.mediastore.infrastructure.r2.R2StorageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import software.amazon.awssdk.services.s3.model.HeadObjectResponse;
 
 import java.math.BigDecimal;
@@ -186,6 +188,39 @@ class EntryUploadServiceTest {
         assertThrows(IllegalArgumentException.class,
                 () -> service.createEntry(TENANT, USER_ID, request));
 
+        verify(entryRepository, never()).save(any());
+    }
+
+    // ─── §0.0 P30-2 (CAP-84): M…, C… and W… are never a seller wallet ───
+
+    @ParameterizedTest
+    @MethodSource("org.earnlumens.mediastore.application.payment.StellarAddressTypeRejectionTest#nonAccountAddresses")
+    void createEntry_paid_rejectsNonAccountStellarAddresses(String address) {
+        CreateEntryRequest request = new CreateEntryRequest(
+                "My Video", "A description", null, "VIDEO", true, new BigDecimal("10.5"), null, null, address, null, null, null, null, null);
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> service.createEntry(TENANT, USER_ID, request));
+
+        assertEquals("Invalid Stellar public key", e.getMessage());
+        verify(stellarTransactionService, never()).isAccountActive(any());
+        verify(entryRepository, never()).save(any());
+    }
+
+    @ParameterizedTest
+    @MethodSource("org.earnlumens.mediastore.application.payment.StellarAddressTypeRejectionTest#nonAccountAddresses")
+    void updateMetadata_switchToPaid_rejectsNonAccountStellarAddresses(String address) {
+        Entry entry = draftEntry();
+        when(entryRepository.findByTenantIdAndId(TENANT, ENTRY_ID)).thenReturn(Optional.of(entry));
+        var request = new org.earnlumens.mediastore.domain.media.dto.request.UpdateEntryMetadataRequest(
+                null, null, true, new BigDecimal("5"), null, null, address, null, null, null, null, null);
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> service.updateEntryMetadata(TENANT, USER_ID, ENTRY_ID, request));
+
+        assertEquals("Invalid Stellar public key", e.getMessage());
+        assertNull(entry.getSellerWallet());
+        verify(stellarTransactionService, never()).isAccountActive(any());
         verify(entryRepository, never()).save(any());
     }
 
